@@ -3,8 +3,8 @@ rbvfit
 ======
 
 
-Add a short description here!
-
+This suite of code will do a forward modeling analysis of absorption line spectrum.
+We will model the physical properties (e.g. temperature, metallicity and density) per pixel of a spectrum using MCMC.
 
 Description
 ===========

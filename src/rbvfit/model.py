@@ -9,39 +9,56 @@ from astropy.convolution import convolve, Gaussian1DKernel
 
 
 class create_voigt(object):
+    """
+    This object will create a model Voigt profile spectrum given an input set of paramters.
 
-    def __init__(self, filename, FWHM = '6.5', grating='G130M',life_position='1'):
-        self.filename = filename
+    Input:    logN :  Array with log column density of individual clumps
+                 b :  Array with Doppler b parameter for individual clumps
+                 v :  Array with line of sight velocity of individual clumps
+              zabs :  Redshift of absorbers [For each clump].
+
+                [Optional]
+                FWHM  =    String giving Instrument FWHM in pixels (default = 6.5 pixel)
+                           [ If given  FWHM= 'COS'= will take HST COS LSF at given grating and 
+                           lifetime position. But will require linetools dependency.]
+                grating = HST grating [only required if FWHM= 'COS']
+                life_position = HST Lifetime position [only required if FWHM= 'COS']
+
+    Currently not bothering about Nuissance parameters. Will be added later [RB]
+
+
+    Working example:
+        N=np.array([14.,13.])
+        b=np.array([20.,21.])
+        v=np.array([10.,-100.])
+        zabs=np.array([0.,0.])
+        theta=np.concatenate((N,b,v))
+        lambda_rest = 1215.67 * np.ones((len(N),))
+
+
+    """
+
+    def __init__(self, zabs,lambda_rest, FWHM = '6.5', grating='G130M',life_position='1'):
+        #self.filename = filename
+        # Setting up model paramters
         self.FWHM = FWHM
         self.grating = grating
         self.life_position=life_position
-        self.read_model_par(filename)
+        #self.NGuess = np.array(N)
+        #self.bGuess = np.array(b)
+        #self.vGuess = np.array(v)
+        self.zabs = zabs
+        self.lambda_rest = np.array(lambda_rest)
+        #self.Nuissance = s['Nuissance']
+        #self.theta = np.concatenate( (self.NGuess, self.bGuess , self.vGuess))
+        #self.lb = np.array(Nlow + blow + vlow)
+        #self.ub = np.array(NHI + bHI + vHI)
+        #self.bounds = [self.lb, self.ub]
+  
         self.compile_model()
         self.use_custom_lsf(FWHM=FWHM,grating=grating,life_position=life_position)
 
 
-    def read_model_par(self, filename):
-        s = ascii.read(filename)
-
-        self.NGuess = np.ndarray.tolist(s['NGuess'])
-        self.bGuess = np.ndarray.tolist(s['bGuess'])
-        self.vGuess = np.ndarray.tolist(s['vGuess'])
-
-        Nlow = np.ndarray.tolist(s['Nlow'])
-        blow = np.ndarray.tolist(s['blow'])
-        vlow = np.ndarray.tolist(s['vlow'])
-
-        NHI = np.ndarray.tolist(s['NHI'])
-        bHI = np.ndarray.tolist(s['bHI'])
-        vHI = np.ndarray.tolist(s['vHI'])
-
-        self.zabs = s['z_abs']
-        self.lambda_rest = s['lambda_rest']
-        self.Nuissance = s['Nuissance']
-        self.theta = np.array(self.NGuess + self.bGuess + self.vGuess)
-        self.lb = np.array(Nlow + blow + vlow)
-        self.ub = np.array(NHI + bHI + vHI)
-        self.bounds = [self.lb, self.ub]
 
     def compile_model(self):
         nclump = int(len(self.zabs))
@@ -52,7 +69,7 @@ class create_voigt(object):
 
         self.line = line
 
-    def model_mcmc(self, theta, wave):
+    def model_flux(self, theta, wave):
         line = self.line
         ss3, flx = r.create_model_simple(theta, wave, line)
 

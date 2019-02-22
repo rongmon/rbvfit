@@ -2,7 +2,7 @@ from scipy.special import wofz
 import numpy as np
 import os
 from astropy.convolution import convolve, Gaussian1DKernel
-from CGM import rb_setline as rb
+from rbvfit import rb_setline as rb
 
 class line(object):
 	name=""

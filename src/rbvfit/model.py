@@ -28,12 +28,7 @@ class create_voigt(object):
 
 
     Working example:
-        N=np.array([14.,13.])
-        b=np.array([20.,21.])
-        v=np.array([10.,-100.])
-        zabs=np.array([0.,0.])
-        theta=np.concatenate((N,b,v))
-        lambda_rest = 1215.67 * np.ones((len(N),))
+       Look up test.ipynb
 
 
     """

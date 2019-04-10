@@ -1,5 +1,9 @@
+from __future__ import print_function, absolute_import, division, unicode_literals
 import numpy as np
 from astropy.io import ascii
+from pkg_resources import resource_filename
+
+
 '''
  Function to read in atomic line information for a given rest frame  wavelength.
                            Or 
@@ -64,15 +68,16 @@ def rb_setline(lambda_rest,method,linelist='atom'):
 
 
 def read_line_list(label):
+	
 
 	if label=='atom':
-		filename='lines/atom_full.dat'
+		filename=resource_filename('rbvfit','lines/atom_full.dat')
 	elif label == 'LLS':
-		filename='lines/lls.lst'
+		filename=resource_filename('rbvfit','lines/lls.lst')
 	elif label == 'LLS Small':
-		filename='lines/lls_sub.lst'
+		filename=resource_filename('rbvfit','lines/lls_sub.lst')
 	elif label == 'DLA':
-		filename='lines/dla.lst'
+		filename=resource_filename('rbvfit','lines/dla.lst')
 	else:
 		print('Give Correct LineList')
 

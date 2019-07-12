@@ -63,11 +63,14 @@ class create_voigt(object):
                 
                 
 
-
+    ------------------------------------------------------------------------
 
     Working example:
        Look up test.ipynb
-
+    
+    Written By :  Rongmon Bordoloi  [Fall 2018]
+    Edited RB July 12 2019: Made the code flexible to easily add multiple transitions of the same ion and Nuissance parameters to the fit.
+    
 
     """
 

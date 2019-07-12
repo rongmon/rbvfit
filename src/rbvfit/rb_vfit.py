@@ -65,6 +65,14 @@ def voigt(lambda0,gamma,f,N,b,vel,Cf,wv):
 
 
 class model(object):
+    """
+    Model object class to create any arbitary Voigt profile at a given redshift. 
+    
+    
+    Written by:  Rongmon Bordoloi,  tested on Python 3.
+    
+    """
+
 	def __init__(self):
 		self.lines=np.array([])
 

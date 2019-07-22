@@ -6,14 +6,32 @@ rbvfit
 This suite of code will do a forward modeling analysis of absorption line spectrum.
 We will model the physical properties (e.g. temperature, metallicity and density) per pixel of a spectrum using MCMC.
 
+Also includes a sophisticated Voigt profile generation toolbox, and an interactive Voigt profile fitting module.
+
 Description
 ===========
 
-A longer description of your project goes here...
+Main Modules:
+    model.py:-
+    		 Top level code allowing creation of a complex and flexible multi-component/ Multi-species Voigt Profile.
+    rb_vfit.py:- 
+    		 General code to create individual Voigt profiles.
+    rb_setline.py:-
+    		 Allows to read in line properties of an atomic transition using an approximate rest wavelength guess.
+
+    rb_interactive_vpfit.py:- 
+    		 A complex interactive Voigt profile fitter...
+    		 	Two options for fitting: -  
+    		 				(i)  Fast non-linear least squares to fit a model to data.
+    		 				(ii) Detailed Markov Chain Monte Carlo fitting using emcee. 
+
+
 
 
 Note
 ====
+Written By: Rongmon Bordoloi.  July 2019.
+Tested on : Python 3.7
 
 This project has been set up using PyScaffold 3.1. For details and usage
 information on PyScaffold see https://pyscaffold.org/.

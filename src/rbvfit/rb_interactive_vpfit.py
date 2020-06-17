@@ -1,6 +1,6 @@
 from __future__ import print_function
 import matplotlib
-matplotlib.use('Qt5Agg')
+#matplotlib.use('TkAgg')
 import numpy as np
 import matplotlib.pyplot as plt 
 from rbvfit import model as m

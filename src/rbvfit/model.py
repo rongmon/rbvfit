@@ -123,6 +123,14 @@ class create_voigt(object):
         fmodel = convolve(flx, self.kernel ,boundary='extend')  
         return fmodel
 
+    def model_unconvolved(self, theta, wave):       
+        line = self.line
+        theta_prime=map_theta2list(theta,self.nclump,self.ntransition)
+        ss3, flx = r.create_model_simple(theta_prime, wave, line)
+
+        return flx
+   
+
     def model_fit(self, theta, wave):
         line = self.line
         theta_prime=map_theta2list(theta,self.nclump,self.ntransition)

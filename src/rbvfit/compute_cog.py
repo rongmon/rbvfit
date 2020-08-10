@@ -33,15 +33,15 @@ def compute_ewlist_from_voigt(Nlist,b,lam_rest):
 
 class compute_cog(object):
     def __init__(self,lam_guess,Nlist,blist):
-         """
-    This object will create a curve of growth for a given input set of paramters.
+        """
+        This object will create a curve of growth for a given input set of paramters.
 
-    Input:  
+        Input:  
               lam_guess :  rest frame wavelength of one  transition
               Nlist      :  array of column densities for which COG is to be computed
               blist :  array of b values for which COG is to be computed
 
-    Output:
+        Output:
               a COG object with all input parameters 
               st: structure containing transition information
               Wlist: matrix containing EW for every logN and b value                
@@ -49,18 +49,15 @@ class compute_cog(object):
 
 
 
-    Working example:
-       Look up COG Example.ipynb
+        Working example:
+        Look up COG Example.ipynb
 
 
-    """
-
+        """
         self.st=rt.rb_setline(lam_guess,'closest')
         self.Nlist=Nlist
         self.blist=blist
-
         self.Wlist=np.zeros((len(Nlist),len(blist)))
-
         for i in range(0, len(blist)):
             print(self.st['wave'])
             self.Wlist[:,i]=compute_ewlist_from_voigt(Nlist,blist[i],self.st['wave'])

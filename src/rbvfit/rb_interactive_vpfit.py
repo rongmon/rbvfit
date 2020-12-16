@@ -462,9 +462,15 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
         #pdb.set_trace()
     else:
         theta=custom_guess
+        n_clouds=int(len(theta)/3)
+        nguess=theta[0:n_clouds]
+        bguess=theta[n_clouds:n_clouds+n_clouds]
+        vguess=theta[2*n_clouds:3*n_clouds]        
 
 
     bounds, lb, ub=set_bounds(nguess,bguess,vguess)
+    print(bounds)
+    
     #pdb.set_trace()
 
     # Now starting to set up the Voigt Profile model

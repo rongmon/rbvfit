@@ -51,7 +51,7 @@ def set_bounds(nguess,bguess,vguess):
     for i in range(0,len(nguess)):
         Nlow[i]=nguess[i]-2.
 
-        blow[i]=bguess[i]-20.
+        blow[i]=bguess[i]-40.
         if blow[i] < 2.:
             blow[i] = 2.
 
@@ -59,7 +59,7 @@ def set_bounds(nguess,bguess,vguess):
 
         NHI[i]=nguess[i]+2.
 
-        bHI[i]=bguess[i]+20.
+        bHI[i]=bguess[i]+40.
         if bHI[i] > 200.:
             bHI[i] = 150.
 

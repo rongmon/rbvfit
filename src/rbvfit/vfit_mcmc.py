@@ -5,6 +5,129 @@ import corner
 import matplotlib.pyplot as plt
 import sys
 import scipy.optimize as op
+from rb_vfit import rb_veldiff as rb_veldiff
+
+
+
+def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
+        #This model only works if there are no nuissance paramteres
+
+        theta_prime=fit.best_theta
+        value1=fit.low_theta
+        value2=fit.high_theta
+        n_clump=model.nclump
+        ntransition=model.ntransition
+        zabs=model.zabs
+
+        samples=fit.samples
+        model_mcmc=fit.model
+        wave_list=np.unique(model.lambda_rest)
+        wave_rest=wave_obs/(1+zabs[0])
+        
+        best_N = theta_prime[0:n_clump]
+        best_b = theta_prime[n_clump:2 * n_clump]
+        best_v = theta_prime[2 * n_clump:3 * n_clump]
+        
+        low_N = value1[0:n_clump]
+        low_b = value1[n_clump:2 * n_clump]
+        low_v = value1[2 * n_clump:3 * n_clump]
+        
+        high_N = value2[0:n_clump]
+        high_b = value2[n_clump:2 * n_clump]
+        high_v = value2[2 * n_clump:3 * n_clump]
+            
+
+
+        #Now extracting individual fitted components
+        best_fit, f1 = model.model_fit(theta_prime, wave_obs)
+
+        fig, axs = plt.subplots(ntransition, sharex=True, sharey=False,figsize=(12,18 ),gridspec_kw={'hspace': 0})
+        
+        
+        BIGGER_SIZE = 18
+        plt.rc('font', size=BIGGER_SIZE)          # controls default text sizes
+        plt.rc('axes', titlesize=BIGGER_SIZE)     # fontsize of the axes title
+        plt.rc('axes', labelsize=BIGGER_SIZE)    # fontsize of the x and y labels
+        plt.rc('xtick', labelsize=BIGGER_SIZE)    # fontsize of the tick labels
+        plt.rc('ytick', labelsize=BIGGER_SIZE)    # fontsize of the tick labels
+        plt.rc('legend', fontsize=BIGGER_SIZE)    # legend fontsize
+        plt.rc('figure', titlesize=BIGGER_SIZE)  # fontsize of the figure title
+
+        index = np.random.randint(0, high=len(samples), size=100)
+        
+        
+        if ntransition == 1:
+            #When there are no nuissance parameter
+            #Now loop through each transition and plot them in velocity space
+            vel=rb_veldiff(wave_list[0],wave_rest)
+            axs.step(vel, fnorm, 'k-', linewidth=1.)
+            axs.step(vel, enorm, color='r', linewidth=1.)
+            # Plotting a random sample of outputs extracted from posterior dis
+            for ind in range(len(index)):
+                axs.plot(vel, model_mcmc(samples[index[ind], :], wave_obs), color="k", alpha=0.1)
+            axs.set_ylim([0, 1.6])
+            axs.set_xlim(xlim)
+            axs.plot(wave_obs, best_fit, color='b', linewidth=3)
+            axs.plot([0., 0.], [-0.2, 2.5], 'k:', lw=0.5)
+            # plot individual components
+            for dex in range(0,np.shape(f1)[1]):
+                axs.plot(vel, f1[:, dex], 'g:', linewidth=3)
+    
+            for iclump in range(0,n_clump):
+                axs.plot([best_v[iclump],best_v[iclump]],[1.05,1.15],'k--',lw=4)
+                text1=r'$logN \;= '+ np.str('%.2f' % best_N[iclump]) +'^{ + ' + np.str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}'+ '_{ -' +  np.str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}$'
+                axs.text(best_v[iclump],1.2,text1,
+                     fontsize=14,rotation=90, rotation_mode='anchor')
+                text2=r'$b ='+np.str('%.0f' % best_b[iclump]) +'^{ + ' + np.str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}'+ '_{ -' +  np.str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}$'
+    
+                axs.text(best_v[iclump]+30,1.2, text2,fontsize=14,rotation=90, rotation_mode='anchor')
+  
+        
+        
+        
+        
+        else:
+     
+            
+            #Now loop through each transition and plot them in velocity space
+            for i in range(0,ntransition):
+                vel=rb_veldiff(wave_list[i],wave_rest)
+                axs[i].step(vel, fnorm, 'k-', linewidth=1.)
+                axs[i].step(vel, enorm, color='r', linewidth=1.)
+                # Plotting a random sample of outputs extracted from posterior distribution
+                for ind in range(len(index)):
+                    axs[i].plot(vel, model_mcmc(samples[index[ind], :], wave_obs), color="k", alpha=0.1)
+                axs[i].set_ylim([0, 1.6])
+                axs[i].set_xlim(xlim)
+                
+                
+            
+                axs[i].plot(wave_obs, best_fit, color='b', linewidth=3)
+                axs[i].plot([0., 0.], [-0.2, 2.5], 'k:', lw=0.5)
+    
+                # plot individual components
+                for dex in range(0,np.shape(f1)[1]):
+                    axs[i].plot(vel, f1[:, dex], 'g:', linewidth=3)
+                
+                for iclump in range(0,n_clump):
+                    axs[i].plot([best_v[iclump],best_v[iclump]],[1.05,1.15],'k--',lw=4)
+                    if i ==0:
+                        text1=r'$logN \;= '+ np.str('%.2f' % best_N[iclump]) +'^{ + ' + np.str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}'+ '_{ -' +  np.str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}$'
+                        axs[i].text(best_v[iclump],1.2,text1,
+                                 fontsize=14,rotation=90, rotation_mode='anchor')
+                        text2=r'$b ='+np.str('%.0f' % best_b[iclump]) +'^{ + ' + np.str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}'+ '_{ -' +  np.str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}$'
+                
+                        axs[i].text(best_v[iclump]+30,1.2, text2,
+                                 fontsize=14,rotation=90, rotation_mode='anchor')
+              
+
+        if outfile==False:
+            plt.show()
+        else:
+            outfile_fig =outfile
+            fig.savefig(outfile_fig, bbox_inches='tight')
+
+
 
 
 ######## Computing Likelihoods######
@@ -187,5 +310,6 @@ class vfit(object):
             outfile_fig =outfile
             figure.savefig(outfile_fig, bbox_inches='tight')
 
+            
 
   

@@ -100,21 +100,21 @@ def plot_transitions(wave,flux,error,wrest,xrange,ntransition=1,modelflux=[0],in
         spl=2.9979e5;  #speed of light
         vel = (wave-wrest[i]*(1.0 + 0.))*spl/(wrest[i]*(1.0 + 0))
 
-        ax.step(vel,flux)
-        ax.step(vel,error,color='r')
+        ax.step(wave,flux)
+        ax.step(wave,error,color='r')
         if len(modelflux) >1:
-            ax.plot(vel,modelflux,'-',color='k',lw=2)
+            ax.plot(wave,modelflux,'-',color='k',lw=2)
 
         if len(individual_components) > 1:
             temp=individual_components.shape
             nclump= int(temp[1])
             for i in range(0,nclump):
-                ax.plot(vel,individual_components[:,i],'g:')
+                ax.plot(wave,individual_components[:,i],'g:')
         ax.set_xlim(xrange)
         ax.set_ylim([-0.02,1.8])
-        ax.plot([-2500,2500],[0,0],'k:')
-        ax.plot([-2500,2500],[1,1],'k:')       
-        ax.set_xlabel('vel [km/s]')
+        #ax.plot([-2500,2500],[0,0],'k:')
+        #ax.plot([-2500,2500],[1,1],'k:')       
+        ax.set_xlabel('Observed Wave [Angstrom]')
         ax.set_ylabel('Normalized Flux')
     plt.show()
 
@@ -475,7 +475,7 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
 
     # Now starting to set up the Voigt Profile model
     
-    s=m.create_voigt(zabs,lambda_restlist,n_clouds,ntransition=ntransition,FWHM=4.5)
+    s=m.create_voigt(zabs,lambda_restlist,n_clouds,ntransition=ntransition,FWHM=FWHM)
 
     
     outflux= s.model_flux(theta,wave)
@@ -493,8 +493,8 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
 
 
     model_flux,ind_comp=s.model_fit(popt,wave)
-
-    plot_transitions(wave,flux,error,lambda_restlist,xrange,ntransition=ntransition,modelflux=model_flux,individual_components=ind_comp)
+    xwaverange=[min(wave),max(wave)]
+    plot_transitions(wave,flux,error,lambda_restlist,xwaverange,ntransition=ntransition,modelflux=model_flux,individual_components=ind_comp)
 
     if mcmc == True:
         plt.close()

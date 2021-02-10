@@ -67,7 +67,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
                 axs.plot(vel, model_mcmc(samples[index[ind], :], wave_obs), color="k", alpha=0.1)
             axs.set_ylim([0, 1.6])
             axs.set_xlim(xlim)
-            axs.plot(wave_obs, best_fit, color='b', linewidth=3)
+            axs.plot(vel, best_fit, color='b', linewidth=3)
             axs.plot([0., 0.], [-0.2, 2.5], 'k:', lw=0.5)
             # plot individual components
             for dex in range(0,np.shape(f1)[1]):
@@ -102,7 +102,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
                 
                 
             
-                axs[i].plot(wave_obs, best_fit, color='b', linewidth=3)
+                axs[i].plot(vel, best_fit, color='b', linewidth=3)
                 axs[i].plot([0., 0.], [-0.2, 2.5], 'k:', lw=0.5)
     
                 # plot individual components

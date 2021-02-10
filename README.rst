@@ -25,6 +25,14 @@ Main Modules:
     		 				(i)  Fast non-linear least squares to fit a model to data.
     		 				(ii) Detailed Markov Chain Monte Carlo fitting using emcee. 
 
+    example_Voigt_profile_fitting.ipynb:- 
+
+             Example jupyter notebook on how to use these codes to perform a fit [batch mode]
+
+    example_Voigt_profile_fitting_interactive.ipynb:- 
+
+             Example jupyter notebook on how to use these codes to perform a fit [interactive mode]. We guess the number of absorbing clouds and their b, v, n values interactively inside a jupyter notebook.
+
 
 
 

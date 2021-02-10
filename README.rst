@@ -8,6 +8,13 @@ We will model the physical properties (e.g. temperature, metallicity and density
 
 Also includes a sophisticated Voigt profile generation toolbox, and an interactive Voigt profile fitting module.
 
+Installation [using git]:
+
+    From the command line: 
+        git clone https://github.com/rongmon/rbvfit.git
+        cd rbvfit
+        python setup.py install
+
 Description
 ===========
 

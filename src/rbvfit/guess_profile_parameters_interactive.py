@@ -45,12 +45,12 @@ class gui_set_clump(object):
         cid1 = self.fig.canvas.mpl_connect('key_press_event', self.onpress)
         display(self.w)
         
-    def b_guess(self):
+    def input_b_guess(self):
         # Now set up the model fitting paramters.
         # Create the guesses for starting a fit
         n_clouds=int(len(self.vel_guess))
         self.bguess=np.zeros(n_clouds,)
-        self.vguess=np.zeros(n_clouds,)
+        self.vguess=self.vel_guess
         self.nguess=np.zeros(n_clouds,)
         
         # AOD column guess for the primary line

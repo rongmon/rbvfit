@@ -74,7 +74,7 @@ class create_voigt(object):
 
     """
 
-    def __init__(self, zabs,lambda_rest,nclump,ntransition=1, FWHM = '6.5', grating='G130M',life_position='1'):
+    def __init__(self, zabs,lambda_rest,nclump,ntransition=1, FWHM = '6.5', grating='G130M',life_position='1',cen_wave='1300A'):
         # Setting up model paramters
         self.FWHM = FWHM
         self.grating = grating
@@ -101,7 +101,7 @@ class create_voigt(object):
         self.lambda_rest = lam_restlist
   
         self.compile_model()
-        self.use_custom_lsf(FWHM=FWHM,grating=grating,life_position=life_position)
+        self.use_custom_lsf(FWHM=FWHM,grating=grating,life_position=life_position,cen_wave=cen_wave)
 
 
 
@@ -139,13 +139,13 @@ class create_voigt(object):
         fmodel = convolve(flx, self.kernel ,boundary='extend')  
         return fmodel, ss3
 
-    def use_custom_lsf(self,FWHM='6.5',grating='G130M',life_position='1'):
+    def use_custom_lsf(self,FWHM='6.5',grating='G130M',life_position='1',cen_wave='1300A'):
         if FWHM=='COS':
-            instr_config=dict(name='COS',grating=grating,life_position=life_position)
+            instr_config=dict(name='COS',grating=grating,life_position=life_position,cen_wave=cen_wave)
             coslsf=LSF(instr_config)
             s,data=coslsf.load_COS_data()
             #if 1150A   1200A   1250A   1300A   1350A   1400A   1450A
-            kernel = CustomKernel(data['1300A'])
+            kernel = CustomKernel(data[cen_wave].data)
         else:
             COS_kernel=np.double(FWHM)/2.355 #6.5 pixels
             #window_size_number_of_points=np.round(FWHM /(2.355*np.abs(velgrid[2]-velgrid[1])))

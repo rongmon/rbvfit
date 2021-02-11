@@ -75,13 +75,18 @@ class create_voigt(object):
 
     """
 
-    def __init__(self, zabs,lambda_rest,nclump,ntransition=1, FWHM = '6.5', grating='G130M',life_position='1',cen_wave='1300A'):
+    def __init__(self, zabs,lambda_rest,nclump,ntransition=1, FWHM = '6.5', grating='G130M',life_position='1',cen_wave='1300A',verbose=True):
         # Setting up model paramters
         self.FWHM = FWHM
         self.grating = grating
         self.life_position=life_position
         self.nclump=nclump
         self.ntransition = ntransition
+        #preserve the orginal lambda_rest for future plotting
+        self.lambda_rest_original=lambda_rest
+
+
+
         #Creating a redshift list that is equal to the length of all transitions and nuissance parameters 
         zlist=np.array(zabs)
         # If there are nuissance paramters
@@ -101,17 +106,19 @@ class create_voigt(object):
             lam_restlist=np.append(lam_restlist,lambda_rest[ntransition:])
         self.lambda_rest = lam_restlist
   
-        self.compile_model()
+        self.compile_model(verbose=verbose)
         self.use_custom_lsf(FWHM=FWHM,grating=grating,life_position=life_position,cen_wave=cen_wave)
 
 
 
-    def compile_model(self):
+    def compile_model(self,verbose=True):
         nclump = int(len(self.zabs))
         line = r.model()
 
         for i in range(0, nclump):
             line.addline(self.lambda_rest[i], z=self.zabs[i])
+            if verbose==True:
+                print('Added line:' + line.lines[i].name + ' at z:' + np.str(self.zabs[i]))
 
         self.line = line
 

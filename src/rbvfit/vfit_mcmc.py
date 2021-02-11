@@ -22,7 +22,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
 
         samples=fit.samples
         model_mcmc=fit.model
-        wave_list=np.unique(model.lambda_rest)
+        wave_list=model.lambda_rest_original # Use the input lambda rest list to plot correctly
         wave_rest=wave_obs/(1+zabs[0])
         
         best_N = theta_prime[0:n_clump]
@@ -92,6 +92,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
             
             #Now loop through each transition and plot them in velocity space
             for i in range(0,ntransition):
+                print(wave_list[i])
                 vel=rb_veldiff(wave_list[i],wave_rest)
                 axs[i].step(vel, fnorm, 'k-', linewidth=1.)
                 axs[i].step(vel, enorm, color='r', linewidth=1.)

@@ -3,8 +3,7 @@ rbvfit
 ======
 
 
-This suite of code will do a forward modeling analysis of absorption line spectrum.
-We will model the physical properties (e.g. temperature, metallicity and density) per pixel of a spectrum using MCMC.
+This suite of code will do a forward modeling analysis of absorption line spectrum. A Bayesian Voigt profile fitter.
 
 Also includes a sophisticated Voigt profile generation toolbox, and an interactive Voigt profile fitting module.
 
@@ -12,7 +11,9 @@ Installation [using git]:
 
     From the command line: 
         git clone https://github.com/rongmon/rbvfit.git
+        
         cd rbvfit
+        
         python setup.py install
 
 Description

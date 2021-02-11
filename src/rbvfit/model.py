@@ -5,6 +5,7 @@ from astropy import units as u
 from linetools.spectra.lsf import LSF
 from astropy.convolution.kernels import CustomKernel
 from astropy.convolution import convolve, Gaussian1DKernel
+import pdb
 
 def map_theta2list(theta,ncl=1,nt=1):
     """
@@ -96,8 +97,8 @@ class create_voigt(object):
         for i in range(0,ntransition):
             lam_restlist=np.append(lam_restlist,np.repeat(lambda_rest[i],nclump))
             # If there are nuissance paramters
-            if len(zlist) > 1:
-                lam_restlist=np.append(lam_restlist,lambda_rest[ntransition:])
+        if len(zlist) > 1:
+            lam_restlist=np.append(lam_restlist,lambda_rest[ntransition:])
         self.lambda_rest = lam_restlist
   
         self.compile_model()

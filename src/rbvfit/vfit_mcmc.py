@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import sys
 import scipy.optimize as op
 from rb_vfit import rb_veldiff as rb_veldiff
-
+import pdb
 
 
 def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
@@ -95,6 +95,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
                 vel=rb_veldiff(wave_list[i],wave_rest)
                 axs[i].step(vel, fnorm, 'k-', linewidth=1.)
                 axs[i].step(vel, enorm, color='r', linewidth=1.)
+                #pdb.set_trace()
                 # Plotting a random sample of outputs extracted from posterior distribution
                 for ind in range(len(index)):
                     axs[i].plot(vel, model_mcmc(samples[index[ind], :], wave_obs), color="k", alpha=0.1)
@@ -239,7 +240,7 @@ class vfit(object):
         burntime = np.round(no_of_steps * .2)
         with Pool() as pool:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
-            pos, prob, state = sampler.run_mcmc(guesses, burntime,progress=True)
+            pos, prob, state = sampler.run_mcmc(guesses, no_of_steps,progress=True)
         #sampler.reset()
         print("Done!")
         #print("Now starting the Final Calculations:")

@@ -1,5 +1,6 @@
 from __future__ import print_function
 import emcee
+from multiprocessing import Pool
 import numpy as np
 import corner
 import matplotlib.pyplot as plt
@@ -236,21 +237,19 @@ class vfit(object):
         guesses = [popt + perturbation * np.random.randn(ndim) for i in range(nwalkers)]
         print("Starting emcee ***********")
         burntime = np.round(no_of_steps * .2)
-        sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, threads=8, args=(lb, ub, model, wave_obs, fnorm, enorm))
-
-        print("Start Burntime Calculations ***********")
-
-        pos, prob, state = sampler.run_mcmc(guesses, burntime)
-        sampler.reset()
-        print("Done Burning Steps!")
-        print("Now starting the Final Calculations:")
+        with Pool() as pool:
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
+            pos, prob, state = sampler.run_mcmc(guesses, burntime,progress=True)
+        #sampler.reset()
+        print("Done!")
+        #print("Now starting the Final Calculations:")
         print("*****************")
-        width = 30
+        #width = 30
         # Now Running mcmc
-        for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
-            n = int((width + 1) * float(i) / no_of_steps)
-        sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
-        sys.stdout.write("\n")
+        #for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
+        #    n = int((width + 1) * float(i) / no_of_steps)
+        #sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
+        #sys.stdout.write("\n")
 
         self.sampler = sampler
         self.ndim = ndim

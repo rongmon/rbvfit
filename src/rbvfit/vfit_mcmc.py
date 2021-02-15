@@ -7,35 +7,44 @@ import matplotlib.pyplot as plt
 import sys
 import scipy.optimize as op
 from rb_vfit import rb_veldiff as rb_veldiff
+from rbvfit import rb_setline as rb
 import pdb
 
 
 def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
         #This model only works if there are no nuissance paramteres
-
         theta_prime=fit.best_theta
         value1=fit.low_theta
         value2=fit.high_theta
-        n_clump=model.nclump
+        n_clump=model.nclump 
+        n_clump_total=np.int(len(theta_prime)/3)
+
         ntransition=model.ntransition
         zabs=model.zabs
 
         samples=fit.samples
         model_mcmc=fit.model
-        wave_list=model.lambda_rest_original # Use the input lambda rest list to plot correctly
+
+        wave_list=np.zeros( len(model.lambda_rest_original),)
+        # Use the input lambda rest list to plot correctly
+        for i in range(0,len(wave_list)):
+            s=rb.rb_setline(model.lambda_rest_original[i],'closest')
+            wave_list[i]=s['wave']
+
+
         wave_rest=wave_obs/(1+zabs[0])
         
-        best_N = theta_prime[0:n_clump]
-        best_b = theta_prime[n_clump:2 * n_clump]
-        best_v = theta_prime[2 * n_clump:3 * n_clump]
+        best_N = theta_prime[0:n_clump_total]
+        best_b = theta_prime[n_clump_total:2 * n_clump_total]
+        best_v = theta_prime[2 * n_clump_total:3 * n_clump_total]
         
-        low_N = value1[0:n_clump]
-        low_b = value1[n_clump:2 * n_clump]
-        low_v = value1[2 * n_clump:3 * n_clump]
+        low_N = value1[0:n_clump_total]
+        low_b = value1[n_clump_total:2 * n_clump_total]
+        low_v = value1[2 * n_clump_total:3 * n_clump_total]
         
-        high_N = value2[0:n_clump]
-        high_b = value2[n_clump:2 * n_clump]
-        high_v = value2[2 * n_clump:3 * n_clump]
+        high_N = value2[0:n_clump_total]
+        high_b = value2[n_clump_total:2 * n_clump_total]
+        high_v = value2[2 * n_clump_total:3 * n_clump_total]
             
 
 

@@ -13,6 +13,8 @@ import pdb
 
 def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
         #This model only works if there are no nuissance paramteres
+        
+
         theta_prime=fit.best_theta
         value1=fit.low_theta
         value2=fit.high_theta
@@ -251,6 +253,8 @@ class vfit(object):
         with Pool() as pool:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
             pos, prob, state = sampler.run_mcmc(guesses, no_of_steps,progress=True)
+
+
         #sampler.reset()
         print("Done!")
         #print("Now starting the Final Calculations:")
@@ -268,7 +272,9 @@ class vfit(object):
 
     def plot_corner(self,outfile=False):
         ndim=self.ndim
-        samples = self.sampler.chain[:, 100:, :].reshape((-1, ndim))  # sampler.flatchain
+        #samples = self.sampler.chain[:, 100:, :].reshape((-1, ndim))  # sampler.flatchain
+        samples = self.sampler.get_chain(discard=100, thin=15, flat=True)
+
         st = np.percentile(samples, 50, axis=0)  # =np.median(samples,axis=0)#np.median(sampler.flatchain, axis=0)
         # df = pd.DataFrame(samples)
         # temp=df.mode()

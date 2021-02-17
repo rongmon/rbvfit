@@ -11,7 +11,7 @@ from rbvfit import rb_setline as rb
 import pdb
 
 
-def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
+def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],verbose=False):
         #This model only works if there are no nuissance paramteres
         
 
@@ -133,7 +133,29 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.]):
                 
                         axs[i].text(best_v[iclump]+30,1.2, text2,
                                  fontsize=14,rotation=90, rotation_mode='anchor')
-              
+        
+        if verbose==True:
+            from IPython.display import display, Math
+    
+            samples = fit.sampler.get_chain(discard=100, thin=15, flat=True)
+            nfit = int(fit.ndim / 3)
+            N_tile = np.tile("logN", nfit)
+            b_tile = np.tile("b", nfit)
+            v_tile = np.tile("v", nfit)
+            tmp = np.append(N_tile, b_tile)
+            text_label = np.append(tmp, v_tile)
+            for i in range(len(text_label)):
+                mcmc = np.percentile(samples[:, i], [16, 50, 84])
+                q = np.diff(mcmc)
+                txt = "\mathrm{{{3}}} = {0:.2f}_{{-{1:.2f}}}^{{{2:.2f}}}"
+                txt = txt.format(mcmc[1], q[0], q[1], text_label[i])
+    
+            
+                display(Math(txt))
+
+      
+
+
 
         if outfile==False:
             plt.show()
@@ -220,7 +242,7 @@ class vfit(object):
         self.no_of_steps = no_of_steps
         self.perturbation = perturbation
 
-    def runmcmc(self, optimize=True):
+    def runmcmc(self, optimize=True,verbose=False):
         model = self.model
         theta = self.theta
         lb = self.lb
@@ -259,12 +281,32 @@ class vfit(object):
         print("Done!")
         #print("Now starting the Final Calculations:")
         print("*****************")
+
         #width = 30
         # Now Running mcmc
         #for i, result in enumerate(sampler.sample(pos, iterations=no_of_steps)):
         #    n = int((width + 1) * float(i) / no_of_steps)
         #sys.stdout.write("\r[{0}{1}]".format('#' * n, ' ' * (width - n)))
         #sys.stdout.write("\n")
+        if verbose==True:
+            from IPython.display import display, Math
+
+            samples = sampler.get_chain(discard=100, thin=15, flat=True)
+            nfit = int(ndim / 3)
+            N_tile = np.tile("logN", nfit)
+            b_tile = np.tile("b", nfit)
+            v_tile = np.tile("v", nfit)
+
+            tmp = np.append(N_tile, b_tile)
+            text_label = np.append(tmp, v_tile)
+
+            for i in range(len(text_label)):
+                mcmc = np.percentile(samples[:, i], [16, 50, 84])
+                q = np.diff(mcmc)
+                txt = "\mathrm{{{3}}} = {0:.2f}_{{-{1:.2f}}}^{{{2:.2f}}}"
+                txt = txt.format(mcmc[1], q[0], q[1], text_label[i])
+                display(Math(txt))
+
 
         self.sampler = sampler
         self.ndim = ndim

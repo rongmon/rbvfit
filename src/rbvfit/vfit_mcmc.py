@@ -231,6 +231,7 @@ def set_bounds(nguess,bguess,vguess):
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, no_of_Chain=50, no_of_steps=1000,
                  perturbation=1e-6):
+    # Main class that performs all the fitting
         self.wave_obs = wave_obs
         self.fnorm = fnorm
         self.enorm = enorm

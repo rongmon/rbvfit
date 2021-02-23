@@ -49,5 +49,7 @@ Note
 Written By: Rongmon Bordoloi.  July 2019.
 Tested on : Python 3.7
 
+Dependencies on linetools, emcee, corner
+
 This project has been set up using PyScaffold 3.1. For details and usage
 information on PyScaffold see https://pyscaffold.org/.

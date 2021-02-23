@@ -6,7 +6,7 @@ import corner
 import matplotlib.pyplot as plt
 import sys
 import scipy.optimize as op
-from rb_vfit import rb_veldiff as rb_veldiff
+from rbvfit.rb_vfit import rb_veldiff as rb_veldiff
 from rbvfit import rb_setline as rb
 import pdb
 

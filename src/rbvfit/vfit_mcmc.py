@@ -230,7 +230,7 @@ def set_bounds(nguess,bguess,vguess):
 
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, no_of_Chain=50, no_of_steps=1000,
-                 perturbation=1e-6):
+                 perturbation=1e-6,skip_initial_state_check=False):
     # Main class that performs all the fitting
         self.wave_obs = wave_obs
         self.fnorm = fnorm
@@ -242,6 +242,7 @@ class vfit(object):
         self.no_of_Chain = no_of_Chain
         self.no_of_steps = no_of_steps
         self.perturbation = perturbation
+        self.skip_initial_state_check=skip_initial_state_check
 
     def runmcmc(self, optimize=True,verbose=False):
         model = self.model
@@ -254,6 +255,7 @@ class vfit(object):
         no_of_Chain = self.no_of_Chain
         no_of_steps = self.no_of_steps
         perturbation = self.perturbation
+        print(self.skip_initial_state_check)
 
         if optimize == True:
             print('Optimizing Guess ***********')
@@ -275,7 +277,7 @@ class vfit(object):
         burntime = np.round(no_of_steps * .2)
         with Pool() as pool:
             sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
-            pos, prob, state = sampler.run_mcmc(guesses, no_of_steps,progress=True)
+            pos, prob, state =sampler.run_mcmc(guesses,no_of_steps,progress=True,skip_initial_state_check=self.skip_initial_state_check)
 
 
         #sampler.reset()

@@ -137,6 +137,20 @@ class create_voigt(object):
         ss3, flx = r.create_model_simple(theta_prime, wave, line)
 
         return flx
+    
+    #Specifically use for curve_fit only
+    def model_flux_curvefit(self,wave,*params):
+        theta_temp=np.zeros((len(params),))
+        for i in range(0, len(params)):
+            theta_temp[i] = params[i]
+        line = self.line
+        theta_prime=map_theta2list(theta_temp,self.nclump,self.ntransition)
+        ss3, flx = r.create_model_simple(theta_prime, wave, line)
+        # Convolve data
+        fmodel = convolve(flx, self.kernel ,boundary='extend')  
+        
+        return fmodel
+        
    
 
     def model_fit(self, theta, wave):

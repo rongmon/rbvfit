@@ -196,33 +196,80 @@ def optimize_guess(model, theta, lb, ub, x, y, yerr):
 
 
 
-def set_bounds(nguess,bguess,vguess):
+def set_bounds(nguess,bguess,vguess,**kwargs):
+    """
+        Setting up bounds and giving option to manually update bounds.
+        example :
+            This command sets default bounds
+             > bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
 
-    Nlow=np.zeros((len(nguess,)))
-    blow=np.zeros((len(nguess,)))
-    vlow=np.zeros((len(nguess,)))
+            Customize bounds
+            lets say nguess=[12.2,12.3]
+                     bguess=[10,12]
+                     vguess=[0,199]
+
+                     We want to set custom lower bound for logN
+
+                     Nlow=[12.1,11.9]
+                     >bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess,Nlow=Nlow)
 
 
-    NHI=np.zeros((len(nguess,)))
-    bHI=np.zeros((len(nguess,)))
-    vHI=np.zeros((len(nguess,)))
+    """
+
+
+    if 'Nlow' in kwargs:
+        Nlow=kwargs['Nlow']
+    else:
+        Nlow=np.zeros((len(nguess,)))
+
+    if 'blow' in kwargs:
+        blow=kwargs['blow']
+    else:
+        blow=np.zeros((len(nguess,)))
+    
+    if 'vlow' in kwargs:
+        vlow=kwargs['vlow']
+    else:
+        vlow=np.zeros((len(nguess,)))
+
+    if 'Nhi' in kwargs:
+        NHI=kwargs['Nhi']
+    else:
+        NHI=np.zeros((len(nguess,)))
+
+    if 'bhi' in kwargs:
+        bHI=kwargs['bhi']
+    else:
+        bHI=np.zeros((len(nguess,)))
+    
+    if 'vhi' in kwargs:
+        vHI=kwargs['vhi']
+    else:
+        vHI=np.zeros((len(nguess,)))
+
 
     for i in range(0,len(nguess)):
-        Nlow[i]=nguess[i]-2.
 
-        blow[i]=bguess[i]-40.
-        if blow[i] < 2.:
-            blow[i] = 2.
+        if 'Nlow' not in kwargs:
+            Nlow[i]=nguess[i]-2.
 
-        vlow[i]=vguess[i]-50.
+        if 'blow' not in kwargs:
+            blow[i]=bguess[i]-40.
+            if blow[i] < 2.:
+                blow[i] = 2.
 
-        NHI[i]=nguess[i]+2.
+        if 'vlow' not in kwargs:
+            vlow[i]=vguess[i]-50.
 
-        bHI[i]=bguess[i]+40.
-        if bHI[i] > 200.:
-            bHI[i] = 150.
+        if 'Nhi' not in kwargs:
+            NHI[i]=nguess[i]+2.
 
-        vHI[i]=vguess[i]+50.
+        if 'bhi' not in kwargs:
+            bHI[i]=bguess[i]+40.
+            if bHI[i] > 200.:
+                bHI[i] = 150.
+        if 'vhi' not in kwargs:
+            vHI[i]=vguess[i]+50.
     lb=np.concatenate((Nlow,blow,vlow))
     ub=np.concatenate((NHI,bHI,vHI))
     bounds=[lb,ub]

@@ -331,6 +331,18 @@ class vfit(object):
         print("Done!")
         #print("Now starting the Final Calculations:")
         print("*****************")
+        print("Mean auto-correlation time should be > " + str(no_of_steps/50.)) 
+        
+        mean_acceptance_fraction = np.mean(sampler.acceptance_fraction)  # A good value will be between 0.2 and 0.5 according to Foreman-Mckay+2013
+        print("Mean acceptance fraction: {0:.3f}".format(mean_acceptance_fraction))
+        try:
+            mean_autocorr_time = np.mean(sampler.get_autocorr_time())  # mean autocorrelation time for the chain
+            print("Mean auto-correlation time: {0:.3f} steps".format(mean_autocorr_time))
+        except:
+            mean_autocorr_time = 0
+            print("Chain Lenght is less than 50 Autocorrelation times")
+            pass
+
 
         #width = 30
         # Now Running mcmc

@@ -289,7 +289,7 @@ class vfit(object):
 
     def optimize_guess(self,theta):
         nll = lambda *args: -self.lnprob(*args)
-        result = op.minimize(nll, [theta], args=(self.lb, self.ub, self.model, self.wave_obs, self.fnorm, self.enorm))
+        result = op.minimize(nll, [theta])#, args=(self.lb, self.ub, self.model, self.wave_obs, self.fnorm, self.enorm))
         p = result["x"]
         return p
 
@@ -311,7 +311,7 @@ class vfit(object):
         if optimize == True:
             print('Optimizing Guess ***********')
             # Now make a better guess
-            popt = optimize_guess(model, theta, lb, ub, wave_obs, fnorm, enorm)
+            popt = self.optimize_guess(theta)#, lb, ub, wave_obs, fnorm, enorm)
             print('Done ***********')
         else:
             print('Skipping Optimizing Guess ***********')

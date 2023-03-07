@@ -167,12 +167,6 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
 
 
 
-def optimize_guess(model, theta, lb, ub, x, y, yerr):
-    nll = lambda *args: -lnprob(*args)
-    result = op.minimize(nll, [theta], args=(lb, ub, model, x, y, yerr))
-    p = result["x"]
-    return p
-
 
 
 def set_bounds(nguess,bguess,vguess,**kwargs):
@@ -292,6 +286,12 @@ class vfit(object):
         if not np.isfinite(lp):
             return -np.inf
         return lp + self.lnlike(theta)
+
+    def optimize_guess(self,theta):
+        nll = lambda *args: -self.lnprob(*args)
+        result = op.minimize(nll, [theta], args=(self.lb, self.ub, self.model, self.wave_obs, self.fnorm, self.enorm))
+        p = result["x"]
+        return p
 
 
 

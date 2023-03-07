@@ -166,27 +166,6 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
 
 
 
-######## Computing Likelihoods######
-def lnprior(theta, lb, ub):
-    for index in range(0, len(lb)):
-        if (lb[index] > theta[index]) or (ub[index] < theta[index]):
-            return -np.inf
-            break
-    return 0.0
-
-
-def lnlike(theta, model, x, y, yerr):
-    model = model(theta, x)
-    inv_sigma2 = 1.0 / (yerr ** 2)
-    return -0.5 * (np.sum((y - model) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
-
-
-def lnprob(theta, lb, ub, model, x, y, yerr):
-    lp = lnprior(theta, lb, ub)
-    if not np.isfinite(lp):
-        return -np.inf
-    return lp + lnlike(theta, model, x, y, yerr)
-
 
 def optimize_guess(model, theta, lb, ub, x, y, yerr):
     nll = lambda *args: -lnprob(*args)
@@ -291,6 +270,31 @@ class vfit(object):
         self.perturbation = perturbation
         self.skip_initial_state_check=skip_initial_state_check
 
+
+
+    ######## Computing Likelihoods######
+    def lnprior(self,theta):
+        for index in range(0, len(self.lb)):
+            if (self.lb[index] > theta[index]) or (self.ub[index] < theta[index]):
+                return -np.inf
+                break
+        return 0.0
+
+
+    def lnlike(self,theta):
+        model_dat = self.model(theta, self.wave_obs)
+        inv_sigma2 = 1.0 / (self.enorm ** 2)
+        return -0.5 * (np.sum((self.fnorm - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
+
+
+    def lnprob(self,theta):
+        lp = self.lnprior(theta)
+        if not np.isfinite(lp):
+            return -np.inf
+        return lp + self.lnlike(theta)
+
+
+
     def runmcmc(self, optimize=True,verbose=False):
         model = self.model
         theta = self.theta
@@ -323,7 +327,9 @@ class vfit(object):
         print("Starting emcee ***********")
         burntime = np.round(no_of_steps * .2)
         with Pool() as pool:
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
+            #sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,  pool=pool, args=(lb, ub, model, wave_obs, fnorm, enorm))
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, self.lnprob,  pool=pool)
+            
             pos, prob, state =sampler.run_mcmc(guesses,no_of_steps,progress=True,skip_initial_state_check=self.skip_initial_state_check)
 
 
@@ -331,12 +337,11 @@ class vfit(object):
         print("Done!")
         #print("Now starting the Final Calculations:")
         print("*****************")
-        print("Mean auto-correlation time should be > " + str(no_of_steps/50.)) 
         
         mean_acceptance_fraction = np.mean(sampler.acceptance_fraction)  # A good value will be between 0.2 and 0.5 according to Foreman-Mckay+2013
         print("Mean acceptance fraction: {0:.3f}".format(mean_acceptance_fraction))
         try:
-            mean_autocorr_time = np.mean(sampler.get_autocorr_time())  # mean autocorrelation time for the chain
+            mean_autocorr_time = np.nanmean(sampler.get_autocorr_time())  # mean autocorrelation time for the chain
             print("Mean auto-correlation time: {0:.3f} steps".format(mean_autocorr_time))
         except:
             mean_autocorr_time = 0
@@ -374,10 +379,10 @@ class vfit(object):
         self.ndim = ndim
         self.nwalkers = nwalkers
 
-    def plot_corner(self,outfile=False):
+    def plot_corner(self,outfile=False,burntime=100):
         ndim=self.ndim
         #samples = self.sampler.chain[:, 100:, :].reshape((-1, ndim))  # sampler.flatchain
-        samples = self.sampler.get_chain(discard=100, thin=15, flat=True)
+        samples = self.sampler.get_chain(discard=burntime, thin=15, flat=True)
 
         st = np.percentile(samples, 50, axis=0)  # =np.median(samples,axis=0)#np.median(sampler.flatchain, axis=0)
         # df = pd.DataFrame(samples)

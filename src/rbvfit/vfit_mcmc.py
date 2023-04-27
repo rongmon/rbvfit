@@ -54,7 +54,11 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
         best_fit, f1 = model.model_fit(theta_prime, wave_obs)
 
         fig, axs = plt.subplots(ntransition, sharex=True, sharey=False,figsize=(12,18 ),gridspec_kw={'hspace': 0})
-        
+        # Sets title to outfile is not False
+        if outfile==False:
+            pass
+        else:
+            plt.title(outfile, y=1.07*ntransition, loc='right', size=12)            
         
         BIGGER_SIZE = 18
         plt.rc('font', size=BIGGER_SIZE)          # controls default text sizes
@@ -72,7 +76,8 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
             #When there are no nuissance parameter
             #Now loop through each transition and plot them in velocity space
             vel=rb_veldiff(wave_list[0],wave_rest)
-            axs.step(vel, fnorm, 'k-', linewidth=1.)
+            axs.step(vel, fnorm, 'k-', linewidth=1., label=wave_list[0])
+            axs.legend()
             axs.step(vel, enorm, color='r', linewidth=1.)
             # Plotting a random sample of outputs extracted from posterior dis
             for ind in range(len(index)):
@@ -105,7 +110,8 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
             for i in range(0,ntransition):
                 print(wave_list[i])
                 vel=rb_veldiff(wave_list[i],wave_rest)
-                axs[i].step(vel, fnorm, 'k-', linewidth=1.)
+                axs[i].step(vel, fnorm, 'k-', linewidth=1., label=wave_list[i])
+                axs[i].legend()
                 axs[i].step(vel, enorm, color='r', linewidth=1.)
                 #pdb.set_trace()
                 # Plotting a random sample of outputs extracted from posterior distribution
@@ -122,7 +128,6 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
                 # plot individual components
                 for dex in range(0,np.shape(f1)[1]):
                     axs[i].plot(vel, f1[:, dex], 'g:', linewidth=3)
-                
                 for iclump in range(0,n_clump):
                     axs[i].plot([best_v[iclump],best_v[iclump]],[1.05,1.15],'k--',lw=4)
                     if i ==0:
@@ -398,6 +403,12 @@ class vfit(object):
         text_label = np.append(tmp, v_tile)
 
         figure = corner.corner(samples, labels=text_label, truths=st)
+        # Sets title to outfile is not False
+        if outfile==False:
+            pass
+        else:
+            plt.title(outfile, y=1.05*ndim, loc='right') 
+
         theta_prime = st
 
         value1 = np.percentile(samples, 10, axis=0)

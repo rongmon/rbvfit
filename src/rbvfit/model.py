@@ -118,7 +118,7 @@ class create_voigt(object):
         for i in range(0, nclump):
             line.addline(self.lambda_rest[i], z=self.zabs[i])
             if verbose==True:
-                print('Added line:' + line.lines[i].name + ' at z:' + np.str(self.zabs[i]))
+                print('Added line:' + line.lines[i].name + ' at z:' + str(self.zabs[i]))
 
         self.line = line
 

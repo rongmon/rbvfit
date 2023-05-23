@@ -19,7 +19,7 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
         value1=fit.low_theta
         value2=fit.high_theta
         n_clump=model.nclump 
-        n_clump_total=np.int(len(theta_prime)/3)
+        n_clump_total=int(len(theta_prime)/3)
 
         ntransition=model.ntransition
         zabs=model.zabs
@@ -92,10 +92,10 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
     
             for iclump in range(0,n_clump):
                 axs.plot([best_v[iclump],best_v[iclump]],[1.05,1.15],'k--',lw=4)
-                text1=r'$logN \;= '+ np.str('%.2f' % best_N[iclump]) +'^{ + ' + np.str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}'+ '_{ -' +  np.str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}$'
+                text1=r'$logN \;= '+ str('%.2f' % best_N[iclump]) +'^{ + ' + str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}'+ '_{ -' +  str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}$'
                 axs.text(best_v[iclump],1.2,text1,
                      fontsize=14,rotation=90, rotation_mode='anchor')
-                text2=r'$b ='+np.str('%.0f' % best_b[iclump]) +'^{ + ' + np.str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}'+ '_{ -' +  np.str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}$'
+                text2=r'$b ='+str('%.0f' % best_b[iclump]) +'^{ + ' + str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}'+ '_{ -' +  str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}$'
     
                 axs.text(best_v[iclump]+30,1.2, text2,fontsize=14,rotation=90, rotation_mode='anchor')
   
@@ -131,10 +131,10 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
                 for iclump in range(0,n_clump):
                     axs[i].plot([best_v[iclump],best_v[iclump]],[1.05,1.15],'k--',lw=4)
                     if i ==0:
-                        text1=r'$logN \;= '+ np.str('%.2f' % best_N[iclump]) +'^{ + ' + np.str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}'+ '_{ -' +  np.str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}$'
+                        text1=r'$logN \;= '+ str('%.2f' % best_N[iclump]) +'^{ + ' + str('%.2f' % (high_N[iclump]-best_N[iclump]))+'}'+ '_{ -' +  str('%.2f' % (best_N[iclump]-low_N[iclump]))+'}$'
                         axs[i].text(best_v[iclump],1.2,text1,
                                  fontsize=14,rotation=90, rotation_mode='anchor')
-                        text2=r'$b ='+np.str('%.0f' % best_b[iclump]) +'^{ + ' + np.str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}'+ '_{ -' +  np.str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}$'
+                        text2=r'$b ='+str('%.0f' % best_b[iclump]) +'^{ + ' + str('%.0f' % (high_b[iclump]-best_b[iclump]))+'}'+ '_{ -' +  str('%.0f' % (best_b[iclump]-low_b[iclump]))+'}$'
                 
                         axs[i].text(best_v[iclump]+30,1.2, text2,
                                  fontsize=14,rotation=90, rotation_mode='anchor')

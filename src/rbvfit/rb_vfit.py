@@ -86,7 +86,7 @@ class model(object):
         f=s['fval']
         name=s['name']
         if verbose == True:
-            print('Added Line : ' + name +' at z = '+ np.str(z))
+            print('Added Line : ' + name +' at z = '+ str(z))
         self.lines=np.append(self.lines,line(name,lambda0,f,gamma,z))
       # return self.lines
 

@@ -278,10 +278,10 @@ def plot_mcmc_posteriors(samples,model,theta_prime,wave,flux,error
 
         for i in range(0,n_clump):
             ax.plot([best_v[i],best_v[i]],[1.05,1.15],'k--',lw=4)
-            text1=r'$logN \;= '+ np.str('%.2f' % best_N[i]) +'^{ + ' + np.str('%.2f' % (best_N[i]-low_N[i]))+'}'+ '_{ -' +  np.str('%.2f' % (high_N[i]-best_N[i]))+'}$'
+            text1=r'$logN \;= '+ str('%.2f' % best_N[i]) +'^{ + ' + str('%.2f' % (best_N[i]-low_N[i]))+'}'+ '_{ -' +  str('%.2f' % (high_N[i]-best_N[i]))+'}$'
             ax.text(best_v[i],1.2,text1,
                  fontsize=14,rotation=90, rotation_mode='anchor')
-            text2=r'$b ='+np.str('%.0f' % best_b[i]) +'^{ + ' + np.str('%.0f' % (best_b[i]-low_b[i]))+'}'+ '_{ -' +  np.str('%.0f' % (high_b[i]-best_b[i]))+'}$'
+            text2=r'$b ='+str('%.0f' % best_b[i]) +'^{ + ' + str('%.0f' % (best_b[i]-low_b[i]))+'}'+ '_{ -' +  str('%.0f' % (high_b[i]-best_b[i]))+'}$'
     
             ax.text(best_v[i]+10,1.2, text2,
                  fontsize=14,rotation=90, rotation_mode='anchor')
@@ -403,7 +403,7 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
             nguess[i]=np.log10(sum(nv[qq]))        
 
             #Now ask interactively for b values     
-            prompt='Guess  b  for line ' +np.str(i+1)+ '/'+np.str(n_clouds) +', vel guess = ' + np.str('%.1f' % vguess[i])  +', col guess= '+ np.str('%.1f' % nguess[i])+ ': '
+            prompt='Guess  b  for line ' +str(i+1)+ '/'+str(n_clouds) +', vel guess = ' + str('%.1f' % vguess[i])  +', col guess= '+ str('%.1f' % nguess[i])+ ': '
             tmp_b =  input(prompt)
             bguess[i]= np.double(tmp_b)
 
@@ -427,7 +427,7 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
             ax.plot([-2500,2500],[1,1],'k:')       
             ax.set_xlabel('vel [km/s]')
             ax.set_ylabel('Normalized Flux')
-            ax.set_title('Add  # ['+ np.str(n_nuissance)+ '] NUISSANCE parameter Line Center!')
+            ax.set_title('Add  # ['+ str(n_nuissance)+ '] NUISSANCE parameter Line Center!')
             xx = plt.ginput(n=n_nuissance,show_clicks=True)
             print('Once you are done, press enter to continue!')
             plt.close()
@@ -450,7 +450,7 @@ def rb_interactive_vpfit(wave,flux,error,wrest,zabs,ntransition=1,custom_guess=F
                 nguess=np.append(nguess,np.log10(sum(nv1[qq])))
     
                 #Now ask interactively for b values     
-                prompt='Guess  b  for line ' +np.str(wrest[ntransition+i])+ '/'+np.str(n_nuissance) +', zabs = ' + np.str('%.5f' % zabs[1+i])  +', col guess= '+ np.str('%.1f' % nguess[n_clouds+i])+ ': '
+                prompt='Guess  b  for line ' +str(wrest[ntransition+i])+ '/'+str(n_nuissance) +', zabs = ' + str('%.5f' % zabs[1+i])  +', col guess= '+ str('%.1f' % nguess[n_clouds+i])+ ': '
                 tmp_b =  input(prompt)
                 bguess= np.append(bguess,np.double(tmp_b))
     

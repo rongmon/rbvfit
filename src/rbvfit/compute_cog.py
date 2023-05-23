@@ -67,7 +67,7 @@ class compute_cog(object):
         plt.title(self.st['name'])
 
         for i in range(0,len(self.blist)):
-            plt.plot(np.log10((10**self.Nlist)*self.st['fval']*self.st['wave']*1e-8),np.log10(self.Wlist[:,i]/self.st['wave']),label='b = '+ np.str(self.blist[i]))
+            plt.plot(np.log10((10**self.Nlist)*self.st['fval']*self.st['wave']*1e-8),np.log10(self.Wlist[:,i]/self.st['wave']),label='b = '+ str(self.blist[i]))
         plt.xlabel(r'$log_{10} [N f \lambda]$')
         plt.ylabel(r'$log_{10} [W/ \lambda]$')
         plt.legend()

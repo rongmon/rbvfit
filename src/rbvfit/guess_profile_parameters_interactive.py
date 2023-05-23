@@ -44,6 +44,8 @@ class gui_set_clump(object):
         cid = self.fig.canvas.mpl_connect('button_press_event', self.onclick)
         cid1 = self.fig.canvas.mpl_connect('key_press_event', self.onpress)
         display(self.w)
+
+        #print(type(self.vguess), type(self.nguess), type(n_clouds))
         
     def input_b_guess(self):
         # Now set up the model fitting paramters.
@@ -60,10 +62,11 @@ class gui_set_clump(object):
 
         for i in range(0,n_clouds):
             qq=np.where( (vel < self.vguess[i]+ 10.) & (vel > self.vguess[i]-10.))
-            self.nguess[i]=np.log10(sum(nv[qq]))        
-
+            self.nguess[i]=np.log10(sum(nv[qq]))     
+            print(type(self.vguess), type(self.nguess), type(n_clouds))
+   
             #Now ask interactively for b values     
-            prompt='Guess  b  for line ' +np.str(i+1)+ '/'+np.str(n_clouds) +', vel guess = ' + np.str('%.1f' % self.vguess[i])  +', col guess= '+ np.str('%.1f' % self.nguess[i])+ ': '
+            prompt='Guess  b  for line ' +str(i+1)+ '/'+str(n_clouds) +', vel guess = ' + str('%.1f' % self.vguess[i])  +', col guess= '+ str('%.1f' % self.nguess[i])+ ': '
             tmp_b =  input(prompt)
             self.bguess[i]= np.double(tmp_b)
 

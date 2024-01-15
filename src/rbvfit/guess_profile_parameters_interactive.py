@@ -1,3 +1,4 @@
+from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
 import ipywidgets as widgets
@@ -59,14 +60,14 @@ class gui_set_clump(object):
         str=line.rb_setline(self.wrest,'closest','atom')
         vel,nv=quick_nv_estimate(self.wave/(1.+self.zabs),self.flux,str['wave'],str['fval']);
 
-
         for i in range(0,n_clouds):
             qq=np.where( (vel < self.vguess[i]+ 10.) & (vel > self.vguess[i]-10.))
             self.nguess[i]=np.log10(sum(nv[qq]))     
-            print(type(self.vguess), type(self.nguess), type(n_clouds))
-   
+            
+
             #Now ask interactively for b values     
-            prompt='Guess  b  for line ' +str(i+1)+ '/'+str(n_clouds) +', vel guess = ' + str('%.1f' % self.vguess[i])  +', col guess= '+ str('%.1f' % self.nguess[i])+ ': '
+            prompt='Guess  b  for line '+np.str(i+1)+ '/'+np.str(n_clouds) +', vel guess = ' + np.str('%.1f' % self.vguess[i])  +', col guess= '+ np.str('%.1f' % self.nguess[i])+ ': '
+
             tmp_b =  input(prompt)
             self.bguess[i]= np.double(tmp_b)
 

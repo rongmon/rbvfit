@@ -42,6 +42,9 @@ Main Modules:
              Example jupyter notebook on how to use these codes to perform a fit [interactive mode]. We guess the number of absorbing clouds and their b, v, n values interactively inside a jupyter notebook.
 
 
+DOI
+====
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403232.svg)](https://doi.org/10.5281/zenodo.10403232)
 
 
 Note
@@ -51,5 +54,4 @@ Tested on : Python 3.7
 
 Dependencies on linetools, emcee, corner
 
-This project has been set up using PyScaffold 3.1. For details and usage
-information on PyScaffold see https://pyscaffold.org/.
+

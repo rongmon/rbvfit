@@ -255,7 +255,8 @@ def set_bounds(nguess,bguess,vguess,**kwargs):
 
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, no_of_Chain=50, no_of_steps=1000,
-                 perturbation=1e-6,skip_initial_state_check=False):
+                 perturbation=1e-6,skip_initial_state_check=False,**kwargs):
+    # Enable input from second set of model to compute joint likelihood
     # Main class that performs all the fitting
         self.wave_obs = wave_obs
         self.fnorm = fnorm
@@ -268,6 +269,25 @@ class vfit(object):
         self.no_of_steps = no_of_steps
         self.perturbation = perturbation
         self.skip_initial_state_check=skip_initial_state_check
+        #Create a flag to check if a second model is used. 
+        # Add the second model
+        #Add second set of wave,flux,error
+        #Then update the loglikelihood function
+        if 'second_spec' in kwargs:
+            self.second_spec_flag=True
+        else:
+            self.second_spec_flag=False
+
+        if self.second_spec_flag==True:
+            if 'second_spec_dict' in kwargs:
+                second_spec_dict=kwargs['second_spec_dict']
+                self.wave2= second_spec_dict['wave']
+                self.fnorm2= second_spec_dict['flux']
+                self.enorm2= second_spec_dict['error']
+
+            if 'model2' in kwargs:
+                self.model2=kwargs['model2']
+
 
 
 
@@ -281,9 +301,21 @@ class vfit(object):
 
 
     def lnlike(self,theta):
+        #update this function to enable joint likelihood of two models
         model_dat = self.model(theta, self.wave_obs)
         inv_sigma2 = 1.0 / (self.enorm ** 2)
-        return -0.5 * (np.sum((self.fnorm - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
+        lnlike_total1= -0.5 * (np.sum((self.fnorm - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
+
+        if self.second_spec_flag==True:
+            model_dat2 = self.model2(theta, self.wave2)
+            inv_sigma2_2 = 1.0 / (self.enorm2 ** 2)
+            lnlike_total2= -0.5 * (np.sum((self.fnorm2 - model_dat2) ** 2 * inv_sigma2_2 - np.log(inv_sigma2_2)))
+            lnlike_total= lnlike_total1+lnlike_total2
+
+        else:
+            lnlike_total= lnlike_total1
+
+        return lnlike_total
 
 
     def lnprob(self,theta):
@@ -384,7 +416,7 @@ class vfit(object):
         self.ndim = ndim
         self.nwalkers = nwalkers
 
-    def plot_corner(self,outfile=False,burntime=100):
+    def plot_corner(self,outfile=False,burntime=100,**kwargs):
         ndim=self.ndim
         #samples = self.sampler.chain[:, 100:, :].reshape((-1, ndim))  # sampler.flatchain
         samples = self.sampler.get_chain(discard=burntime, thin=15, flat=True)
@@ -402,7 +434,11 @@ class vfit(object):
         tmp = np.append(N_tile, b_tile)
         text_label = np.append(tmp, v_tile)
 
-        figure = corner.corner(samples, labels=text_label, truths=st)
+        if 'True_values' in kwargs:
+            figure = corner.corner(samples, labels=text_label, truths=kwargs['True_values'])
+        else:
+            figure = corner.corner(samples, labels=text_label, truths=st)
+
         # Sets title to outfile is not False
         if outfile==False:
             pass

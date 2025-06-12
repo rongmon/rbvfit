@@ -226,16 +226,84 @@ class gui_set_clump(object):
         self.vguess: Optional[np.ndarray] = None
         self.nguess: Optional[np.ndarray] = None
         
+        # Set default b-values based on transition type
+        self._set_default_b_values()
+        
+    def _set_default_b_values(self) -> None:
+        """
+        Set default b-parameter values based on the transition ionization state.
+        """
+        if not self.vel_guess:
+            return
+            
+        # Get transition information
+        line_info: Dict[str, Any] = line.rb_setline(self.wrest, 'closest', 'atom')
+        transition_name = line_info['name'][0] if len(line_info['name']) > 0 else ""
+        
+        # Parse ionization state and set appropriate default b-value
+        default_b = self._get_default_b_from_transition(transition_name)
+        
+        # Set default values
+        n_clouds = len(self.vel_guess)
+        self.bguess = np.full(n_clouds, default_b)
+        self.vguess = np.array(self.vel_guess)
+        
+        # Estimate column densities using AOD method
+        vel, nv = quick_nv_estimate(self.wave / (1. + self.zabs), self.flux, 
+                                   line_info['wave'], line_info['fval'])
+        self.nguess = np.zeros(n_clouds)
+        for i in range(n_clouds):
+            qq = np.where((vel < self.vguess[i] + 10.) & (vel > self.vguess[i] - 10.))
+            self.nguess[i] = np.log10(np.sum(nv[qq]) + 1e-20)  # Add small value to avoid log(0)
+            
+        print(f"Set default b-values based on {transition_name}: {default_b:.1f} km/s for all {n_clouds} components")
+        
+    def _get_default_b_from_transition(self, transition_name: str) -> float:
+        """
+        Get default b-parameter based on transition ionization state.
+        
+        Parameters
+        ----------
+        transition_name : str
+            Transition name from rb_setline, e.g., 'HI 1215', 'OVI 1031'
+            
+        Returns
+        -------
+        float
+            Default b-parameter in km/s
+        """
+        # Default fallback value
+        default_b = 25.0
+        
+        # Extract ionization state (roman numerals)
+        if 'I ' in transition_name or transition_name.endswith('I'):
+            # Neutral species (I)
+            default_b = 22.0
+        elif 'II ' in transition_name or transition_name.endswith('II'):
+            # Singly ionized (II) 
+            default_b = 18.0
+        elif 'III ' in transition_name or transition_name.endswith('III'):
+            # Doubly ionized (III)
+            default_b = 25.0
+        elif 'IV ' in transition_name or transition_name.endswith('IV'):
+            # Triply ionized (IV)
+            default_b = 30.0
+        elif any(ion in transition_name for ion in ['V ', 'VI ', 'VII ', 'VIII ']):
+            # Higher ionization states
+            default_b = 40.0
+            
+        return default_b
+        
     def input_b_guess(self) -> None:
         """
         Interactively set Doppler parameter (b-value) guesses for each velocity component.
         
-        This method should be called after the user has finished clicking velocity guesses.
-        It estimates column densities for each velocity guess using the apparent optical
-        depth method, then prompts the user to input Doppler parameter guesses.
+        This method updates the default b-values that were automatically set based on
+        the transition type. It estimates column densities for each velocity guess using 
+        the apparent optical depth method, then prompts the user to input Doppler parameter guesses.
         
-        Sets
-        ----
+        Updates
+        -------
         bguess : np.ndarray
             Array of Doppler parameter guesses in km/s
         vguess : np.ndarray
@@ -247,30 +315,32 @@ class gui_set_clump(object):
         -----
         Column density estimates are made by integrating the apparent optical depth
         within ±10 km/s of each velocity guess. The user is then prompted to enter
-        Doppler parameter values for each component.
+        Doppler parameter values for each component, with current defaults shown.
         """
-        # Now set up the model fitting parameters.
-        # Create the guesses for starting a fit
-        n_clouds: int = int(len(self.vel_guess))
-        self.bguess = np.zeros(n_clouds)
-        self.vguess = np.array(self.vel_guess)
-        self.nguess = np.zeros(n_clouds)
+        if not self.vel_guess:
+            print("No velocity guesses available. Add some velocity guesses first.")
+            return
+            
+        # Ensure we have current defaults
+        if self.bguess is None:
+            self._set_default_b_values()
         
-        # AOD column guess for the primary line
-        line_info: Dict[str, Any] = line.rb_setline(self.wrest, 'closest', 'atom')
-        vel, nv = quick_nv_estimate(self.wave / (1. + self.zabs), self.flux, 
-                                   line_info['wave'], line_info['fval'])
+        # Now set up the model fitting parameters.
+        n_clouds: int = len(self.vel_guess)
         
         for i in range(n_clouds):
-            qq = np.where((vel < self.vguess[i] + 10.) & (vel > self.vguess[i] - 10.))
-            self.nguess[i] = np.log10(sum(nv[qq]))     
-            
-            # Now ask interactively for b values     
+            # Show current default and ask for new value
+            current_b = self.bguess[i]
             prompt = (f'Guess b for line {i+1}/{n_clouds}, '
-                     f'vel guess = {self.vguess[i]:.1f}, '
-                     f'col guess= {self.nguess[i]:.1f}: ')
-            tmp_b = input(prompt)
-            self.bguess[i] = np.double(tmp_b)
+                     f'vel = {self.vguess[i]:.1f} km/s, '
+                     f'col = {self.nguess[i]:.1f}, '
+                     f'current b = {current_b:.1f} km/s\n'
+                     f'Enter new b-value (or press Enter to keep {current_b:.1f}): ')
+            
+            tmp_b = input(prompt).strip()
+            if tmp_b:  # User entered a value
+                self.bguess[i] = np.double(tmp_b)
+            # Otherwise keep the current default value
             
     def onclick(self, event) -> None:
         """
@@ -320,6 +390,9 @@ class gui_set_clump(object):
         """
         self.interactive_mode = False
         
+        # Set default b-values now that we have velocity guesses
+        self._set_default_b_values()
+        
         # Close the figure in non-Jupyter environments
         if not IN_JUPYTER:
             plt.close(self.fig)
@@ -332,7 +405,7 @@ class gui_set_clump(object):
             
         print(f"\nFinished velocity selection!")
         print(f"Added {n_guesses} velocity guess{'es' if n_guesses != 1 else ''}: {[f'{v:.1f}' for v in sorted(self.vel_guess)]} km/s")
-        print("Run .input_b_guess() to proceed to b-parameter input.")
+        print("Run .input_b_guess() to customize b-parameter values.")
             
     def _remove_nearest_velocity_guess(self, xdata: float) -> None:
         """Remove the velocity guess nearest to the specified x position."""

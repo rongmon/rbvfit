@@ -107,7 +107,7 @@ def create_model_simple(theta,specw,line):
 
 def model_profile(theta,wave,line):
     voigt_one, voigt_Full=create_model_simple(theta,wave,line)  
-    COS_kernel=(6.5/2.355)/3. #6.5 pixels
+    COS_kernel=(6.5/2.355) #6.5 pixels
     g = Gaussian1DKernel(stddev=COS_kernel)
     # Convolve data
     fmodel = convolve(voigt_Full, g,boundary='extend')  

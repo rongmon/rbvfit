@@ -1,5 +1,5 @@
 """
-Picklable VoigtModel implementation that supports multiprocessing.
+Core Voigt profile model for rbvfit 2.0 with compilation for MCMC performance.
 """
 
 from __future__ import annotations
@@ -8,7 +8,6 @@ import numpy as np
 from scipy.special import wofz
 from astropy.convolution import convolve as astropy_convolve, Gaussian1DKernel, CustomKernel
 from dataclasses import dataclass
-import copy
 
 # Import configuration and parameter management
 from rbvfit.core.fit_configuration import FitConfiguration
@@ -64,124 +63,33 @@ def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float,
     tau = N * f * constant * H
     return tau
 
-
-def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
+class CompiledVoigt:
     """
-    Global function to evaluate compiled Voigt model. This function is picklable.
-    
-    Parameters
-    ----------
-    data_container : CompiledModelData
-        Container with pre-computed model data
-    theta : np.ndarray
-        Parameter array
-    wavelength : np.ndarray
-        Wavelength array
+    Compiled Voigt model containing pure functions for MCMC performance.
+    """
+    def __init__(self, pure_func):
+        self.simple_flux = pure_func
         
-    Returns
-    -------
-    np.ndarray
-        Model flux
-    """
-    atomic_lambda0 = data_container.atomic_lambda0
-    atomic_gamma = data_container.atomic_gamma
-    atomic_f = data_container.atomic_f
-    z_factors = data_container.z_factors
-    N_indices = data_container.N_indices
-    b_indices = data_container.b_indices
-    v_indices = data_container.v_indices
-    kernel = data_container.kernel
-    n_lines = data_container.n_lines
-
-    N_linear = 10**theta[N_indices]
-    b_values = theta[b_indices]
-    v_values = theta[v_indices]
-
-    tau_total = np.zeros_like(wavelength, dtype=np.float64)
-    c = 299792.458
-
-    for i in range(n_lines):
-        z_total = z_factors[i] * (1 + v_values[i]/c) - 1
-        wave_rest = wavelength / (1 + z_total)
-        
-        tau = voigt_tau(
-            atomic_lambda0[i], atomic_gamma[i], atomic_f[i],
-            N_linear[i], b_values[i], wave_rest
-        )
-        
-        tau_total += tau
-
-    flux = np.exp(-tau_total)
-
-    if kernel is not None:
-        flux = astropy_convolve(flux, kernel, boundary="extend")
-
-    return flux
-
-
-@dataclass
-class CompiledModelData:
-    """
-    Data container for compiled model. This class only holds data and is picklable.
-    """
-    atomic_lambda0: np.ndarray
-    atomic_gamma: np.ndarray
-    atomic_f: np.ndarray
-    z_factors: np.ndarray
-    N_indices: np.ndarray
-    b_indices: np.ndarray
-    v_indices: np.ndarray
-    kernel: Optional[Any]
-    n_lines: int
-    total_components: int
-
-
-class CompiledVoigtModel:
-    """
-    Compiled Voigt model that can be pickled for multiprocessing.
-    
-    This class is a thin wrapper around the data container and delegates
-    computation to module-level functions.
-    """
-    
-    def __init__(self, data_container: CompiledModelData):
-        """Initialize with data container."""
-        self.data = data_container
-    
-    def model_flux(self, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
-        """
-        Evaluate model flux. Compatible with v1 interface.
-        
-        Parameters
-        ----------
-        theta : np.ndarray
-            Parameter array
-        wavelength : np.ndarray
-            Wavelength array
-            
-        Returns
-        -------
-        np.ndarray
-            Model flux
-        """
-        return _evaluate_compiled_model(self.data, theta, wavelength)
-    
-    def __call__(self, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
-        """Make the object callable for convenience."""
-        return self.model_flux(theta, wavelength)
-    
-    def __getstate__(self):
-        """Custom pickling - only pickle the data."""
-        return {'data': self.data}
-    
-    def __setstate__(self, state):
-        """Custom unpickling - restore from data."""
-        self.data = state['data']
-
+    def __call__(self, theta, wave):
+        """Allow direct calling: compiled_voigt(theta, wave)"""
+        return self.simple_flux(theta, wave)
 
 class VoigtModel:
     """
-    Enhanced Voigt profile model with picklable compilation.
+    Voigt profile model with multi-group support and compilation for MCMC performance.
+    
+    Parameters
+    ----------
+    config : FitConfiguration
+        The fitting configuration defining systems and ions
+    FWHM : str or float, optional
+        Line spread function specification (default: '6.5')
+    grating : str, optional
+        HST grating name if FWHM='COS' (default: 'G130M')
+    life_position : str, optional
+        HST lifetime position if FWHM='COS' (default: '1')
+    cen_wave : str, optional
+        Central wavelength for COS LSF (default: '1300A')
     """
     
     def __init__(self, config: FitConfiguration, FWHM: Union[str, float] = '6.5',
@@ -207,6 +115,7 @@ class VoigtModel:
         
         # Compilation state
         self._compiled = False
+        self.model_flux = None
     
     def _cache_atomic_parameters(self):
         """Cache all atomic parameters as flat arrays during initialization."""
@@ -284,35 +193,57 @@ class VoigtModel:
             fwhm_pixels = float(self.FWHM)
             sigma = fwhm_pixels / 2.355
             self.kernel = Gaussian1DKernel(stddev=sigma)
-
-    def compile(self) -> CompiledVoigtModel:
+    
+    def compile(self) -> CompiledVoigt:
         """
-        Compile the model for fast evaluation. Returns a picklable object.
+        Compile the model into a pure function object.
         
         Returns
         -------
-        CompiledVoigtModel
-            Compiled model that can be pickled and used with multiprocessing
+        CompiledVoigt
+            Object containing pure function for MCMC performance
         """
-        # Create data container with all necessary information
-        data_container = CompiledModelData(
-            atomic_lambda0=self.atomic_lambda0.copy(),
-            atomic_gamma=self.atomic_gamma.copy(),
-            atomic_f=self.atomic_f.copy(),
-            z_factors=self.z_factors.copy(),
-            N_indices=self.N_indices.copy(),
-            b_indices=self.b_indices.copy(),
-            v_indices=self.v_indices.copy(),
-            kernel=copy.deepcopy(self.kernel),  # Deep copy to avoid reference issues
-            n_lines=self.n_lines,
-            total_components=self.total_components
-        )
+        # Capture all pre-computed data (same as before)
+        atomic_lambda0 = self.atomic_lambda0.copy()
+        atomic_gamma = self.atomic_gamma.copy()
+        atomic_f = self.atomic_f.copy()
+        z_factors = self.z_factors.copy()
+        N_indices = self.N_indices.copy()
+        b_indices = self.b_indices.copy()
+        v_indices = self.v_indices.copy()
+        kernel = self.kernel
+        n_lines = self.n_lines
+
         
-        # Return compiled model
-        compiled_model = CompiledVoigtModel(data_container)
-        self._compiled = True
-        
-        return compiled_model
+        def pure_model_func(theta, wavelength):
+            """Pure function: (theta, wavelength) -> flux."""
+            # Same implementation as before
+            N_linear = 10**theta[N_indices]
+            b_values = theta[b_indices]
+            v_values = theta[v_indices]
+            
+            tau_total = np.zeros_like(wavelength, dtype=np.float64)
+            c = 299792.458
+            
+            for i in range(n_lines):
+                z_total = z_factors[i] * (1 + v_values[i]/c) - 1
+                wave_rest = wavelength / (1 + z_total)
+                
+                tau = voigt_tau(
+                    atomic_lambda0[i], atomic_gamma[i], atomic_f[i],
+                    N_linear[i], b_values[i], wave_rest
+                )
+                
+                tau_total += tau
+            
+            flux = np.exp(-tau_total)
+            
+            if kernel is not None:
+                flux = astropy_convolve(flux, kernel, boundary='extend')
+            
+            return flux
+    
+        return CompiledVoigt(pure_model_func)
     
     def evaluate(self, theta: np.ndarray, wavelength: np.ndarray, 
                  return_components: bool = False, return_unconvolved: bool = False,
@@ -323,21 +254,29 @@ class VoigtModel:
         if validate_theta:
             self.param_manager.validate_theta(theta)
         
-        # Direct evaluation using the global function
-        data_container = CompiledModelData(
-            atomic_lambda0=self.atomic_lambda0,
-            atomic_gamma=self.atomic_gamma,
-            atomic_f=self.atomic_f,
-            z_factors=self.z_factors,
-            N_indices=self.N_indices,
-            b_indices=self.b_indices,
-            v_indices=self.v_indices,
-            kernel=None if return_unconvolved else self.kernel,
-            n_lines=self.n_lines,
-            total_components=self.total_components
-        )
+        # Direct evaluation (same as existing code)
+        N_linear = 10**theta[self.N_indices]
+        b_values = theta[self.b_indices]
+        v_values = theta[self.v_indices]
         
-        flux_total = _evaluate_compiled_model(data_container, theta, wavelength)
+        tau_total = np.zeros_like(wavelength, dtype=np.float64)
+        c = 299792.458
+        
+        for i in range(self.n_lines):
+            z_total = self.z_factors[i] * (1 + v_values[i]/c) - 1
+            wave_rest = wavelength / (1 + z_total)
+            
+            tau = voigt_tau(
+                self.atomic_lambda0[i], self.atomic_gamma[i], self.atomic_f[i],
+                N_linear[i], b_values[i], wave_rest
+            )
+            
+            tau_total += tau
+        
+        flux_total = np.exp(-tau_total)
+        
+        if not return_unconvolved and self.kernel is not None:
+            flux_total = astropy_convolve(flux_total, self.kernel, boundary='extend')
         
         if return_components:
             return {
@@ -352,6 +291,12 @@ class VoigtModel:
     def is_compiled(self) -> bool:
         """Check if model is compiled for fast evaluation."""
         return self._compiled
+    
+    def force_recompile(self):
+        """Force recompilation."""
+        self._compiled = False
+        self.model_flux = None
+        self.compile()
     
     def get_info(self) -> str:
         """Get model configuration summary."""
@@ -369,41 +314,3 @@ class VoigtModel:
         lines.append(f"  Components: {self.total_components}")
             
         return "\n".join(lines)
-
-
-# Test function to verify pickling works
-def test_pickling():
-    """Test that the compiled model can be pickled."""
-    import pickle
-    
-    # Create a simple test model
-    config = FitConfiguration()
-    config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-    
-    model = VoigtModel(config, FWHM='6.5')
-    compiled_model = model.compile()
-    
-    # Test pickling
-    try:
-        pickled_data = pickle.dumps(compiled_model)
-        unpickled_model = pickle.loads(pickled_data)
-        print("✓ Pickling test passed!")
-        
-        # Test that it still works
-        theta = np.array([13.5, 13.2, 15.0, 20.0, -50.0, 0.0])
-        wave = np.linspace(3750, 3850, 100)
-        
-        original_flux = compiled_model.model_flux(theta, wave)
-        unpickled_flux = unpickled_model.model_flux(theta, wave)
-        
-        if np.allclose(original_flux, unpickled_flux):
-            print("✓ Functionality test passed!")
-        else:
-            print("✗ Functionality test failed!")
-            
-    except Exception as e:
-        print(f"✗ Pickling test failed: {e}")
-
-
-if __name__ == "__main__":
-    test_pickling()

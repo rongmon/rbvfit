@@ -1,5 +1,8 @@
 """
-Updated VoigtFitter that works with picklable compiled models for multiprocessing.
+Enhanced fitter class for rbvfit 2.0 with multi-group and multi-instrument support.
+
+This module provides unified MCMC fitting capabilities for both single and multiple
+datasets with shared physics parameters but different instrumental responses.
 """
 
 from __future__ import annotations
@@ -107,54 +110,9 @@ class MCMCSettings:
             raise ValueError("Number of steps must be >= 1")
 
 
-# Global variables for multiprocessing - need to be at module level
-_GLOBAL_COMPILED_MODEL = None
-_GLOBAL_DATASETS = None
-_GLOBAL_BOUNDS = None
-
-def _set_global_data(compiled_model, datasets, bounds):
-    """Set global data for multiprocessing workers."""
-    global _GLOBAL_COMPILED_MODEL, _GLOBAL_DATASETS, _GLOBAL_BOUNDS
-    _GLOBAL_COMPILED_MODEL = compiled_model
-    _GLOBAL_DATASETS = datasets
-    _GLOBAL_BOUNDS = bounds
-
-def _log_probability_worker(theta):
-    """
-    Worker function for multiprocessing MCMC.
-    This function is at module level so it can be pickled.
-    """
-    global _GLOBAL_COMPILED_MODEL, _GLOBAL_DATASETS, _GLOBAL_BOUNDS
-    
-    # Check prior bounds
-    bounds = _GLOBAL_BOUNDS
-    if np.any(theta < bounds.lower) or np.any(theta > bounds.upper):
-        return -np.inf
-    
-    # Calculate likelihood
-    total_log_likelihood = 0.0
-    
-    for dataset in _GLOBAL_DATASETS:
-        try:
-            # Use compiled model for fast evaluation
-            model_flux = _GLOBAL_COMPILED_MODEL.model_flux(theta, dataset.wavelength)
-            
-            # Calculate chi-squared
-            chi2 = np.sum((dataset.flux - model_flux)**2 / dataset.error**2)
-            
-            # Add to total log likelihood
-            total_log_likelihood += -0.5 * chi2
-            
-        except Exception:
-            # Return -inf for any evaluation errors
-            return -np.inf
-    
-    return total_log_likelihood
-
-
 class VoigtFitter:
     """
-    Main fitter class for single or multiple datasets with multiprocessing support.
+    Main fitter class for single or multiple datasets.
     
     This class handles MCMC fitting with automatic parameter management,
     bounds generation, and support for multiple MCMC backends.
@@ -183,6 +141,8 @@ class VoigtFitter:
         """Initialize the fitter."""
         self.model = model
         self.param_manager = model.param_manager
+        # Compile model for fast MCMC evaluation
+
         
         # Handle single dataset vs multiple datasets
         if isinstance(datasets, Dataset):
@@ -207,9 +167,6 @@ class VoigtFitter:
         # Initialize sampler-related attributes
         self.sampler = None
         self.initial_state = None
-        
-        # Compile model for fast evaluation
-        self.compiled_model = self.model.compile()
         
     def _log_prior(self, theta: np.ndarray, bounds: ParameterBounds) -> float:
         """
@@ -246,21 +203,28 @@ class VoigtFitter:
         float
             Log likelihood
         """
-        total_log_likelihood = 0.0
+        #total_log_likelihood = 0.0
+        dataset = self.datasets[0]
         
-        for dataset in self.datasets:
-            # Use compiled model for fast evaluation
-            model_flux = self.compiled_model.model_flux(theta, dataset.wavelength)
+        #model_dat = self.model.evaluate(theta, dataset.wavelength, validate_theta=False)
+        model_flux = self.model.model_flux(theta, dataset.wavelength)
+        inv_sigma2 = 1.0 / (dataset.error ** 2)
+        lnlike_total = -0.5 * (np.sum((dataset.flux - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
+
+
+        #for dataset in self.datasets:
+        #    # Use model's default LSF
+        #    model_flux = self.model.evaluate(theta, dataset.wavelength)#
+        #        
+        #    # Calculate chi-squared
+        #    chi2 = np.sum((dataset.flux - model_flux)**2 / dataset.error**2)
+        #    
+        #    # Add to total log likelihood
+        #    total_log_likelihood += -0.5 * chi2
             
-            # Calculate chi-squared
-            chi2 = np.sum((dataset.flux - model_flux)**2 / dataset.error**2)
-            
-            # Add to total log likelihood
-            total_log_likelihood += -0.5 * chi2
-            
-        return total_log_likelihood
+        return lnlike_total
     
-    def _log_probability(self, theta: np.ndarray, bounds: ParameterBounds) -> float:
+    def _log_probability(self, theta: np.ndarray) -> float:  # No bounds argument
         """
         Calculate log posterior probability.
         
@@ -277,7 +241,7 @@ class VoigtFitter:
             Log posterior probability
         """
         # Check prior first (cheaper)
-        log_prior = self._log_prior(theta, bounds)
+        log_prior = self._log_prior(theta, self.bounds)  # Use stored bounds
         if not np.isfinite(log_prior):
             return -np.inf
             
@@ -328,7 +292,7 @@ class VoigtFitter:
                 pos = np.clip(pos, bounds.lower + 1e-10, bounds.upper - 1e-10)
                 
                 # Check if position is valid
-                if np.isfinite(self._log_probability(pos, bounds)):
+                if np.isfinite(self._log_probability(pos)):
                     positions[i] = pos
                     break
                     
@@ -342,7 +306,7 @@ class VoigtFitter:
     def fit(self, initial_guess: np.ndarray, bounds: Optional[ParameterBounds] = None,
             optimize_first: bool = True) -> 'FitResults':
         """
-        Perform MCMC fit with multiprocessing support.
+        Perform MCMC fit.
         
         Parameters
         ----------
@@ -366,6 +330,8 @@ class VoigtFitter:
         # Generate bounds if not provided
         if bounds is None:
             bounds = self.param_manager.generate_parameter_bounds()
+        self.bounds = bounds  # Store bounds in object
+
             
         # Optimize initial guess if requested
         if optimize_first:
@@ -377,92 +343,34 @@ class VoigtFitter:
             
         # Set up MCMC sampler
         print(f"Setting up {self.mcmc_settings.sampler} sampler...")
-        
+        if self.mcmc_settings.sampler == 'emcee':
+            self.sampler = self._setup_emcee_sampler()
+        elif self.mcmc_settings.sampler == 'zeus':
+            self.sampler = self._setup_zeus_sampler()
+        else:
+            raise ValueError(f"Unknown sampler: {self.mcmc_settings.sampler}")
+            
         # Initialize walkers
         print("Initializing walkers...")
         initial_positions = self._initialize_walkers(optimized_guess, bounds)
         
-        # Set up multiprocessing if enabled
-        if self.mcmc_settings.parallel:
-            print("Setting up multiprocessing...")
-            # Set global data for workers
-            _set_global_data(self.compiled_model, self.datasets, bounds)
-            
-            # Create sampler with multiprocessing
-            if self.mcmc_settings.sampler == 'emcee':
-                with Pool() as pool:
-                    self.sampler = emcee.EnsembleSampler(
-                        self.mcmc_settings.n_walkers,
-                        self.n_params,
-                        _log_probability_worker,
-                        pool=pool
-                    )
-                    
-                    # Run MCMC
-                    print(f"Running MCMC with {self.mcmc_settings.n_walkers} walkers "
-                          f"for {self.mcmc_settings.n_steps} steps...")
-                    
-                    start_time = time.time()
-                    
-                    self.sampler.run_mcmc(initial_positions, self.mcmc_settings.n_steps, 
-                                         progress=self.mcmc_settings.progress)
-                    
-                    end_time = time.time()
-                    
-            elif self.mcmc_settings.sampler == 'zeus':
-                with Pool() as pool:
-                    self.sampler = zeus.EnsembleSampler(
-                        self.mcmc_settings.n_walkers,
-                        self.n_params,
-                        _log_probability_worker,
-                        pool=pool
-                    )
-                    
-                    # Run MCMC
-                    print(f"Running MCMC with {self.mcmc_settings.n_walkers} walkers "
-                          f"for {self.mcmc_settings.n_steps} steps...")
-                    
-                    start_time = time.time()
-                    
-                    self.sampler.run_mcmc(initial_positions, self.mcmc_settings.n_steps,
-                                         progress=self.mcmc_settings.progress)
-                    
-                    end_time = time.time()
-                    
-        else:
-            # Run without multiprocessing
-            print("Running without multiprocessing...")
-            
-            if self.mcmc_settings.sampler == 'emcee':
-                self.sampler = emcee.EnsembleSampler(
-                    self.mcmc_settings.n_walkers,
-                    self.n_params,
-                    self._log_probability,
-                    args=[bounds]
-                )
-            elif self.mcmc_settings.sampler == 'zeus':
-                self.sampler = zeus.EnsembleSampler(
-                    self.mcmc_settings.n_walkers,
-                    self.n_params,
-                    self._log_probability,
-                    args=[bounds]
-                )
-            
-            # Run MCMC
-            print(f"Running MCMC with {self.mcmc_settings.n_walkers} walkers "
-                  f"for {self.mcmc_settings.n_steps} steps...")
-            
-            start_time = time.time()
-            
+        # Run MCMC
+        print(f"Running MCMC with {self.mcmc_settings.n_walkers} walkers "
+              f"for {self.mcmc_settings.n_steps} steps...")
+        
+        start_time = time.time()
+        
+        if self.mcmc_settings.sampler == 'emcee':
             self.sampler.run_mcmc(initial_positions, self.mcmc_settings.n_steps, 
                                  progress=self.mcmc_settings.progress)
+        elif self.mcmc_settings.sampler == 'zeus':
+            self.sampler.run_mcmc(initial_positions, self.mcmc_settings.n_steps,
+                                 progress=self.mcmc_settings.progress)
             
-            end_time = time.time()
-            
+        end_time = time.time()
         print(f"MCMC completed in {end_time - start_time:.1f} seconds")
         
         # Create results object
-        from rbvfit.core.fit_results import FitResults
         return FitResults(
             sampler=self.sampler,
             param_manager=self.param_manager,
@@ -509,6 +417,45 @@ class VoigtFitter:
         except Exception as e:
             warnings.warn(f"Optimization error: {e}. Using original guess.")
             return initial_guess
+    
+    def _setup_emcee_sampler(self):
+        """Set up emcee sampler."""
+        if self.mcmc_settings.parallel:
+            pool = Pool()
+            sampler = emcee.EnsembleSampler(
+                self.mcmc_settings.n_walkers, 
+                self.n_params,
+                self._log_probability,
+                pool=pool
+            )
+        else:
+            sampler = emcee.EnsembleSampler(
+                self.mcmc_settings.n_walkers,
+                self.n_params, 
+                self._log_probability,
+            )
+        return sampler
+    
+    def _setup_zeus_sampler(self):
+        """Set up zeus sampler."""
+        if not HAS_ZEUS:
+            raise ImportError("Zeus sampler not available")
+            
+        if self.mcmc_settings.parallel:
+            pool = Pool()
+            sampler = zeus.EnsembleSampler(
+                self.mcmc_settings.n_walkers,
+                self.n_params,
+                self._log_probability,
+                pool=pool
+            )
+        else:
+            sampler = zeus.EnsembleSampler(
+                self.mcmc_settings.n_walkers,
+                self.n_params,
+                self._log_probability, 
+            )
+        return sampler
 
 
 class JointFitter(VoigtFitter):
@@ -551,10 +498,8 @@ class JointFitter(VoigtFitter):
         print(f"Joint fitting {len(self.datasets)} datasets:")
         for i, (dataset, (wmin, wmax)) in enumerate(zip(self.datasets, wave_ranges)):
             print(f"  Dataset {i+1} ({dataset.name}): {wmin:.1f} - {wmax:.1f} Å")
-
-
-# Import the existing FitResults placeholder
-from rbvfit.core.fit_results import FitResults
+            
+        # Additional validation could be added here for specific requirements
 
 
 # Placeholder for FitResults class (to be implemented in Step 2.2)

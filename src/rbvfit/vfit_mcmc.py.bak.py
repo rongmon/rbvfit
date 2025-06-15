@@ -191,97 +191,47 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
 
 
 
-
-def set_bounds(nguess,bguess,vguess,**kwargs):
+def set_bounds(nguess, bguess, vguess, **kwargs):
     """
-        Setting up bounds and giving option to manually update bounds.
-        example :
-            This command sets default bounds
-             > bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
+    Set bounds for MCMC parameters with optional custom overrides.
 
-            Customize bounds
-            lets say nguess=[12.2,12.3]
-                     bguess=[10,12]
-                     vguess=[0,199]
+    Parameters:
+    - nguess, bguess, vguess: arrays of initial guesses for logN, b, and v.
+    - Optional keyword arguments:
+        - Nlow, blow, vlow: custom lower bounds
+        - Nhi, bhi, vhi: custom upper bounds
 
-                     We want to set custom lower bound for logN
-
-                     Nlow=[12.1,11.9]
-                     >bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess,Nlow=Nlow)
-
-
+    Returns:
+    - bounds: list containing [lower_bounds, upper_bounds]
+    - lb: concatenated lower bounds
+    - ub: concatenated upper bounds
     """
 
+    nguess = np.asarray(nguess)
+    bguess = np.asarray(bguess)
+    vguess = np.asarray(vguess)
 
-    if 'Nlow' in kwargs:
-        Nlow=kwargs['Nlow']
-    else:
-        Nlow=np.zeros((len(nguess,)))
+    Nlow = np.asarray(kwargs.get('Nlow', nguess - 2.0))
+    blow = np.asarray(kwargs.get('blow', np.clip(bguess - 40.0, 2.0, None)))
+    vlow = np.asarray(kwargs.get('vlow', vguess - 50.0))
 
-    if 'blow' in kwargs:
-        blow=kwargs['blow']
-    else:
-        blow=np.zeros((len(nguess,)))
-    
-    if 'vlow' in kwargs:
-        vlow=kwargs['vlow']
-    else:
-        vlow=np.zeros((len(nguess,)))
+    NHI  = np.asarray(kwargs.get('Nhi', nguess + 2.0))
+    bHI  = np.asarray(kwargs.get('bhi', np.clip(bguess + 40.0, None, 150.0)))
+    vHI  = np.asarray(kwargs.get('vhi', vguess + 50.0))
 
-    if 'Nhi' in kwargs:
-        NHI=kwargs['Nhi']
-    else:
-        NHI=np.zeros((len(nguess,)))
+    lb = np.concatenate([Nlow, blow, vlow])
+    ub = np.concatenate([NHI,  bHI,  vHI])
+    bounds = [lb, ub]
 
-    if 'bhi' in kwargs:
-        bHI=kwargs['bhi']
-    else:
-        bHI=np.zeros((len(nguess,)))
-    
-    if 'vhi' in kwargs:
-        vHI=kwargs['vhi']
-    else:
-        vHI=np.zeros((len(nguess,)))
-
-
-    for i in range(0,len(nguess)):
-
-        if 'Nlow' not in kwargs:
-            Nlow[i]=nguess[i]-2.
-
-        if 'blow' not in kwargs:
-            blow[i]=bguess[i]-40.
-            if blow[i] < 2.:
-                blow[i] = 2.
-
-        if 'vlow' not in kwargs:
-            vlow[i]=vguess[i]-50.
-
-        if 'Nhi' not in kwargs:
-            NHI[i]=nguess[i]+2.
-
-        if 'bhi' not in kwargs:
-            bHI[i]=bguess[i]+40.
-            if bHI[i] > 200.:
-                bHI[i] = 150.
-        if 'vhi' not in kwargs:
-            vHI[i]=vguess[i]+50.
-    lb=np.concatenate((Nlow,blow,vlow))
-    ub=np.concatenate((NHI,bHI,vHI))
-    bounds=[lb,ub]
     return bounds, lb, ub
+
 
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, 
                  no_of_Chain=50, no_of_steps=1000, perturbation=1e-6,
-                 skip_initial_state_check=False, sampler='emcee',
-                 # New multi-instrument interface
-                 multi_instrument=False, instrument_data=None,
-                 # Legacy interface for backward compatibility
-                 second_spec=False, second_spec_dict=None, model2=None,
-                 **kwargs):
+                 skip_initial_state_check=False, sampler='emcee', **kwargs):
         """
-        Enhanced vfit class with multi-instrument support and multiple MCMC samplers.
+        Enhanced vfit class with support for multiple MCMC samplers.
         
         Parameters
         ----------
@@ -309,22 +259,10 @@ class vfit(object):
             Skip initial state check in sampler (default: False)
         sampler : str, optional
             MCMC sampler to use: 'emcee' or 'zeus' (default: 'emcee')
-        multi_instrument : bool, optional
-            Whether to use multi-instrument fitting (default: False)
-        instrument_data : dict, optional
-            Dictionary of additional instruments. Format:
-            {'instrument_name': {'model': model_func, 'wave': wave_array, 
-                               'flux': flux_array, 'error': error_array}}
-        second_spec : bool, optional
-            Legacy parameter for two-instrument fitting (default: False)
-        second_spec_dict : dict, optional
-            Legacy parameter for second instrument data
-        model2 : callable, optional
-            Legacy parameter for second instrument model
         **kwargs
-            Additional keyword arguments
+            Additional keyword arguments for multi-dataset fitting
         """
-        # Store main dataset
+        # Main class that performs all the fitting
         self.wave_obs = wave_obs
         self.fnorm = fnorm
         self.enorm = enorm
@@ -348,140 +286,55 @@ class vfit(object):
                 "Install with: pip install zeus-mcmc"
             )
         
-        # Handle multi-instrument setup
-        self._setup_multi_instrument(multi_instrument, instrument_data, 
-                                    second_spec, second_spec_dict, model2)
-
-    def _setup_multi_instrument(self, multi_instrument, instrument_data,
-                               second_spec, second_spec_dict, model2):
-        """Set up multi-instrument configuration"""
-        
-        # Handle legacy interface first
-        if second_spec:
-            if multi_instrument:
-                raise ValueError(
-                    "Cannot use both 'second_spec' (legacy) and 'multi_instrument' "
-                    "parameters simultaneously. Use 'multi_instrument' for new code."
-                )
-            
-            # Convert legacy interface to new multi-instrument format
-            if second_spec_dict is None or model2 is None:
-                raise ValueError(
-                    "Legacy 'second_spec=True' requires both 'second_spec_dict' and 'model2'"
-                )
-            
-            print("Using legacy second_spec interface. Consider upgrading to multi_instrument.")
-            
-            # Convert to new format internally
-            self.multi_instrument = True
-            self.instrument_data = {
-                'main': {
-                    'model': self.model,
-                    'wave': self.wave_obs,
-                    'flux': self.fnorm,
-                    'error': self.enorm
-                },
-                'second': {
-                    'model': model2,
-                    'wave': second_spec_dict['wave'],
-                    'flux': second_spec_dict['flux'],
-                    'error': second_spec_dict['error']
-                }
-            }
-            
-        elif multi_instrument:
-            # New multi-instrument interface
-            if instrument_data is None:
-                raise ValueError(
-                    "multi_instrument=True requires 'instrument_data' dictionary"
-                )
-            
-            # Validate instrument_data format
-            self._validate_instrument_data(instrument_data)
-            
-            # Set up multi-instrument data
-            self.multi_instrument = True
-            self.instrument_data = {
-                'main': {
-                    'model': self.model,
-                    'wave': self.wave_obs,
-                    'flux': self.fnorm,
-                    'error': self.enorm
-                }
-            }
-            
-            # Add additional instruments
-            for name, data in instrument_data.items():
-                self.instrument_data[name] = data
-            
+        # Create a flag to check if a second model is used. 
+        # Add the second model
+        # Add second set of wave,flux,error
+        # Then update the loglikelihood function
+        if 'second_spec' in kwargs:
+            self.second_spec_flag = True
         else:
-            # Single instrument mode
-            self.multi_instrument = False
-            self.instrument_data = None
-    
-    def _validate_instrument_data(self, instrument_data):
-        """Validate instrument_data format"""
-        if not isinstance(instrument_data, dict):
-            raise ValueError("instrument_data must be a dictionary")
-        
-        required_keys = {'model', 'wave', 'flux', 'error'}
-        
-        for name, data in instrument_data.items():
-            if not isinstance(data, dict):
-                raise ValueError(f"Instrument '{name}' data must be a dictionary")
-            
-            if not required_keys.issubset(data.keys()):
-                missing = required_keys - set(data.keys())
-                raise ValueError(
-                    f"Instrument '{name}' missing required keys: {missing}"
-                )
-            
-            # Check that arrays have consistent lengths
-            wave_len = len(data['wave'])
-            if len(data['flux']) != wave_len or len(data['error']) != wave_len:
-                raise ValueError(
-                    f"Instrument '{name}': wave, flux, and error arrays must have same length"
-                )
+            self.second_spec_flag = False
+
+        if self.second_spec_flag == True:
+            if 'second_spec_dict' in kwargs:
+                second_spec_dict = kwargs['second_spec_dict']
+                self.wave2 = second_spec_dict['wave']
+                self.fnorm2 = second_spec_dict['flux']
+                self.enorm2 = second_spec_dict['error']
+
+            if 'model2' in kwargs:
+                self.model2 = kwargs['model2']
+
+
 
     def lnprior(self, theta):
-            for index in range(0, len(self.lb)):
-                if (self.lb[index] > theta[index]) or (self.ub[index] < theta[index]):
-                    return -np.inf
-                    break
-            return 0.0
+        theta = np.asarray(theta)
+        if np.any((theta < self.lb) | (theta > self.ub)):
+            return -np.inf
+        return 0.0
+
+
     
     def lnlike(self, theta):
-        """
-        Calculate log-likelihood for single or multi-instrument data.
-        """
+        # Update this function to enable joint likelihood of two models
         try:
-            if self.multi_instrument:
-                # Multi-instrument likelihood calculation
-                lnlike_total = 0.0
-                
-                for instrument_name, data in self.instrument_data.items():
-                    # Evaluate model for this instrument
-                    model_dat = data['model'](theta, data['wave'])
-                    
-                    # Calculate likelihood contribution
-                    inv_sigma2 = 1.0 / (data['error'] ** 2)
-                    lnlike_instrument = -0.5 * (
-                        np.sum((data['flux'] - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2))
-                    )
-                    
-                    lnlike_total += lnlike_instrument
-                
-                return lnlike_total
-                
+            model_dat = self.model(theta, self.wave_obs)
+            inv_sigma2 = 1.0 / (self.enorm ** 2)
+            lnlike_total1 = -0.5 * (np.sum((self.fnorm - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
+    
+            if self.second_spec_flag == True:
+                model_dat2 = self.model2(theta, self.wave2)
+                inv_sigma2_2 = 1.0 / (self.enorm2 ** 2)
+                lnlike_total2 = -0.5 * (np.sum((self.fnorm2 - model_dat2) ** 2 * inv_sigma2_2 - np.log(inv_sigma2_2)))
+                lnlike_total = lnlike_total1 + lnlike_total2
             else:
-                # Single instrument likelihood (original logic)
-                model_dat = self.model(theta, self.wave_obs)
-                inv_sigma2 = 1.0 / (self.enorm ** 2)
-                lnlike_total = -0.5 * (
-                    np.sum((self.fnorm - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2))
-                )
+                lnlike_total = lnlike_total1
+    
+            # Check for invalid values
+            if not np.isfinite(lnlike_total):
+                return -np.inf
                 
-                return lnlike_total
+            return lnlike_total
             
         except Exception:
             # Return -inf for any evaluation errors
@@ -580,62 +433,10 @@ class vfit(object):
                         if not np.array_equal(walker_chain[i], walker_chain[i-1]):
                             n_accepted += 1
                 return n_accepted / n_total if n_total > 0 else 0.0
-            except Exception:
-                print("Could not calculate Gelman-Rubin diagnostic")
-
-        if verbose == True:
-            self._print_parameter_summary(sampler, burntime)
-
-        self.sampler = sampler
-        self.ndim = len(self.lb)
-        self.nwalkers = no_of_Chain
-
-    def _print_parameter_summary(self, sampler, burntime):
-        """Print detailed parameter summary."""
-        try:
-            from IPython.display import display, Math
-            
-            # Get samples - handle different sampler interfaces
-            samples = self._extract_samples(sampler, int(burntime))
-            
-            ndim = samples.shape[1]
-            nfit = int(ndim / 3)
-            N_tile = np.tile("logN", nfit)
-            b_tile = np.tile("b", nfit)
-            v_tile = np.tile("v", nfit)
-
-            tmp = np.append(N_tile, b_tile)
-            text_label = np.append(tmp, v_tile)
-
-            for i in range(len(text_label)):
-                mcmc = np.percentile(samples[:, i], [16, 50, 84])
-                q = np.diff(mcmc)
-                txt = "\mathrm{{{3}}} = {0:.2f}_{{-{1:.2f}}}^{{{2:.2f}}}"
-                txt = txt.format(mcmc[1], q[0], q[1], text_label[i])
-                display(Math(txt))
-        except ImportError:
-            print("IPython not available for detailed parameter display")
-        except Exception as e:
-            print(f"Could not display parameter summary: {e}")
-
-    def _extract_samples(self, sampler, burnin=200, thin=15):
-        """Extract samples in a sampler-agnostic way."""
-        if hasattr(sampler, 'get_chain'):
-            if self.sampler_name == 'emcee':
-                # emcee
-                return sampler.get_chain(discard=burnin, thin=thin, flat=True)
-            elif self.sampler_name == 'zeus':
-                # Zeus
-                try:
-                    return sampler.get_chain(discard=burnin, thin=thin, flat=True)
-                except TypeError:
-                    # Older zeus version might not support these parameters
-                    chain = sampler.get_chain()
-                    return chain[burnin::thin].reshape(-1, chain.shape[-1])
+            except:
+                return None
         else:
-            # Fallback
-            chain = sampler.get_chain()
-            return chain[burnin::thin].reshape(-1, chain.shape[-1])
+            return None
 
     def runmcmc(self, optimize=True, verbose=False, use_pool=True):
         """
@@ -777,6 +578,52 @@ class vfit(object):
         self.ndim = len(self.lb)
         self.nwalkers = no_of_Chain
 
+    def _print_parameter_summary(self, sampler, burntime):
+        """Print detailed parameter summary."""
+        try:
+            from IPython.display import display, Math
+            
+            # Get samples - handle different sampler interfaces
+            samples = self._extract_samples(sampler, int(burntime))
+            
+            ndim = samples.shape[1]
+            nfit = int(ndim / 3)
+            N_tile = np.tile("logN", nfit)
+            b_tile = np.tile("b", nfit)
+            v_tile = np.tile("v", nfit)
+
+            tmp = np.append(N_tile, b_tile)
+            text_label = np.append(tmp, v_tile)
+
+            for i in range(len(text_label)):
+                mcmc = np.percentile(samples[:, i], [16, 50, 84])
+                q = np.diff(mcmc)
+                txt = "\mathrm{{{3}}} = {0:.2f}_{{-{1:.2f}}}^{{{2:.2f}}}"
+                txt = txt.format(mcmc[1], q[0], q[1], text_label[i])
+                display(Math(txt))
+        except ImportError:
+            print("IPython not available for detailed parameter display")
+        except Exception as e:
+            print(f"Could not display parameter summary: {e}")
+
+    def _extract_samples(self, sampler, burnin=200, thin=15):
+        """Extract samples in a sampler-agnostic way."""
+        if hasattr(sampler, 'get_chain'):
+            if self.sampler_name == 'emcee':
+                # emcee
+                return sampler.get_chain(discard=burnin, thin=thin, flat=True)
+            elif self.sampler_name == 'zeus':
+                # Zeus
+                try:
+                    return sampler.get_chain(discard=burnin, thin=thin, flat=True)
+                except TypeError:
+                    # Older zeus version might not support these parameters
+                    chain = sampler.get_chain()
+                    return chain[burnin::thin].reshape(-1, chain.shape[-1])
+        else:
+            # Fallback
+            chain = sampler.get_chain()
+            return chain[burnin::thin].reshape(-1, chain.shape[-1])
 
     def plot_corner(self, outfile=False, burntime=100, **kwargs):
         """Plot corner plot with sampler-agnostic sample extraction."""
@@ -843,14 +690,9 @@ class vfit(object):
             'sampler': self.sampler_name,
             'walkers': self.no_of_Chain,
             'steps': self.no_of_steps,
-            'multi_instrument': self.multi_instrument,
             'has_zeus': HAS_ZEUS,
             'mp_context': MP_CONTEXT
         }
-        
-        if self.multi_instrument:
-            info['n_instruments'] = len(self.instrument_data)
-            info['instruments'] = list(self.instrument_data.keys())
         
         if hasattr(self, 'sampler'):
             # Get acceptance fraction in sampler-agnostic way
@@ -946,57 +788,9 @@ def print_performance_tips():
     print("• Monitor R-hat < 1.1 for Zeus")
     print("• Ensure chain length > 50x autocorrelation time")
     print("• Use optimize=True for better starting positions")
-    
-    print("\n🔧 Multi-Instrument Tips:")
-    print("• Use consistent parameter bounds across instruments")
-    print("• Monitor per-instrument likelihood contributions")
-    print("• Consider instrument-specific noise models")
-    print("• Joint fitting provides better parameter constraints")
-
-
-def print_multi_instrument_help():
-    """Print help for multi-instrument usage."""
-    print("\nMulti-Instrument Usage:")
-    print("=" * 25)
-    
-    print("\n📖 New Interface (Recommended):")
-    print("```python")
-    print("# Set up models for each instrument")
-    print("model_A = lambda theta, wave: compiled.model_flux(theta, wave, instrument='A')")
-    print("model_B = lambda theta, wave: compiled.model_flux(theta, wave, instrument='B')")
-    print("")
-    print("# Create fitter with multi-instrument data")
-    print("fitter = vfit(model_A, theta, lb, ub, wave_A, flux_A, error_A,")
-    print("              multi_instrument=True,")
-    print("              instrument_data={")
-    print("                  'B': {'model': model_B, 'wave': wave_B, 'flux': flux_B, 'error': error_B},")
-    print("                  'C': {'model': model_C, 'wave': wave_C, 'flux': flux_C, 'error': error_C}")
-    print("              })")
-    print("```")
-    
-    print("\n📜 Legacy Interface (Still Supported):")
-    print("```python")
-    print("# Two-instrument fitting (legacy)")
-    print("fitter = vfit(model_A, theta, lb, ub, wave_A, flux_A, error_A,")
-    print("              second_spec=True,")
-    print("              second_spec_dict={'wave': wave_B, 'flux': flux_B, 'error': error_B},")
-    print("              model2=model_B)")
-    print("```")
-    
-    print("\n✨ Benefits of Multi-Instrument Fitting:")
-    print("• Shared physical parameters across instruments")
-    print("• Better parameter constraints from joint data")
-    print("• Automatic handling of instrument-specific wavelength coverage")
-    print("• Consistent error propagation across all datasets")
-
-
-# Legacy compatibility
-vfit_mcmc = vfit  # Alias for backward compatibility
 
 
 if __name__ == "__main__":
-    # Print comprehensive help when module is run directly
+    # Print sampler information when module is run directly
     print_sampler_info()
     print_performance_tips()
-    print_multi_instrument_help()
-

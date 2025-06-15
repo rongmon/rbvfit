@@ -1,8 +1,8 @@
 """
-Configuration system for rbvfit 2.0 with automatic ion parameter tying.
+Configuration system for rbvfit 2.0 with master config creation for multi-instrument support.
 
-This module provides the core configuration classes for setting up multi-group
-absorption line fitting with automatic ion detection and parameter tying.
+This extends the existing FitConfiguration with methods to create master configurations
+from multiple instrument configurations.
 """
 
 from __future__ import annotations
@@ -108,6 +108,21 @@ class IonGroup:
             return parts[0]
         return line_name
     
+    def merge_transitions(self, other_transitions: List[float]) -> None:
+        """
+        Merge additional transitions into this ion group.
+        
+        Parameters
+        ----------
+        other_transitions : List[float]
+            Additional transitions to add
+        """
+        for trans in other_transitions:
+            if trans not in self.transitions:
+                self.transitions.append(trans)
+        # Re-validate after adding transitions
+        self.validate_transitions()
+    
     def __repr__(self) -> str:
         return (f"IonGroup({self.ion_name}, transitions={self.transitions}, "
                 f"components={self.components}, z={self.redshift})")
@@ -158,12 +173,7 @@ class AbsorptionSystem:
                             f"Cannot merge ion {ion_name}: component mismatch "
                             f"(existing: {group.components}, new: {components})"
                         )
-                    # Add new transitions, avoiding duplicates
-                    for trans in transitions:
-                        if trans not in group.transitions:
-                            group.transitions.append(trans)
-                    # Re-validate after adding transitions
-                    group.validate_transitions()
+                    group.merge_transitions(transitions)
                     return
                 else:
                     raise ValueError(
@@ -173,6 +183,49 @@ class AbsorptionSystem:
         
         ion_group = IonGroup(ion_name, transitions, components, self.redshift)
         self.ion_groups.append(ion_group)
+    
+    def merge_system(self, other_system: 'AbsorptionSystem') -> None:
+        """
+        Merge another absorption system into this one.
+        
+        Parameters
+        ----------
+        other_system : AbsorptionSystem
+            System to merge (must have same redshift)
+        """
+        z_tol = 1e-6
+        if abs(self.redshift - other_system.redshift) > z_tol:
+            raise ValueError(
+                f"Cannot merge systems with different redshifts: "
+                f"{self.redshift} vs {other_system.redshift}"
+            )
+        
+        for other_group in other_system.ion_groups:
+            # Check if we already have this ion
+            existing_group = None
+            for group in self.ion_groups:
+                if group.ion_name == other_group.ion_name:
+                    existing_group = group
+                    break
+            
+            if existing_group is not None:
+                # Merge the ion groups
+                if existing_group.components != other_group.components:
+                    raise ValueError(
+                        f"Cannot merge ion {other_group.ion_name}: component mismatch "
+                        f"(existing: {existing_group.components}, "
+                        f"other: {other_group.components})"
+                    )
+                existing_group.merge_transitions(other_group.transitions)
+            else:
+                # Add new ion group
+                new_group = IonGroup(
+                    other_group.ion_name,
+                    other_group.transitions.copy(),
+                    other_group.components,
+                    self.redshift
+                )
+                self.ion_groups.append(new_group)
     
     def get_parameter_count(self) -> int:
         """Get total parameter count for this system."""
@@ -274,6 +327,53 @@ class FitConfiguration:
             
         line_info = rb.rb_setline(wavelength, 'closest')
         return IonGroup._extract_ion_name(line_info['name'][0])
+    
+    @classmethod
+    def create_master_config(cls, instrument_configs: Dict[str, 'FitConfiguration']) -> 'FitConfiguration':
+        """
+        Create master configuration from union of all instrument configurations.
+        
+        Parameters
+        ----------
+        instrument_configs : Dict[str, FitConfiguration]
+            Dictionary mapping instrument names to their configurations
+            
+        Returns
+        -------
+        FitConfiguration
+            Master configuration containing union of all instruments
+        """
+        master = cls()
+        
+        # Collect all systems across instruments, organized by redshift
+        all_systems = {}
+        
+        for instrument_name, config in instrument_configs.items():
+            config.validate()  # Ensure each config is valid
+            
+            for system in config.systems:
+                z_key = system.redshift
+                
+                if z_key not in all_systems:
+                    # Create new system with deep copy of ion groups
+                    new_system = AbsorptionSystem(system.redshift)
+                    for ion_group in system.ion_groups:
+                        new_group = IonGroup(
+                            ion_group.ion_name,
+                            ion_group.transitions.copy(),
+                            ion_group.components,
+                            ion_group.redshift
+                        )
+                        new_system.ion_groups.append(new_group)
+                    all_systems[z_key] = new_system
+                else:
+                    # Merge with existing system
+                    all_systems[z_key].merge_system(system)
+        
+        master.systems = list(all_systems.values())
+        master.validate()
+        
+        return master
     
     def get_parameter_structure(self) -> Dict[str, Any]:
         """
@@ -393,7 +493,7 @@ class FitConfiguration:
         return json.dumps(data, indent=2)
     
     @classmethod
-    def deserialize(cls, json_str: str) -> FitConfiguration:
+    def deserialize(cls, json_str: str) -> 'FitConfiguration':
         """
         Create configuration from JSON string.
         
@@ -432,7 +532,7 @@ class FitConfiguration:
         filepath.write_text(self.serialize())
     
     @classmethod
-    def load(cls, filepath: Union[str, Path]) -> FitConfiguration:
+    def load(cls, filepath: Union[str, Path]) -> 'FitConfiguration':
         """Load configuration from file."""
         filepath = Path(filepath)
         return cls.deserialize(filepath.read_text())

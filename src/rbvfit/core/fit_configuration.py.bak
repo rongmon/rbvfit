@@ -1,9 +1,8 @@
 """
-Parameter management system for rbvfit 2.0 with multi-instrument support.
+Parameter management system for rbvfit 2.0.
 
 This module handles the mapping between the hierarchical configuration structure
-and the flat theta parameter array used for optimization, including parameter
-mapping for multi-instrument scenarios.
+and the flat theta parameter array used for optimization.
 """
 
 from __future__ import annotations
@@ -64,7 +63,6 @@ class ParameterManager:
     - Mapping theta values back to individual line parameters
     - Generating appropriate bounds for parameters
     - Providing parameter names for output
-    - Multi-instrument parameter mapping
     """
     
     def __init__(self, config: FitConfiguration):
@@ -90,95 +88,6 @@ class ParameterManager:
             Structure information including total parameters and mapping
         """
         return self.structure
-    
-    def compute_instrument_mapping(self, instrument_config: FitConfiguration, 
-                                 master_config: FitConfiguration) -> List[int]:
-        """
-        Compute parameter index mapping for a specific instrument config.
-        
-        Parameters
-        ----------
-        instrument_config : FitConfiguration
-            Configuration for this specific instrument
-        master_config : FitConfiguration
-            Master configuration containing all parameters
-            
-        Returns
-        -------
-        List[int]
-            List of theta indices that this instrument uses
-        """
-        # Get structures for both configs
-        instrument_structure = instrument_config.get_parameter_structure()
-        master_structure = master_config.get_parameter_structure()
-        
-        # Build mapping of (z, ion, component) -> parameter indices for both configs
-        instrument_param_map = self._build_parameter_location_map(instrument_structure)
-        master_param_map = self._build_parameter_location_map(master_structure)
-        
-        # Find which master parameters correspond to instrument parameters
-        mapping = []
-        
-        # Process N, b, v sections separately
-        for param_type in ['N', 'b', 'v']:
-            for (z, ion, comp) in instrument_param_map[param_type]:
-                key = (z, ion, comp)
-                if key not in master_param_map[param_type]:
-                    raise ValueError(
-                        f"Instrument parameter {param_type}_{ion}_z{z:.3f}_c{comp} "
-                        f"not found in master configuration"
-                    )
-                
-                master_idx = master_param_map[param_type][key]
-                mapping.append(master_idx)
-        
-        return mapping
-    
-    def _build_parameter_location_map(self, structure: Dict[str, Any]) -> Dict[str, Dict[Tuple, int]]:
-        """
-        Build mapping from (z, ion, component) to theta index for each parameter type.
-        
-        Parameters
-        ----------
-        structure : dict
-            Parameter structure from get_parameter_structure()
-            
-        Returns
-        -------
-        dict
-            Mapping with keys 'N', 'b', 'v' containing location mappings
-        """
-        param_map = {'N': {}, 'b': {}, 'v': {}}
-        
-        # Calculate total components for offset calculations
-        total_components = 0
-        for sys_info in structure['systems']:
-            for ion_info in sys_info['ion_groups']:
-                total_components += ion_info['components']
-        
-        # Track global component index
-        global_comp_idx = 0
-        
-        for sys_info in structure['systems']:
-            z = sys_info['redshift']
-            
-            for ion_info in sys_info['ion_groups']:
-                ion = ion_info['ion']
-                n_comp = ion_info['components']
-                
-                # Map each component
-                for comp_idx in range(n_comp):
-                    key = (z, ion, comp_idx)
-                    
-                    # Parameter indices in theta array
-                    param_map['N'][key] = global_comp_idx + comp_idx
-                    param_map['b'][key] = total_components + global_comp_idx + comp_idx
-                    param_map['v'][key] = 2 * total_components + global_comp_idx + comp_idx
-                
-                # Advance global component index
-                global_comp_idx += n_comp
-        
-        return param_map
     
     def theta_to_parameters(self, theta: np.ndarray) -> Dict[Tuple[int, str, int], ParameterSet]:
         """

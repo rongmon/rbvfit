@@ -55,40 +55,20 @@ def simple_v1_v2_test():
     config = FitConfiguration()
     config.add_system(z=zabs, ion='MgII', transitions=lambda_rest, components=2)
     v2_m = VoigtModel(config, FWHM='6.5')
+    v2_m_compile=v2_m.compile()
+
     
-    # 4. Write v1-style functions for v2 model
-    def lnprior_v2(theta):
-        """v1-style prior for v2."""
-        for index in range(0, len(lb)):
-            if (lb[index] > theta[index]) or (ub[index] < theta[index]):
-                return -np.inf
-        return 0.0
-    
-    def lnlike_v2(theta):
-        """v1-style likelihood for v2."""
-        model_dat = v2_m.evaluate(theta, wave, validate_theta=False)
-        inv_sigma2 = 1.0 / (error ** 2)
-        return -0.5 * (np.sum((observed_flux - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2)))
-    
-    def lnprob_v2(theta):
-        """v1-style probability for v2."""
-        lp = lnprior_v2(theta)
-        if not np.isfinite(lp):
-            return -np.inf
-        return lp + lnlike_v2(theta)
     
     # 5. Run v2 MCMC with v1-style setup
     print("\n5. Running v2 MCMC with v1-style functions...")
     start = time.time()
     
-    # Initialize walkers same as v1
-    nwalkers = 20
-    ndim = len(theta_true)
-    pos = theta_true + 1e-4 * np.random.randn(nwalkers, ndim)
     
-    # Run emcee directly
-    sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob_v2)
-    sampler.run_mcmc(pos, 1000, progress=True)
+    v2_fitter = v1_mcmc.vfit(
+        v2_m_compile.model_flux, theta_true, lb, ub, wave, observed_flux, error,
+        no_of_Chain=20, no_of_steps=1000, perturbation=1e-6
+    )
+    v2_fitter.runmcmc(optimize=False, verbose=False)
     
     v2_time = time.time() - start
     print(f"v2 MCMC time: {v2_time:.3f} s")

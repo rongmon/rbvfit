@@ -192,9 +192,23 @@ def plot_model(wave_obs,fnorm,enorm,fit,model,outfile= False,xlim=[-600.,600.],v
 
 
 
-def set_bounds(nguess,bguess,vguess,**kwargs):
+
+def set_bounds(nguess, bguess, vguess, **kwargs):
     """
-        Setting up bounds and giving option to manually update bounds.
+    Set bounds for MCMC parameters with optional custom overrides.
+
+    Parameters:
+    - nguess, bguess, vguess: arrays of initial guesses for logN, b, and v.
+    - Optional keyword arguments:
+        - Nlow, blow, vlow: custom lower bounds
+        - Nhi, bhi, vhi: custom upper bounds
+
+    Returns:
+    - bounds: list containing [lower_bounds, upper_bounds]
+    - lb: concatenated lower bounds
+    - ub: concatenated upper bounds
+
+
         example :
             This command sets default bounds
              > bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
@@ -210,66 +224,27 @@ def set_bounds(nguess,bguess,vguess,**kwargs):
                      >bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess,Nlow=Nlow)
 
 
+
     """
 
+    nguess = np.asarray(nguess)
+    bguess = np.asarray(bguess)
+    vguess = np.asarray(vguess)
 
-    if 'Nlow' in kwargs:
-        Nlow=kwargs['Nlow']
-    else:
-        Nlow=np.zeros((len(nguess,)))
+    Nlow = np.asarray(kwargs.get('Nlow', nguess - 2.0))
+    blow = np.asarray(kwargs.get('blow', np.clip(bguess - 40.0, 2.0, None)))
+    vlow = np.asarray(kwargs.get('vlow', vguess - 50.0))
 
-    if 'blow' in kwargs:
-        blow=kwargs['blow']
-    else:
-        blow=np.zeros((len(nguess,)))
-    
-    if 'vlow' in kwargs:
-        vlow=kwargs['vlow']
-    else:
-        vlow=np.zeros((len(nguess,)))
+    NHI  = np.asarray(kwargs.get('Nhi', nguess + 2.0))
+    bHI  = np.asarray(kwargs.get('bhi', np.clip(bguess + 40.0, None, 150.0)))
+    vHI  = np.asarray(kwargs.get('vhi', vguess + 50.0))
 
-    if 'Nhi' in kwargs:
-        NHI=kwargs['Nhi']
-    else:
-        NHI=np.zeros((len(nguess,)))
+    lb = np.concatenate([Nlow, blow, vlow])
+    ub = np.concatenate([NHI,  bHI,  vHI])
+    bounds = [lb, ub]
 
-    if 'bhi' in kwargs:
-        bHI=kwargs['bhi']
-    else:
-        bHI=np.zeros((len(nguess,)))
-    
-    if 'vhi' in kwargs:
-        vHI=kwargs['vhi']
-    else:
-        vHI=np.zeros((len(nguess,)))
-
-
-    for i in range(0,len(nguess)):
-
-        if 'Nlow' not in kwargs:
-            Nlow[i]=nguess[i]-2.
-
-        if 'blow' not in kwargs:
-            blow[i]=bguess[i]-40.
-            if blow[i] < 2.:
-                blow[i] = 2.
-
-        if 'vlow' not in kwargs:
-            vlow[i]=vguess[i]-50.
-
-        if 'Nhi' not in kwargs:
-            NHI[i]=nguess[i]+2.
-
-        if 'bhi' not in kwargs:
-            bHI[i]=bguess[i]+40.
-            if bHI[i] > 200.:
-                bHI[i] = 150.
-        if 'vhi' not in kwargs:
-            vHI[i]=vguess[i]+50.
-    lb=np.concatenate((Nlow,blow,vlow))
-    ub=np.concatenate((NHI,bHI,vHI))
-    bounds=[lb,ub]
     return bounds, lb, ub
+
 
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, 
@@ -444,11 +419,10 @@ class vfit(object):
                 )
 
     def lnprior(self, theta):
-            for index in range(0, len(self.lb)):
-                if (self.lb[index] > theta[index]) or (self.ub[index] < theta[index]):
-                    return -np.inf
-                    break
-            return 0.0
+        theta = np.asarray(theta)
+        if np.any((theta < self.lb) | (theta > self.ub)):
+            return -np.inf
+        return 0.0
     
     def lnlike(self, theta):
         """

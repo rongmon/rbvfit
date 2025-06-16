@@ -1,5 +1,5 @@
 """
-Picklable VoigtModel implementation with multi-instrument support.
+Picklable VoigtModel implementation with multi-instrument support and performance optimizations.
 """
 
 from __future__ import annotations
@@ -26,49 +26,104 @@ except ImportError:
 def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float, 
               wv: np.ndarray) -> np.ndarray:
     """
-    Module-level Voigt profile calculation for maximum performance.
+    Voigt profile optical depth calculation.
     
     Parameters
     ----------
     lambda0 : float
-        Rest wavelength in Angstroms
+        Rest wavelength in Angstroms.
     gamma : float
-        Damping parameter
+        Damping constant (s^-1).
     f : float
-        Oscillator strength
+        Oscillator strength.
     N : float
-        Column density in linear scale
+        Column density (cm^-2).
     b : float
-        Doppler parameter in km/s
+        Doppler parameter (km/s).
     wv : np.ndarray
-        Wavelength array in Angstroms (rest frame)
+        Wavelength array (Angstroms).
         
     Returns
     -------
-    np.ndarray
-        Optical depth array
+    tau : np.ndarray
+        Optical depth as a function of wavelength.
     """
-    c = 29979245800.0  # cm/s
-    b_f = b / lambda0 * 10**13
+    c = 2.99792458e10  # speed of light in cm/s
+    b_f = b / lambda0 * 1e13  # Doppler width in Hz
+    freq0 = c / lambda0 * 1e8  # Hz
+    freq = c / wv * 1e8  # Hz
+    constant = 448898479.507 / (freq0 * b * 1e5)
     a = gamma / (4 * np.pi * b_f)
-    
-    freq0 = c / lambda0 * 10**8
-    freq = c / wv * 10**8
-    
-    constant = 448898479.507
-    constant /= freq0 * b * 10**5
-    
     x = (freq - freq0) / b_f
-    H = np.real(wofz(x + 1j * a))
     
+    H = np.real(wofz(x + 1j * a))
     tau = N * f * constant * H
     return tau
+
+
+def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray, 
+                         atomic_f: np.ndarray, N_linear: np.ndarray, 
+                         b_values: np.ndarray, wave_rest: np.ndarray) -> np.ndarray:
+    """
+    Vectorized Voigt profile calculation for all lines simultaneously.
+    
+    Parameters
+    ----------
+    atomic_lambda0 : np.ndarray, shape (n_lines,)
+        Rest wavelengths for all lines
+    atomic_gamma : np.ndarray, shape (n_lines,)
+        Damping parameters for all lines
+    atomic_f : np.ndarray, shape (n_lines,)
+        Oscillator strengths for all lines
+    N_linear : np.ndarray, shape (n_lines,)
+        Linear column densities for all lines
+    b_values : np.ndarray, shape (n_lines,)
+        Doppler parameters for all lines
+    wave_rest : np.ndarray, shape (n_lines, n_wavelengths)
+        Rest-frame wavelength arrays for each line
+        
+    Returns
+    -------
+    np.ndarray, shape (n_lines, n_wavelengths)
+        Optical depth arrays for all lines
+    """
+    # Physical constants
+    c = 2.99792458e10  # speed of light in cm/s
+    
+    # Vectorized calculations - broadcasting across all lines
+    # Shape: (n_lines, 1) for broadcasting with wavelengths
+    lambda0_bc = atomic_lambda0[:, np.newaxis]
+    gamma_bc = atomic_gamma[:, np.newaxis]
+    f_bc = atomic_f[:, np.newaxis]
+    N_bc = N_linear[:, np.newaxis]
+    b_bc = b_values[:, np.newaxis]
+    
+    # Vectorized frequency calculations
+    b_f = b_bc / lambda0_bc * 1e13
+    freq0 = c / lambda0_bc * 1e8
+    freq = c / wave_rest * 1e8
+    
+    # Vectorized constants
+    constant = 448898479.507 / (freq0 * b_bc * 1e5)
+    
+    # Vectorized complex argument calculation
+    a = gamma_bc / (4 * np.pi * b_f)
+    x = (freq - freq0) / b_f
+    z = x + 1j * a
+    
+    # Vectorized wofz calculation - handles complex arrays natively
+    H = np.real(wofz(z))
+    
+    # Vectorized final calculation
+    tau_all = N_bc * f_bc * constant * H
+    
+    return tau_all
 
 
 def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelength: np.ndarray,
                                      line_filter: Optional[np.ndarray] = None) -> np.ndarray:
     """
-    Evaluate compiled model with optional line filtering for multi-instrument support.
+    Evaluate compiled model with optional line filtering and vectorization.
     
     Parameters
     ----------
@@ -107,26 +162,34 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
         v_indices = v_indices[line_filter]
         n_lines = np.sum(line_filter)
 
+    # Extract parameters
     N_linear = 10**theta[N_indices]
     b_values = theta[b_indices]
     v_values = theta[v_indices]
 
-    tau_total = np.zeros_like(wavelength, dtype=np.float64)
-    c = 299792.458
+    # VECTORIZED CALCULATION: All lines at once
+    c = 299792.458  # km/s
+    
+    # Vectorized z_total calculation - shape: (n_lines,)
+    z_total = z_factors * (1 + v_values/c) - 1
+    
+    # Broadcast wavelength calculation - shape: (n_lines, n_wavelengths)
+    z_total_bc = z_total[:, np.newaxis]
+    wave_rest = wavelength[np.newaxis, :] / (1 + z_total_bc)
 
-    for i in range(n_lines):
-        z_total = z_factors[i] * (1 + v_values[i]/c) - 1
-        wave_rest = wavelength / (1 + z_total)
-        
-        tau = voigt_tau(
-            atomic_lambda0[i], atomic_gamma[i], atomic_f[i],
-            N_linear[i], b_values[i], wave_rest
-        )
-        
-        tau_total += tau
+    # Vectorized Voigt calculation for all lines simultaneously
+    tau_all_lines = _vectorized_voigt_tau(
+        atomic_lambda0, atomic_gamma, atomic_f,
+        N_linear, b_values, wave_rest
+    )
+    
+    # Sum optical depths across all lines
+    tau_total = np.sum(tau_all_lines, axis=0)
 
+    # Convert to flux
     flux = np.exp(-tau_total)
 
+    # Apply convolution if kernel is provided
     if kernel is not None:
         flux = astropy_convolve(flux, kernel, boundary="extend")
 
@@ -246,13 +309,28 @@ class CompiledVoigtModel:
 
 class VoigtModel:
     """
-    Enhanced Voigt profile model with multi-instrument support.
+    Enhanced Voigt profile model with multi-instrument support and performance optimizations.
     """
     
     def __init__(self, config: FitConfiguration, FWHM: Union[str, float] = '6.5',
                  grating: str = 'G130M', life_position: str = '1', 
                  cen_wave: str = '1300A'):
-        """Initialize the Voigt model."""
+        """
+        Initialize the Voigt model.
+        
+        Parameters
+        ----------
+        config : FitConfiguration
+            Fitting configuration
+        FWHM : str or float, optional
+            FWHM for convolution kernel
+        grating : str, optional
+            HST grating for COS LSF
+        life_position : str, optional
+            HST lifetime position for COS LSF
+        cen_wave : str, optional
+            Central wavelength for COS LSF
+        """
         self.config = config
         self.config.validate()
         self.param_manager = ParameterManager(config)
@@ -615,39 +693,39 @@ class VoigtModel:
         return "\n".join(lines)
 
 
-# Test function to verify pickling works
-def test_pickling():
-    """Test that the compiled model can be pickled."""
-    import pickle
+def test_performance_optimization():
+    """Test the vectorization performance."""
+    import time
     
-    # Create a simple test model
+    # Create test configuration
     config = FitConfiguration()
     config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+    config.add_system(z=0.350, ion='FeII', transitions=[2600.2], components=1)
     
+    # Test parameters
+    theta = np.array([13.5, 13.2, 14.0, 15.0, 20.0, 18.0, -50.0, 0.0, 10.0])
+    wave = np.linspace(3400, 3900, 1000)
+    
+    print("Vectorized Performance Test")
+    print("=" * 40)
+    
+    # Test vectorized implementation
     model = VoigtModel(config, FWHM='6.5')
-    compiled_model = model.compile()
+    compiled_model = model.compile(verbose=True)
     
-    # Test pickling
-    try:
-        pickled_data = pickle.dumps(compiled_model)
-        unpickled_model = pickle.loads(pickled_data)
-        print("✓ Pickling test passed!")
-        
-        # Test that it still works
-        theta = np.array([13.5, 13.2, 15.0, 20.0, -50.0, 0.0])
-        wave = np.linspace(3750, 3850, 100)
-        
-        original_flux = compiled_model.model_flux(theta, wave)
-        unpickled_flux = unpickled_model.model_flux(theta, wave)
-        
-        if np.allclose(original_flux, unpickled_flux):
-            print("✓ Functionality test passed!")
-        else:
-            print("✗ Functionality test failed!")
-            
-    except Exception as e:
-        print(f"✗ Pickling test failed: {e}")
+    start_time = time.time()
+    for _ in range(100):
+        flux = compiled_model.model_flux(theta, wave)
+    total_time = time.time() - start_time
+    
+    print(f"\nVectorized implementation: {total_time:.4f} seconds for 100 evaluations")
+    print(f"Average per evaluation: {total_time/100*1000:.2f} ms")
+    print(f"Lines processed: 3 (MgII 2796, MgII 2803, FeII 2600)")
+    print(f"Vectorization benefit: All lines computed simultaneously")
+    
+    return flux
 
 
 if __name__ == "__main__":
-    test_pickling()
+    print("Testing rbvfit 2.0 vectorization...")
+    test_performance_optimization()

@@ -14,11 +14,19 @@ def simple_v1_v2_test():
     
     zabs = 0.348
     lambda_rest = [2796.3, 2803.5]
-    theta_true = np.array([13.8, 13.3, 20.0, 30.0, -40.0, 20.0])
+    nguess = [13.8, 13.3,13.2,13.7]
+    bguess = [20.0, 30.0,15,8]
+    vguess = [-40.0,0,20, 40.0]
+    
+
+    theta_true  = np.concatenate([nguess, bguess, vguess])
+    n_component=len(nguess)
+    
+
     wave = np.linspace(3760, 3800, 10000)
     
     v1_m = v1_model.create_voigt(
-        np.array([zabs]), lambda_rest, nclump=2, ntransition=2,
+        np.array([zabs]), lambda_rest, nclump=n_component, ntransition=2,
         FWHM='6.5', verbose=False
     )
     
@@ -30,9 +38,6 @@ def simple_v1_v2_test():
     print(f"Created synthetic data: {len(wave)} wavelength points")
     
     # Set up bounds
-    nguess = theta_true[:2]
-    bguess = theta_true[2:4]
-    vguess = theta_true[4:6]
     bounds, lb, ub = v1_mcmc.set_bounds(nguess, bguess, vguess)
     
     # 2. Fit with v1 MCMC
@@ -41,9 +46,9 @@ def simple_v1_v2_test():
     
     v1_fitter = v1_mcmc.vfit(
         v1_m.model_flux, theta_true, lb, ub, wave, observed_flux, error,
-        no_of_Chain=20, no_of_steps=1000, perturbation=1e-6
+        no_of_Chain=50, no_of_steps=5000, perturbation=1e-6
     )
-    v1_fitter.runmcmc(optimize=False, verbose=False)
+    v1_fitter.runmcmc(optimize=True, verbose=False)
     
     v1_time = time.time() - start
     print(f"v1 MCMC time: {v1_time:.3f} s")
@@ -53,7 +58,7 @@ def simple_v1_v2_test():
     from rbvfit.core.voigt_model import VoigtModel
     
     config = FitConfiguration()
-    config.add_system(z=zabs, ion='MgII', transitions=lambda_rest, components=2)
+    config.add_system(z=zabs, ion='MgII', transitions=lambda_rest, components=n_component)
     v2_m = VoigtModel(config, FWHM='6.5')
     v2_m_compile=v2_m.compile()
 
@@ -66,9 +71,9 @@ def simple_v1_v2_test():
     
     v2_fitter = v1_mcmc.vfit(
         v2_m_compile.model_flux, theta_true, lb, ub, wave, observed_flux, error,
-        no_of_Chain=20, no_of_steps=1000, perturbation=1e-6
+        no_of_Chain=50, no_of_steps=5000, perturbation=1e-6
     )
-    v2_fitter.runmcmc(optimize=False, verbose=False)
+    v2_fitter.runmcmc(optimize=True, verbose=False)
     
     v2_time = time.time() - start
     print(f"v2 MCMC time: {v2_time:.3f} s")

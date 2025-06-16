@@ -171,15 +171,15 @@ def setup_common_test_case():
     zabs = 0.348
     lambda_rest = [2796.3, 2803.5]
     
-    # 2-component system
-    nguess = [13.8, 13.3]
-    bguess = [20.0, 30.0] 
-    vguess = [-40.0, 20.0]
+    # 4-component system
+    nguess = [13.8, 13.3,13.8, 13.3]
+    bguess = [20.0, 30.0,15,8] 
+    vguess = [-40.0,-20.,0., 20.0]
     
     theta = np.concatenate([nguess, bguess, vguess])
     
     # Smaller wavelength grid for faster testing
-    wave = np.linspace(3760, 3800, 1000)
+    wave = np.linspace(3760, 3800, 500)
     
     return {
         'zabs': zabs,
@@ -365,8 +365,8 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     v1_model.model_flux,
                     theta, lb, ub,
                     wave, observed_flux, error,
-                    no_of_Chain=20,
-                    no_of_steps=100  # Small for setup testing
+                    no_of_Chain=50,
+                    no_of_steps=5000  # Small for setup testing
                 )
             
             v1_fitter, v1_timing = profiler.time_operation(
@@ -394,8 +394,8 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     lambda theta, wave: v2_model.evaluate(theta, wave),
                     theta, lb, ub,
                     wave, observed_flux, error,
-                    no_of_Chain=20,
-                    no_of_steps=100
+                    no_of_Chain=50,
+                    no_of_steps=5000
                 )
             
             v2_fitter, v2_timing = profiler.time_operation(
@@ -421,8 +421,8 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     v2_compiled.model_flux,
                     theta, lb, ub,
                     wave, observed_flux, error,
-                    no_of_Chain=20,
-                    no_of_steps=100
+                    no_of_Chain=50,
+                    no_of_steps=1000
                 )
             
             v2_compiled_fitter, v2_compiled_timing = profiler.time_operation(

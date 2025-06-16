@@ -50,13 +50,13 @@ def setup_test_scenario():
     lambda_rest = [2796.3, 2803.5]
     
     # True parameters for 2-component system
-    true_N = [13.95, 13.3]
-    true_b = [20.0, 40.0]
-    true_v = [-40.0, 20.0]
+    true_N = [13.95, 13.3,13.5]
+    true_b = [20.0, 40.0,15.0]
+    true_v = [-40.0, 0.,20.0]
     true_theta = np.array(true_N + true_b + true_v)
     
     # Realistic wavelength coverage and resolution
-    wave = np.linspace(3760, 3800, 800)
+    wave = np.linspace(3760, 3800, 500)
     
     print(f"  Redshift: {zabs}")
     print(f"  Transitions: {lambda_rest} Å")
@@ -68,7 +68,7 @@ def setup_test_scenario():
         'lambda_rest': lambda_rest,
         'true_theta': true_theta,
         'wave': wave,
-        'nclump': 2,
+        'nclump': len(true_N),
         'ntransition': 2,
         'true_N': true_N,
         'true_b': true_b,
@@ -92,7 +92,7 @@ def setup_models(scenario):
             nclump=scenario['nclump'],
             ntransition=scenario['ntransition'],
             FWHM='6.5',
-            verbose=False
+            verbose=True
         )
         v1_setup_time = time.time() - start
         models['v1'] = {
@@ -121,7 +121,7 @@ def setup_models(scenario):
         # Compile v2 model
         print("  Compiling v2 model...")
         start = time.time()
-        v2_compiled = v2_model_obj.compile(verbose=False)
+        v2_compiled = v2_model_obj.compile(verbose=True)
         v2_compile_time = time.time() - start
         print(f"    v2 compilation: {v2_compile_time*1000:.2f} ms")
         

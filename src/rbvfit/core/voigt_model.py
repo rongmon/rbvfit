@@ -692,6 +692,102 @@ class VoigtModel:
             
         return "\n".join(lines)
 
+    def print_info(self) -> str:
+        """print model configuration summary."""
+        print(self.get_info())
+
+    def show_structure(self) -> None:
+       """Display ASCII diagram of model parameter structure."""
+       lines = []
+       lines.append("Model Structure Diagram")
+       lines.append("=" * 50)
+       
+       # Get parameter structure
+       structure = self.param_manager.config_to_theta_structure()
+       
+       # Header with totals
+       lines.append(f"📊 Total: {structure['total_parameters']} parameters, {self.n_lines} lines, {len(self.config.systems)} system(s)")
+       lines.append("")
+       
+       # Track global parameter indices
+       global_param_idx = 0
+       
+       for sys_idx, system in enumerate(self.config.systems):
+           # System header
+           lines.append(f"🌌 System {sys_idx + 1} (z = {system.redshift:.6f})")
+           lines.append("│")
+           
+           system_params = 0
+           system_lines = 0
+           
+           for ion_idx, ion_group in enumerate(system.ion_groups):
+               is_last_ion = (ion_idx == len(system.ion_groups) - 1)
+               ion_prefix = "└── " if is_last_ion else "├── "
+               
+               # Ion group header
+               ion_params = ion_group.components * 3  # N, b, v for each component
+               ion_lines = len(ion_group.transitions) * ion_group.components
+               
+               lines.append(f"│{ion_prefix}🧪 {ion_group.ion_name} ({ion_group.components} components)")
+               
+               # Transitions
+               transition_str = ", ".join([f"{w:.1f}Å" for w in ion_group.transitions])
+               lines.append(f"│{'    ' if is_last_ion else '│   '}📡 Transitions: [{transition_str}]")
+               
+               # Parameter structure
+               lines.append(f"│{'    ' if is_last_ion else '│   '}📋 Parameters ({ion_params} total):")
+               
+               # Show parameter indices for each component
+               for comp in range(ion_group.components):
+                   comp_suffix = "" if is_last_ion else "│   "
+                   
+                   # Parameter indices
+                   N_idx = global_param_idx + comp
+                   b_idx = global_param_idx + comp + self.total_components
+                   v_idx = global_param_idx + comp + 2 * self.total_components
+                   
+                   lines.append(f"│{'    ' if is_last_ion else '│   '}  • Component {comp + 1}: "
+                              f"θ[{N_idx}]=N, θ[{b_idx}]=b, θ[{v_idx}]=v")
+               
+               # Ion tying indicator
+               if len(ion_group.transitions) > 1:
+                   lines.append(f"│{'    ' if is_last_ion else '│   '}🔗 TIED: All {len(ion_group.transitions)} transitions share parameters")
+               
+               # Line count
+               lines.append(f"│{'    ' if is_last_ion else '│   '}📈 Lines: {ion_lines} ({len(ion_group.transitions)} trans × {ion_group.components} comp)")
+               
+               if not is_last_ion:
+                   lines.append("│")
+               
+               # Update counters
+               global_param_idx += ion_group.components
+               system_params += ion_params
+               system_lines += ion_lines
+           
+           # System summary
+           lines.append("│")
+           lines.append(f"└── 📊 System {sys_idx + 1} totals: {system_params} parameters, {system_lines} lines")
+           
+           if sys_idx < len(self.config.systems) - 1:
+               lines.append("")
+       
+       lines.append("")
+       lines.append("Legend:")
+       lines.append("🌌 = Absorption system    🧪 = Ion group")
+       lines.append("📡 = Transitions          📋 = Parameters")
+       lines.append("📈 = Model lines          🔗 = Parameter tying")
+       lines.append("θ[i] = Parameter index in theta array")
+       
+       # Parameter array structure
+       lines.append("")
+       lines.append("Parameter Array Structure:")
+       lines.append("-" * 30)
+       lines.append(f"θ[0:{self.total_components}]     = All N values")
+       lines.append(f"θ[{self.total_components}:{2*self.total_components}]    = All b values")
+       lines.append(f"θ[{2*self.total_components}:{3*self.total_components}]    = All v values")
+       
+       print("\n".join(lines))
+
 
 def test_performance_optimization():
     """Test the vectorization performance."""

@@ -43,9 +43,10 @@ class IonGroup:
     transitions: List[float]
     components: int
     redshift: float
+    validate_ion: bool = True
     
     def __post_init__(self):
-        """Validate the ion group after initialization."""
+        """Validate and correct the ion group after initialization."""
         if self.components <= 0:
             raise ValueError(f"Number of components must be positive, got {self.components}")
         self.validate_transitions()
@@ -61,31 +62,63 @@ class IonGroup:
         """
         return 3 * self.components  # N, b, v for each component
     
+
     def validate_transitions(self) -> None:
         """
-        Validate that all transitions belong to the same ion.
+        Validate and correct transitions to use exact database wavelengths.
+        
+        This method:
+        1. Always corrects wavelengths to exact database values
+        2. Optionally validates that all transitions belong to the same ion
         
         Raises
         ------
         ValueError
-            If transitions don't belong to the same ion or are invalid
+            If transitions don't belong to the same ion (when validate_ion=True)
+            or are invalid
         """
         if not self.transitions:
             raise ValueError(f"No transitions provided for ion {self.ion_name}")
+        
+        if rb is None:
+            # Can't validate or correct without line database
+            return
             
-        if rb is not None:
-            # Validate each transition belongs to the declared ion
-            for wave in self.transitions:
-                try:
-                    line_info = rb.rb_setline(wave, 'closest')
-                    detected_ion = self._extract_ion_name(line_info['name'][0])
-                    if detected_ion != self.ion_name:
-                        raise ValueError(
-                            f"Transition {wave}Å belongs to {detected_ion}, "
-                            f"not {self.ion_name}"
-                        )
-                except Exception as e:
-                    raise ValueError(f"Invalid transition {wave}Å: {str(e)}")
+        corrected_transitions = []
+        detected_ions = []
+        
+        # Process each transition
+        for i, wave in enumerate(self.transitions):
+            try:
+                # Get exact wavelength and ion info from database
+                line_info = rb.rb_setline(wave, 'closest')
+                exact_wavelength = line_info['wave'][0]
+                detected_ion = self._extract_ion_name(line_info['name'][0])
+                
+                # Always use the exact database wavelength
+                corrected_transitions.append(exact_wavelength)
+                detected_ions.append(detected_ion)
+                
+                # Optional validation that transition belongs to declared ion
+                if self.validate_ion and detected_ion != self.ion_name:
+                    raise ValueError(
+                        f"Transition {wave}Å (corrected to {exact_wavelength}Å) "
+                        f"belongs to {detected_ion}, not {self.ion_name}"
+                    )
+                    
+            except Exception as e:
+                raise ValueError(f"Invalid transition {wave}Å: {str(e)}")
+        
+        # Update with corrected wavelengths
+        self.transitions = corrected_transitions
+        
+        # If validation is enabled, check all transitions belong to same ion
+        if self.validate_ion and len(set(detected_ions)) > 1:
+            raise ValueError(
+                f"Mixed ion transitions detected: {set(detected_ions)}. "
+                f"All transitions in an ion group must belong to the same ion."
+            )
+    
     
     @staticmethod
     def _extract_ion_name(line_name: str) -> str:
@@ -108,7 +141,7 @@ class IonGroup:
             return parts[0]
         return line_name
     
-    def merge_transitions(self, other_transitions: List[float]) -> None:
+    def merge_transitions(self, other_transitions: List[float], validate_ion: bool = True) -> None:
         """
         Merge additional transitions into this ion group.
         
@@ -116,13 +149,39 @@ class IonGroup:
         ----------
         other_transitions : List[float]
             Additional transitions to add
+        validate_ion : bool, optional
+            Whether to validate new transitions belong to this ion
         """
-        for trans in other_transitions:
-            if trans not in self.transitions:
-                self.transitions.append(trans)
-        # Re-validate after adding transitions
-        self.validate_transitions()
-    
+        if rb is not None:
+            # Correct and validate new transitions
+            corrected_transitions = []
+            for wave in other_transitions:
+                try:
+                    line_info = rb.rb_setline(wave, 'closest')
+                    exact_wavelength = line_info['wave'][0]
+                    
+                    if validate_ion:
+                        detected_ion = self._extract_ion_name(line_info['name'][0])
+                        if detected_ion != self.ion_name:
+                            raise ValueError(
+                                f"Transition {wave}Å belongs to {detected_ion}, "
+                                f"not {self.ion_name}"
+                            )
+                    
+                    corrected_transitions.append(exact_wavelength)
+                except Exception as e:
+                    raise ValueError(f"Invalid transition {wave}Å: {str(e)}")
+            
+            # Add only new transitions (avoid duplicates)
+            for trans in corrected_transitions:
+                if trans not in self.transitions:
+                    self.transitions.append(trans)
+        else:
+            # Without rb database, just add as-is
+            for trans in other_transitions:
+                if trans not in self.transitions:
+                    self.transitions.append(trans)
+
     def __repr__(self) -> str:
         return (f"IonGroup({self.ion_name}, transitions={self.transitions}, "
                 f"components={self.components}, z={self.redshift})")
@@ -147,7 +206,7 @@ class AbsorptionSystem:
     ion_groups: List[IonGroup] = field(default_factory=list)
     
     def add_ion(self, ion_name: str, transitions: List[float], 
-                components: int, merge: bool = False) -> None:
+                components: int, merge: bool = False, validate_ion: bool = True) -> None:
         """
         Add an ion to this absorption system.
         
@@ -162,6 +221,8 @@ class AbsorptionSystem:
         merge : bool, optional
             If True, merge transitions with existing ion if present.
             Components must match for merging.
+        validate_ion : bool, optional
+            Whether to validate that all transitions belong to the same ion
         """
         # Check if ion already exists
         for group in self.ion_groups:
@@ -173,7 +234,7 @@ class AbsorptionSystem:
                             f"Cannot merge ion {ion_name}: component mismatch "
                             f"(existing: {group.components}, new: {components})"
                         )
-                    group.merge_transitions(transitions)
+                    group.merge_transitions(transitions, validate_ion)
                     return
                 else:
                     raise ValueError(
@@ -181,7 +242,7 @@ class AbsorptionSystem:
                         f"Use merge=True to add transitions to existing ion."
                     )
         
-        ion_group = IonGroup(ion_name, transitions, components, self.redshift)
+        ion_group = IonGroup(ion_name, transitions, components, self.redshift, validate_ion)
         self.ion_groups.append(ion_group)
     
     def merge_system(self, other_system: 'AbsorptionSystem') -> None:
@@ -257,34 +318,31 @@ class FitConfiguration:
         self.systems: List[AbsorptionSystem] = []
         self._validated: bool = False
         
-    def add_system(self, z: float, ion: str, transitions: List[float], 
-                   components: int, merge: bool = False) -> None:
+    def add_system(self, z: float, ion: str = 'auto', transitions: List[float] = None, 
+                   components: int = 1, merge: bool = False, validate_ion: bool = True) -> None:
         """
         Add an absorption system or ion to the configuration.
-        
-        If a system at the given redshift already exists, the ion is added
-        to that system. Otherwise, a new system is created.
         
         Parameters
         ----------
         z : float
             Redshift of the absorption system
-        ion : str
-            Ion name (e.g., 'MgII', 'HI', 'OVI')
-        transitions : List[float]
+        ion : str, optional
+            Ion name (e.g., 'MgII', 'HI', 'OVI'). Default 'auto' for automatic detection.
+        transitions : List[float], optional
             Rest wavelengths of transitions in Angstroms
-        components : int
-            Number of velocity components
+        components : int, optional
+            Number of velocity components, default 1
         merge : bool, optional
             If True and ion already exists, merge transitions instead of raising error.
-            Default is False for backward compatibility.
-            
-        Examples
-        --------
-        >>> config = FitConfiguration()
-        >>> config.add_system(0.348, 'MgII', [2796.3], 2)
-        >>> config.add_system(0.348, 'MgII', [2803.5], 2, merge=True)  # Adds to existing
+            Default is False.
+        validate_ion : bool, optional
+            Whether to validate that all transitions belong to the same ion.
+            Default is True.
         """
+        if transitions is None:
+            raise ValueError("transitions list cannot be None")
+            
         # Check if system at this redshift already exists
         system = self._get_or_create_system(z)
         
@@ -292,9 +350,9 @@ class FitConfiguration:
         if ion == 'auto' and rb is not None:
             ion = self._detect_ion(transitions[0])
         
-        system.add_ion(ion, transitions, components, merge=merge)
+        system.add_ion(ion, transitions, components, merge, validate_ion)
         self._validated = False
-        
+            
     def _get_or_create_system(self, z: float) -> AbsorptionSystem:
         """Get existing system at redshift z or create new one."""
         # Use small tolerance for redshift comparison
@@ -571,12 +629,10 @@ class FitConfiguration:
         
         return "\n".join(lines)
     
-    def append_transitions(self, z: float, ion: str, transitions: List[float]) -> None:
+    def append_transitions(self, z: float, ion: str, transitions: List[float], 
+                          validate_ion: bool = True) -> None:
         """
         Append transitions to an existing ion in a system.
-        
-        This is a convenience method that calls add_system with merge=True.
-        The ion must already exist in the system.
         
         Parameters
         ----------
@@ -586,17 +642,8 @@ class FitConfiguration:
             Ion name that already exists in the system
         transitions : List[float]
             Additional rest wavelengths to add
-            
-        Examples
-        --------
-        >>> config = FitConfiguration()
-        >>> config.add_system(0.348, 'MgII', [2796.3], 2)
-        >>> config.append_transitions(0.348, 'MgII', [2803.5])  # Adds 2803.5
-        
-        Raises
-        ------
-        ValueError
-            If the ion doesn't exist in the system
+        validate_ion : bool, optional
+            Whether to validate new transitions belong to the specified ion
         """
         # Find the system
         system = None
@@ -620,4 +667,5 @@ class FitConfiguration:
             raise ValueError(f"Ion {ion} not found in system at z={z}")
         
         # Use add_system with merge=True
-        self.add_system(z, ion, transitions, ion_group.components, merge=True)
+        self.add_system(z, ion, transitions, ion_group.components, 
+                       merge=True, validate_ion=validate_ion)    

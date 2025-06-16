@@ -419,7 +419,7 @@ class vfit(object):
                 )
 
     def lnprior(self, theta):
-        theta = np.asarray(theta)
+        #theta = np.asarray(theta)
         if np.any((theta < self.lb) | (theta > self.ub)):
             return -np.inf
         return 0.0
@@ -717,19 +717,22 @@ class vfit(object):
         
         # Autocorrelation time (if available)
         try:
-            if hasattr(sampler, 'get_autocorr_time'):
+            try:
                 autocorr_time = sampler.get_autocorr_time()
                 mean_autocorr_time = np.nanmean(autocorr_time)
                 print("Mean auto-correlation time: {0:.3f} steps".format(mean_autocorr_time))
+
                 
                 # Check if chain is long enough
                 if no_of_steps < 50 * mean_autocorr_time:
                     print("⚠ Warning: Chain may be too short for reliable results")
                     print(f"  Recommended: >{50 * mean_autocorr_time:.0f} steps")
-            else:
-                print("Auto-correlation time not available for this sampler")
+            except:
+                mean_autocorr_time = 0
+                print("⚠ Warning: Chain Length is less than 50 Autocorrelation times")
+                print(f"  Recommended: >{2 * no_of_steps:.0f} steps")
         except Exception:
-            print("Could not calculate auto-correlation time")
+            print("⚠ Warning: Could not calculate auto-correlation time")
 
         # Sampler-specific diagnostics
         if self.sampler_name == 'zeus':

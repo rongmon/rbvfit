@@ -755,6 +755,609 @@ class vfit(object):
         self.nwalkers = no_of_Chain
 
 
+    def plot_model(self, burntime=None, burn_fraction=0.2, show_components=True, 
+                   show_residuals=True, n_posterior_samples=300, velocity_marks=True,
+                   xlim=[-600, 600], outfile=False, verbose=False, **kwargs):
+        """
+        Enhanced plot_model that auto-detects v1 vs v2 architecture and plots accordingly.
+        
+        This method provides a unified interface for plotting absorption line fits,
+        automatically handling single/multi-instrument configurations and v1/v2 compatibility.
+        
+        Parameters
+        ----------
+        burntime : int, optional
+            Explicit burn-in steps. If None, uses autocorrelation or fraction-based detection
+        burn_fraction : float, optional
+            Fraction of chain to discard as burn-in (default: 0.2)
+        show_components : bool, optional
+            Show individual velocity components (default: True)
+        show_residuals : bool, optional
+            Include residual plots (default: True)
+        n_posterior_samples : int, optional
+            Number of posterior samples for uncertainty clouds (default: 300)
+        velocity_marks : bool, optional
+            Mark component velocity locations (default: True)
+        xlim : list, optional
+            Velocity space limits in km/s (default: [-600, 600])
+        outfile : str or False, optional
+            Save figure to file (default: False)
+        verbose : bool, optional
+            Print detailed fitting information (default: False)
+        **kwargs
+            Additional plotting parameters
+        """
+        
+        print("Generating absorption line fit visualization...")
+        
+        # Auto-detect architecture and route to appropriate plotting method
+        if self._is_v2_architecture():
+            print("Detected rbvfit 2.0 architecture")
+            return self._plot_model_v2(
+                burntime=burntime, burn_fraction=burn_fraction,
+                show_components=show_components, show_residuals=show_residuals,
+                n_posterior_samples=n_posterior_samples, velocity_marks=velocity_marks,
+                xlim=xlim, outfile=outfile, verbose=verbose, **kwargs
+            )
+        else:
+            print("Detected rbvfit 1.0 architecture")
+            return self._plot_model_v1(
+                burntime=burntime, burn_fraction=burn_fraction,
+                xlim=xlim, outfile=outfile, verbose=verbose, **kwargs
+            )
+    
+    def _is_v2_architecture(self):
+        """
+        Detect whether we're using rbvfit 2.0 architecture.
+        
+        Returns
+        -------
+        bool
+            True if v2.0 architecture detected, False for v1.0
+        """
+        # Check for v2.0 indicators
+        v2_indicators = [
+            hasattr(self, 'multi_instrument') and self.multi_instrument,  # Multi-instrument mode
+            hasattr(self, 'instrument_data') and self.instrument_data,    # Instrument data dict
+            hasattr(self.model, 'config'),                               # FitConfiguration
+            hasattr(self.model, 'compile'),                              # Compilable model
+            hasattr(self.model, 'param_manager')                         # Parameter manager
+        ]
+        
+        return any(v2_indicators)
+    
+    def _determine_burntime(self, burntime=None, burn_fraction=0.2):
+        """
+        Automatically determine burn-in using convergence diagnostics or fraction.
+        
+        Parameters
+        ----------
+        burntime : int, optional
+            User-specified burn-in (overrides auto-detection)
+        burn_fraction : float, optional
+            Fraction-based fallback
+            
+        Returns
+        -------
+        int
+            Number of burn-in steps to use
+        """
+        if burntime is not None:
+            print(f"Using user-specified burn-in: {burntime} steps")
+            return int(burntime)
+        
+        total_steps = self.no_of_steps
+        
+        # Try autocorrelation-based detection
+        try:
+            if hasattr(self.sampler, 'get_autocorr_time'):
+                tau = self.sampler.get_autocorr_time()
+                mean_tau = np.nanmean(tau)
+                
+                if np.isfinite(mean_tau) and mean_tau > 0:
+                    # Use 3× autocorrelation time, but not less than 10% or more than 40%
+                    auto_burntime = int(3 * mean_tau)
+                    min_burn = int(0.1 * total_steps)
+                    max_burn = int(0.4 * total_steps)
+                    auto_burntime = np.clip(auto_burntime, min_burn, max_burn)
+                    
+                    print(f"Autocorrelation-based burn-in: {auto_burntime} steps (3×τ={mean_tau:.1f})")
+                    return auto_burntime
+                else:
+                    print("Warning: Invalid autocorrelation time, using fraction-based burn-in")
+                    
+        except Exception as e:
+            print(f"Could not calculate autocorrelation time: {e}")
+        
+        # Fallback to fraction-based
+        auto_burntime = int(total_steps * burn_fraction)
+        print(f"Fraction-based burn-in: {auto_burntime}/{total_steps} steps ({burn_fraction*100:.0f}%)")
+        
+        # Safety checks
+        if auto_burntime < 0.05 * total_steps:
+            print("Warning: Very short burn-in (<5% of chain)")
+        elif auto_burntime > 0.5 * total_steps:
+            print("Warning: Very long burn-in (>50% of chain)")
+            auto_burntime = int(0.5 * total_steps)
+        
+        return auto_burntime
+    
+    def _extract_samples_smart(self, sampler, burnin=200, thin=15):
+        """
+        Extract samples in a sampler-agnostic way with improved error handling.
+        
+        Parameters
+        ----------
+        sampler : object
+            MCMC sampler (emcee, zeus, or other)
+        burnin : int
+            Burn-in steps
+        thin : int
+            Thinning factor
+            
+        Returns
+        -------
+        np.ndarray
+            Flattened MCMC samples
+        """
+        try:
+            # Try modern sampler interface (emcee 3.0+, zeus)
+            if hasattr(sampler, 'get_chain'):
+                try:
+                    # Try with parameters (emcee 3.0+)
+                    return sampler.get_chain(discard=burnin, thin=thin, flat=True)
+                except TypeError:
+                    # Fallback for older versions or different interface
+                    chain = sampler.get_chain()
+                    return chain[burnin::thin].reshape(-1, chain.shape[-1])
+                    
+            # Fallback for older sampler interfaces
+            elif hasattr(sampler, 'chain'):
+                chain = sampler.chain
+                return chain[:, burnin::thin, :].reshape(-1, chain.shape[-1])
+            else:
+                raise AttributeError("Sampler has no recognized chain interface")
+                
+        except Exception as e:
+            print(f"Error extracting samples: {e}")
+            # Emergency fallback - try to access any chain-like attribute
+            if hasattr(sampler, 'flatchain'):
+                return sampler.flatchain[burnin::thin]
+            else:
+                raise RuntimeError("Could not extract samples from sampler")
+    
+    def _plot_model_v2(self, burntime=None, burn_fraction=0.2, show_components=True,
+                       show_residuals=True, n_posterior_samples=300, velocity_marks=True,
+                       xlim=[-600, 600], outfile=False, verbose=False, **kwargs):
+        """
+        Plot model for rbvfit 2.0 architecture with multi-instrument support.
+        """
+        print("Using rbvfit 2.0 plotting engine")
+        
+        # Determine burn-in
+        effective_burntime = self._determine_burntime(burntime, burn_fraction)
+        
+        # Extract samples
+        samples = self._extract_samples_smart(self.sampler, effective_burntime)
+        best_theta = np.percentile(samples, 50, axis=0)  # Median as best-fit
+        
+        print(f"Extracted {len(samples)} post-burn-in samples")
+        
+        # Detect multi-instrument vs single instrument
+        if hasattr(self, 'multi_instrument') and self.multi_instrument:
+            return self._plot_multi_instrument_v2(
+                samples, best_theta, show_components, show_residuals,
+                n_posterior_samples, velocity_marks, xlim, outfile, verbose
+            )
+        else:
+            return self._plot_single_instrument_v2(
+                samples, best_theta, show_components, show_residuals,
+                n_posterior_samples, velocity_marks, xlim, outfile, verbose
+            )
+    
+    def _plot_model_v1(self, burntime=None, burn_fraction=0.2, xlim=[-600, 600], 
+                       outfile=False, verbose=False, **kwargs):
+        """
+        Enhanced version of the original plot_model for rbvfit 1.0 compatibility.
+        """
+        print("Using rbvfit 1.0 plotting engine (enhanced)")
+        
+        # Determine burn-in
+        effective_burntime = self._determine_burntime(burntime, burn_fraction)
+        
+        # Extract samples and results
+        samples = self._extract_samples_smart(self.sampler, effective_burntime)
+        
+        # Use existing best-fit if available, otherwise calculate from samples
+        if hasattr(self, 'best_theta'):
+            theta_prime = self.best_theta
+            value1 = self.low_theta if hasattr(self, 'low_theta') else np.percentile(samples, 16, axis=0)
+            value2 = self.high_theta if hasattr(self, 'high_theta') else np.percentile(samples, 84, axis=0)
+        else:
+            theta_prime = np.percentile(samples, 50, axis=0)
+            value1 = np.percentile(samples, 16, axis=0)
+            value2 = np.percentile(samples, 84, axis=0)
+        
+        # Extract model properties (v1.0 style)
+        n_clump = self.model.nclump if hasattr(self.model, 'nclump') else len(theta_prime) // 3
+        n_clump_total = int(len(theta_prime) / 3)
+        ntransition = self.model.ntransition if hasattr(self.model, 'ntransition') else 1
+        zabs = self.model.zabs if hasattr(self.model, 'zabs') else [0.0]
+        
+        # Get wavelength information
+        wave_obs = self.wave_obs
+        fnorm = self.fnorm
+        enorm = self.enorm
+        
+        # Get rest wavelengths
+        if hasattr(self.model, 'lambda_rest_original'):
+            lambda_rest_original = self.model.lambda_rest_original
+        else:
+            # Fallback: try to extract from transitions
+            lambda_rest_original = [1302.17]  # Default OI if not available
+        
+        wave_list = np.zeros(len(lambda_rest_original))
+        for i in range(len(wave_list)):
+            try:
+                from rbvfit import rb_setline as rb
+                s = rb.rb_setline(lambda_rest_original[i], 'closest')
+                wave_list[i] = s['wave']
+            except:
+                wave_list[i] = lambda_rest_original[i]
+        
+        wave_rest = wave_obs / (1 + zabs[0])
+        
+        # Extract parameter components
+        best_N = theta_prime[0:n_clump_total]
+        best_b = theta_prime[n_clump_total:2 * n_clump_total]
+        best_v = theta_prime[2 * n_clump_total:3 * n_clump_total]
+        
+        low_N = value1[0:n_clump_total]
+        low_b = value1[n_clump_total:2 * n_clump_total]
+        low_v = value1[2 * n_clump_total:3 * n_clump_total]
+        
+        high_N = value2[0:n_clump_total]
+        high_b = value2[n_clump_total:2 * n_clump_total]
+        high_v = value2[2 * n_clump_total:3 * n_clump_total]
+        
+        # Generate best-fit model
+        try:
+            if hasattr(self.model, 'model_fit'):
+                best_fit, f1 = self.model.model_fit(theta_prime, wave_obs)
+            else:
+                best_fit = self.model(theta_prime, wave_obs)
+                f1 = None
+        except:
+            print("Warning: Could not generate model fit")
+            return
+        
+        # Create plots
+        fig, axs = plt.subplots(ntransition, sharex=True, sharey=False, 
+                               figsize=(12, 6 * ntransition), 
+                               gridspec_kw={'hspace': 0})
+        
+        if ntransition == 1:
+            axs = [axs]  # Make iterable for single transition
+        
+        # Set title if outfile provided
+        if outfile:
+            plt.suptitle(outfile, y=0.95, fontsize=12)
+        
+        # Font settings
+        BIGGER_SIZE = 14
+        plt.rc('font', size=BIGGER_SIZE)
+        plt.rc('axes', titlesize=BIGGER_SIZE)
+        plt.rc('axes', labelsize=BIGGER_SIZE)
+        plt.rc('xtick', labelsize=BIGGER_SIZE)
+        plt.rc('ytick', labelsize=BIGGER_SIZE)
+        plt.rc('legend', fontsize=BIGGER_SIZE)
+        
+        # Random sample indices for uncertainty visualization
+        n_samples = min(100, len(samples))  # Fewer samples for v1.0 to avoid clutter
+        sample_indices = np.random.choice(len(samples), size=n_samples, replace=False)
+        
+        # Plot each transition
+        for i in range(ntransition):
+            ax = axs[i] if ntransition > 1 else axs[0]
+            
+            # Convert to velocity space
+            from rbvfit.rb_vfit import rb_veldiff
+            vel = rb_veldiff(wave_list[i], wave_rest)
+            
+            # Plot data
+            ax.step(vel, fnorm, 'k-', linewidth=1, alpha=0.8, 
+                    label=f'{wave_list[i]:.1f} Å')
+            ax.step(vel, enorm, color='gray', alpha=0.3, linewidth=1)
+            
+            # Plot posterior uncertainty (fewer samples for v1.0)
+            if len(sample_indices) > 0:
+                for idx in sample_indices:
+                    try:
+                        model_sample = self.model(samples[idx], wave_obs)
+                        ax.plot(vel, model_sample, color="blue", alpha=0.02, linewidth=0.5)
+                    except:
+                        continue
+            
+            # Plot best fit
+            ax.plot(vel, best_fit, color='red', linewidth=2, label='Best Fit')
+            ax.plot([0., 0.], [0, 2.0], 'k:', lw=0.5, alpha=0.7)
+            
+            # Plot individual components if available
+            if f1 is not None and show_components:
+                for dex in range(np.shape(f1)[1]):
+                    ax.plot(vel, f1[:, dex], 'g:', linewidth=2, alpha=0.7)
+            
+            # Mark component velocities
+            for iclump in range(n_clump):
+                v_comp = best_v[iclump]
+                ax.axvline(v_comp, color='orange', linestyle='--', alpha=0.7, linewidth=2)
+                
+                if i == 0:  # Only show parameter labels on first panel
+                    # Parameter text with uncertainties
+                    text1 = (f'logN = {best_N[iclump]:.2f}'
+                            f'$_{{-{best_N[iclump]-low_N[iclump]:.2f}}}$'
+                            f'$^{{+{high_N[iclump]-best_N[iclump]:.2f}}}$')
+                    ax.text(v_comp, 1.3, text1, fontsize=10, rotation=90, 
+                           ha='center', va='bottom')
+                    
+                    text2 = (f'b = {best_b[iclump]:.0f}'
+                            f'$_{{-{best_b[iclump]-low_b[iclump]:.0f}}}$'
+                            f'$^{{+{high_b[iclump]-best_b[iclump]:.0f}}}$')
+                    ax.text(v_comp + 50, 1.3, text2, fontsize=10, rotation=90,
+                           ha='center', va='bottom')
+            
+            # Formatting
+            ax.set_ylim([0, 1.6])
+            ax.set_xlim(xlim)
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+            if i == ntransition - 1:
+                ax.set_xlabel('Velocity (km/s)')
+            ax.set_ylabel('Normalized Flux')
+        
+        plt.tight_layout()
+        
+        # Print verbose information
+        if verbose:
+            print(f"\nFit Results Summary (v1.0):")
+            print(f"Components: {n_clump}")
+            print(f"Transitions: {ntransition}")
+            for i in range(n_clump):
+                print(f"Component {i+1}:")
+                print(f"  N = {best_N[i]:.2f} +{high_N[i]-best_N[i]:.2f} -{best_N[i]-low_N[i]:.2f}")
+                print(f"  b = {best_b[i]:.1f} +{high_b[i]-best_b[i]:.1f} -{best_b[i]-low_b[i]:.1f} km/s")
+                print(f"  v = {best_v[i]:.1f} +{high_v[i]-best_v[i]:.1f} -{best_v[i]-low_v[i]:.1f} km/s")
+        
+        # Save or show
+        if outfile:
+            fig.savefig(outfile, dpi=300, bbox_inches='tight')
+            print(f"Saved plot to {outfile}")
+        else:
+            plt.show()
+        
+        return fig
+    
+    def _plot_multi_instrument_v2(self, samples, best_theta, show_components, show_residuals,
+                                  n_posterior_samples, velocity_marks, xlim, outfile, verbose):
+        """
+        Plot multi-instrument fit results for rbvfit 2.0.
+        """
+        print("Creating multi-instrument visualization...")
+        
+        # Get instrument information
+        instruments = list(self.instrument_data.keys())
+        instruments.insert(0, 'Primary')  # Add primary instrument
+        n_instruments = len(instruments)
+        
+        print(f"Instruments: {instruments}")
+        
+        # Create subplot layout
+        if show_residuals:
+            fig, axes = plt.subplots(n_instruments * 2, 1, figsize=(15, 8 * n_instruments))
+        else:
+            fig, axes = plt.subplots(n_instruments, 1, figsize=(15, 6 * n_instruments))
+        
+        if n_instruments == 1:
+            axes = [axes] if not show_residuals else axes
+        
+        # Random sample indices for uncertainty clouds
+        n_samples = min(n_posterior_samples, len(samples))
+        sample_indices = np.random.choice(len(samples), size=n_samples, replace=False)
+        
+        # Plot each instrument
+        for i, instrument in enumerate(instruments):
+            
+            if instrument == 'Primary':
+                # Primary instrument (from main dataset)
+                wave_data = self.wave_obs
+                flux_data = self.fnorm
+                error_data = self.enorm
+                model_func = self.model
+                title = "Primary Instrument"
+            else:
+                # Secondary instruments
+                inst_data = self.instrument_data[instrument]
+                wave_data = inst_data['wave']
+                flux_data = inst_data['flux']
+                error_data = inst_data['error']
+                model_func = inst_data['model']
+                title = f"{instrument}"
+            
+            # Main plot
+            ax_main = axes[i * 2] if show_residuals else axes[i]
+            
+            # Plot data
+            ax_main.step(wave_data, flux_data, 'k-', where='mid', linewidth=1, 
+                        alpha=0.8, label=f'{title} Data')
+            ax_main.step(wave_data, error_data, 'gray', where='mid', alpha=0.3, 
+                        linewidth=0.5, label='Error')
+            
+            # Plot uncertainty cloud
+            for idx in sample_indices:
+                try:
+                    model_sample = model_func(samples[idx], wave_data)
+                    ax_main.plot(wave_data, model_sample, 'blue', alpha=0.01, linewidth=0.5)
+                except:
+                    continue
+            
+            # Plot best fit
+            try:
+                best_model = model_func(best_theta, wave_data)
+                ax_main.plot(wave_data, best_model, 'red', linewidth=2, label='Best Fit')
+            except Exception as e:
+                print(f"Warning: Could not generate model for {instrument}: {e}")
+                continue
+            
+            # Mark component velocities if requested
+            if velocity_marks:
+                # This requires knowledge of the transition and redshift
+                # For now, we'll skip detailed velocity marking in v2
+                pass
+            
+            # Format main plot
+            ax_main.set_ylabel('Normalized Flux')
+            ax_main.set_title(title)
+            ax_main.legend()
+            ax_main.grid(True, alpha=0.3)
+            ax_main.set_ylim(0, 1.2)
+            
+            # Residuals plot
+            if show_residuals:
+                ax_resid = axes[i * 2 + 1]
+                residuals = (flux_data - best_model) / error_data
+                
+                ax_resid.step(wave_data, residuals, 'k-', where='mid', alpha=0.7, linewidth=1)
+                ax_resid.axhline(0, color='r', linestyle='--', alpha=0.7)
+                ax_resid.axhline(1, color='gray', linestyle=':', alpha=0.5)
+                ax_resid.axhline(-1, color='gray', linestyle=':', alpha=0.5)
+                
+                ax_resid.set_ylabel('Residuals (σ)')
+                ax_resid.grid(True, alpha=0.3)
+                
+                # Calculate and display RMS
+                rms = np.sqrt(np.mean(residuals**2))
+                ax_resid.text(0.02, 0.95, f'RMS = {rms:.2f}', 
+                             transform=ax_resid.transAxes, verticalalignment='top',
+                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Final formatting
+        axes[-1].set_xlabel('Wavelength (Å)')
+        
+        # Add overall title with fit summary
+        plt.suptitle(f'Multi-Instrument Joint Fit\n{n_samples} posterior samples shown', 
+                    fontsize=14, y=0.98)
+        
+        plt.tight_layout()
+        
+        # Verbose output
+        if verbose:
+            print(f"\nMulti-Instrument Fit Summary:")
+            print(f"Instruments: {len(instruments)}")
+            print(f"Posterior samples: {len(samples)}")
+            print(f"Best-fit parameters: {best_theta}")
+        
+        # Save or show
+        if outfile:
+            fig.savefig(outfile, dpi=300, bbox_inches='tight')
+            print(f"Saved multi-instrument plot to {outfile}")
+        else:
+            plt.show()
+        
+        return fig
+    
+    def _plot_single_instrument_v2(self, samples, best_theta, show_components, show_residuals,
+                                   n_posterior_samples, velocity_marks, xlim, outfile, verbose):
+        """
+        Plot single instrument fit results for rbvfit 2.0.
+        """
+        print("Creating single instrument v2.0 visualization...")
+        
+        # Create plots
+        if show_residuals:
+            fig, (ax_main, ax_resid) = plt.subplots(2, 1, figsize=(12, 10))
+        else:
+            fig, ax_main = plt.subplots(1, 1, figsize=(12, 6))
+        
+        # Get data
+        wave_data = self.wave_obs
+        flux_data = self.fnorm
+        error_data = self.enorm
+        
+        # Plot data
+        ax_main.step(wave_data, flux_data, 'k-', where='mid', linewidth=1, 
+                    alpha=0.8, label='Observed Data')
+        ax_main.step(wave_data, error_data, 'gray', where='mid', alpha=0.3, 
+                    linewidth=0.5, label='Error')
+        
+        # Plot uncertainty cloud
+        n_samples = min(n_posterior_samples, len(samples))
+        sample_indices = np.random.choice(len(samples), size=n_samples, replace=False)
+        
+        for idx in sample_indices:
+            try:
+                model_sample = self.model(samples[idx], wave_data)
+                ax_main.plot(wave_data, model_sample, 'blue', alpha=0.01, linewidth=0.5)
+            except:
+                continue
+        
+        # Plot best fit
+        try:
+            best_model = self.model(best_theta, wave_data)
+            ax_main.plot(wave_data, best_model, 'red', linewidth=2, label='Best Fit')
+        except Exception as e:
+            print(f"Warning: Could not generate best-fit model: {e}")
+            return
+        
+        # Format main plot
+        ax_main.set_ylabel('Normalized Flux')
+        ax_main.set_title('rbvfit 2.0 Single Instrument Fit')
+        ax_main.legend()
+        ax_main.grid(True, alpha=0.3)
+        ax_main.set_ylim(0, 1.2)
+        
+        # Residuals if requested
+        if show_residuals:
+            residuals = (flux_data - best_model) / error_data
+            
+            ax_resid.step(wave_data, residuals, 'k-', where='mid', alpha=0.7, linewidth=1)
+            ax_resid.axhline(0, color='r', linestyle='--', alpha=0.7)
+            ax_resid.axhline(1, color='gray', linestyle=':', alpha=0.5)
+            ax_resid.axhline(-1, color='gray', linestyle=':', alpha=0.5)
+            
+            ax_resid.set_xlabel('Wavelength (Å)')
+            ax_resid.set_ylabel('Residuals (σ)')
+            ax_resid.grid(True, alpha=0.3)
+            
+            # RMS
+            rms = np.sqrt(np.mean(residuals**2))
+            ax_resid.text(0.02, 0.95, f'RMS = {rms:.2f}', 
+                         transform=ax_resid.transAxes, verticalalignment='top',
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        else:
+            ax_main.set_xlabel('Wavelength (Å)')
+        
+        plt.tight_layout()
+        
+        # Verbose output
+        if verbose:
+            print(f"\nSingle Instrument v2.0 Fit Summary:")
+            print(f"Data points: {len(wave_data)}")
+            print(f"Posterior samples: {len(samples)}")
+            print(f"Best-fit parameters: {best_theta}")
+        
+        # Save or show
+        if outfile:
+            fig.savefig(outfile, dpi=300, bbox_inches='tight')
+            print(f"Saved plot to {outfile}")
+        else:
+            plt.show()
+        
+        return fig
+
+
+
+
     def plot_corner(self, outfile=False, burntime=100, **kwargs):
         """Plot corner plot with sampler-agnostic sample extraction."""
         ndim = self.ndim

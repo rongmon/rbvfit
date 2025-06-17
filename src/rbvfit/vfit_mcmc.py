@@ -10,6 +10,7 @@ from rbvfit import rb_setline as rb
 import pdb
 import warnings
 import multiprocessing as mp
+from typing import Dict, List, Tuple, Optional, Union
 
 # Try to import zeus sampler
 try:
@@ -29,62 +30,6 @@ except (AttributeError, RuntimeError):
     MP_CONTEXT = 'default'
 
 
-
-
-
-
-
-def set_bounds(nguess, bguess, vguess, **kwargs):
-    """
-    Set bounds for MCMC parameters with optional custom overrides.
-
-    Parameters:
-    - nguess, bguess, vguess: arrays of initial guesses for logN, b, and v.
-    - Optional keyword arguments:
-        - Nlow, blow, vlow: custom lower bounds
-        - Nhi, bhi, vhi: custom upper bounds
-
-    Returns:
-    - bounds: list containing [lower_bounds, upper_bounds]
-    - lb: concatenated lower bounds
-    - ub: concatenated upper bounds
-
-
-        example :
-            This command sets default bounds
-             > bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
-
-            Customize bounds
-            lets say nguess=[12.2,12.3]
-                     bguess=[10,12]
-                     vguess=[0,199]
-
-                     We want to set custom lower bound for logN
-
-                     Nlow=[12.1,11.9]
-                     >bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess,Nlow=Nlow)
-
-
-
-    """
-
-    nguess = np.asarray(nguess)
-    bguess = np.asarray(bguess)
-    vguess = np.asarray(vguess)
-
-    Nlow = np.asarray(kwargs.get('Nlow', nguess - 2.0))
-    blow = np.asarray(kwargs.get('blow', np.clip(bguess - 40.0, 2.0, None)))
-    vlow = np.asarray(kwargs.get('vlow', vguess - 50.0))
-
-    NHI  = np.asarray(kwargs.get('Nhi', nguess + 2.0))
-    bHI  = np.asarray(kwargs.get('bhi', np.clip(bguess + 40.0, None, 150.0)))
-    vHI  = np.asarray(kwargs.get('vhi', vguess + 50.0))
-
-    lb = np.concatenate([Nlow, blow, vlow])
-    ub = np.concatenate([NHI,  bHI,  vHI])
-    bounds = [lb, ub]
-
-    return bounds, lb, ub
 
 
 class vfit(object):
@@ -1712,6 +1657,227 @@ def print_multi_instrument_help():
     print("• Automatic handling of instrument-specific wavelength coverage")
     print("• Consistent error propagation across all datasets")
 
+
+# Ion-specific bounds lookup table
+ION_BOUNDS_TABLE = {
+    'HI': {
+        'N': (12.0, 22.0),     # DLA range
+        'b': (10.0, 200.0),   # Thermal + turbulent
+        'v': (-500.0, 500.0)
+    },
+    'MgII': {
+        'N': (11.0, 16.0),    # Typical MgII range
+        'b': (3.0, 100.0),    # Lower thermal + turbulent
+        'v': (-300.0, 300.0)
+    },
+    'FeII': {
+        'N': (11.0, 15.5),    # Associated with MgII
+        'b': (3.0, 100.0),
+        'v': (-300.0, 300.0)
+    },
+    'CIV': {
+        'N': (12.0, 16.0),    # High-ion tracer
+        'b': (5.0, 150.0),    # Higher velocities
+        'v': (-400.0, 400.0)
+    },
+    'OVI': {
+        'N': (12.5, 16.0),    # Hot gas tracer
+        'b': (10.0, 150.0),   # High temperature
+        'v': (-400.0, 400.0)
+    },
+    'SiII': {
+        'N': (11.0, 15.5),    # Metal-line system
+        'b': (3.0, 100.0),
+        'v': (-300.0, 300.0)
+    },
+    'SiIV': {
+        'N': (12.0, 15.5),    # Intermediate-ion
+        'b': (5.0, 150.0),
+        'v': (-350.0, 350.0)
+    },
+    'CII': {
+        'N': (12.0, 17.0),    # Associated with HI
+        'b': (5.0, 120.0),
+        'v': (-400.0, 400.0)
+    },
+    'NV': {
+        'N': (12.5, 15.5),    # High-ion tracer
+        'b': (10.0, 150.0),
+        'v': (-400.0, 400.0)
+    },
+    'AlII': {
+        'N': (10.5, 14.5),    # Metal-line system
+        'b': (3.0, 80.0),
+        'v': (-250.0, 250.0)
+    },
+    'AlIII': {
+        'N': (11.0, 15.0),    # Metal-line system
+        'b': (5.0, 100.0),
+        'v': (-300.0, 300.0)
+    },
+    'OI': {
+        'N': (12.0, 16.5),    # Neutral oxygen
+        'b': (5.0, 100.0),
+        'v': (-300.0, 300.0)
+    }
+}
+
+
+
+def set_bounds(nguess, bguess, vguess, **kwargs):
+    """
+    Set bounds for MCMC parameters with optional custom overrides and ion-aware defaults.
+
+    Parameters:
+    - nguess, bguess, vguess: arrays of initial guesses for logN, b, and v.
+    - Optional keyword arguments:
+        - Nlow, blow, vlow: custom lower bounds
+        - Nhi, bhi, vhi: custom upper bounds
+        - ions: list of ion names for smart bounds (e.g., ['MgII', 'FeII'])
+        - ion_bounds: dict with custom ion bounds to override defaults
+
+    Returns:
+    - bounds: list containing [lower_bounds, upper_bounds]
+    - lb: concatenated lower bounds
+    - ub: concatenated upper bounds
+
+    Examples:
+        # Traditional usage (unchanged)
+        bounds, lb, ub = set_bounds(nguess, bguess, vguess)
+
+        # With ion-aware bounds
+        bounds, lb, ub = set_bounds(nguess, bguess, vguess, ions=['MgII', 'FeII'])
+
+        # Mix of ion-aware and custom bounds
+        bounds, lb, ub = set_bounds(nguess, bguess, vguess, 
+                                  ions=['MgII', 'FeII'], 
+                                  Nlow=[12.0, 11.5])  # Custom N lower bounds
+
+        # Custom ion bounds table
+        custom_ions = {'MgII': {'N': (11.5, 15.0), 'b': (5.0, 50.0)}}
+        bounds, lb, ub = set_bounds(nguess, bguess, vguess,
+                                  ions=['MgII'], 
+                                  ion_bounds=custom_ions)
+    """
+    nguess = np.asarray(nguess)
+    bguess = np.asarray(bguess)
+    vguess = np.asarray(vguess)
+    
+    # Check if ion-aware bounds are requested
+    ions = kwargs.get('ions', None)
+    custom_ion_bounds = kwargs.get('ion_bounds', {})
+    
+    if ions is not None:
+        # Use ion-aware bounds
+        if len(ions) != len(nguess):
+            raise ValueError(f"Length of ions list ({len(ions)}) must match "
+                           f"number of components ({len(nguess)})")
+        
+        # Initialize bounds arrays
+        Nlow = np.zeros_like(nguess)
+        NHI = np.zeros_like(nguess)
+        blow = np.zeros_like(bguess)
+        bHI = np.zeros_like(bguess)
+        vlow = np.zeros_like(vguess)
+        vHI = np.zeros_like(vguess)
+        
+        # Apply ion-specific bounds
+        for i, ion in enumerate(ions):
+            # Use custom ion bounds if provided, otherwise use lookup table
+            if ion in custom_ion_bounds:
+                ion_data = custom_ion_bounds[ion]
+            elif ion in ION_BOUNDS_TABLE:
+                ion_data = ION_BOUNDS_TABLE[ion]
+            else:
+                print(f"Warning: Ion '{ion}' not found in bounds table, using defaults")
+                # Fall back to traditional bounds for this component
+                Nlow[i] = nguess[i] - 2.0
+                NHI[i] = nguess[i] + 2.0
+                blow[i] = max(2.0, bguess[i] - 40.0)
+                bHI[i] = min(150.0, bguess[i] + 40.0)
+                vlow[i] = vguess[i] - 50.0
+                vHI[i] = vguess[i] + 50.0
+                continue
+            
+            # Apply ion-specific bounds
+            Nlow[i] = ion_data['N'][0]
+            NHI[i] = ion_data['N'][1]
+            blow[i] = ion_data['b'][0]
+            bHI[i] = ion_data['b'][1]
+            vlow[i] = ion_data['v'][0]
+            vHI[i] = ion_data['v'][1]
+    
+    else:
+        # Traditional bounds (original behavior)
+        Nlow = nguess - 2.0
+        blow = np.clip(bguess - 40.0, 2.0, None)
+        vlow = vguess - 50.0
+        NHI = nguess + 2.0
+        bHI = np.clip(bguess + 40.0, None, 150.0)
+        vHI = vguess + 50.0
+    
+    # Apply custom overrides (highest priority)
+    if 'Nlow' in kwargs:
+        Nlow = np.asarray(kwargs['Nlow'])
+    if 'blow' in kwargs:
+        blow = np.asarray(kwargs['blow'])
+    if 'vlow' in kwargs:
+        vlow = np.asarray(kwargs['vlow'])
+    if 'Nhi' in kwargs:
+        NHI = np.asarray(kwargs['Nhi'])
+    if 'bhi' in kwargs:
+        bHI = np.asarray(kwargs['bhi'])
+    if 'vhi' in kwargs:
+        vHI = np.asarray(kwargs['vhi'])
+    
+    # Concatenate bounds
+    lb = np.concatenate([Nlow, blow, vlow])
+    ub = np.concatenate([NHI, bHI, vHI])
+    bounds = [lb, ub]
+    
+    return bounds, lb, ub
+
+
+def add_ion_to_bounds_table(ion_name, N_range, b_range, v_range):
+    """
+    Add a new ion to the bounds lookup table.
+    
+    Parameters:
+    - ion_name: string name of ion (e.g., 'MgII')
+    - N_range: tuple of (min, max) log column density
+    - b_range: tuple of (min, max) Doppler parameter in km/s
+    - v_range: tuple of (min, max) velocity in km/s
+    
+    Example:
+        add_ion_to_bounds_table('CaII', (11.0, 14.0), (3.0, 80.0), (-200.0, 200.0))
+    """
+    ION_BOUNDS_TABLE[ion_name] = {
+        'N': N_range,
+        'b': b_range,
+        'v': v_range
+    }
+    print(f"Added {ion_name} to bounds table: N={N_range}, b={b_range}, v={v_range}")
+
+
+def list_available_ions():
+    """List all ions available in the bounds table."""
+    print("Available ions in bounds table:")
+    print("-" * 40)
+    for ion, bounds in ION_BOUNDS_TABLE.items():
+        print(f"{ion:6s}: N={bounds['N']}, b={bounds['b']}, v={bounds['v']}")
+
+
+def get_ion_bounds(ion_name):
+    """
+    Get bounds for a specific ion.
+    
+    Parameters:
+    - ion_name: string name of ion
+    
+    Returns:
+    - dict with 'N', 'b', 'v' bounds or None if not found
+    """
+    return ION_BOUNDS_TABLE.get(ion_name, None)
 
 # Legacy compatibility
 vfit_mcmc = vfit  # Alias for backward compatibility

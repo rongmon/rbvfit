@@ -236,7 +236,26 @@ class CompiledVoigtModel:
     def __init__(self, data_container: CompiledModelData):
         """Initialize with data container."""
         self.data = data_container
+        # Create instrument wrappers if multi-instrument
+        if self.data.is_multi_instrument:
+            self.wrappers = self._create_instrument_wrappers()
+        else:
+            self.wrappers = None
     
+    def _create_instrument_wrappers(self) -> Dict[str, callable]:
+        """Create simple lambda wrapper functions."""
+        if not self.data.master_config_info:
+            return {}
+        
+        wrappers = {}
+        
+        for instrument_name in self.data.master_config_info['instruments']:
+            # Simple lambda - no closures, no fancy stuff
+            wrappers[instrument_name] = lambda theta, wave, inst=instrument_name: self.model_flux(theta, wave, instrument=inst)
+        
+        return wrappers
+
+
     def model_flux(self, theta: np.ndarray, wavelength: np.ndarray, 
                    instrument: Optional[str] = None) -> np.ndarray:
         """
@@ -305,6 +324,11 @@ class CompiledVoigtModel:
     def __setstate__(self, state):
         """Custom unpickling - restore from data."""
         self.data = state['data']
+        # Recreate wrappers after unpickling
+        if self.data.is_multi_instrument:
+            self.wrappers = self._create_instrument_wrappers()
+        else:
+            self.wrappers = None
 
 
 class VoigtModel:
@@ -789,39 +813,8 @@ class VoigtModel:
        print("\n".join(lines))
 
 
-def test_performance_optimization():
-    """Test the vectorization performance."""
-    import time
-    
-    # Create test configuration
-    config = FitConfiguration()
-    config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-    config.add_system(z=0.350, ion='FeII', transitions=[2600.2], components=1)
-    
-    # Test parameters
-    theta = np.array([13.5, 13.2, 14.0, 15.0, 20.0, 18.0, -50.0, 0.0, 10.0])
-    wave = np.linspace(3400, 3900, 1000)
-    
-    print("Vectorized Performance Test")
-    print("=" * 40)
-    
-    # Test vectorized implementation
-    model = VoigtModel(config, FWHM='6.5')
-    compiled_model = model.compile(verbose=True)
-    
-    start_time = time.time()
-    for _ in range(100):
-        flux = compiled_model.model_flux(theta, wave)
-    total_time = time.time() - start_time
-    
-    print(f"\nVectorized implementation: {total_time:.4f} seconds for 100 evaluations")
-    print(f"Average per evaluation: {total_time/100*1000:.2f} ms")
-    print(f"Lines processed: 3 (MgII 2796, MgII 2803, FeII 2600)")
-    print(f"Vectorization benefit: All lines computed simultaneously")
-    
-    return flux
 
 
 if __name__ == "__main__":
-    print("Testing rbvfit 2.0 vectorization...")
-    test_performance_optimization()
+    print(" rbvfit 2.0 ready to use!")
+    

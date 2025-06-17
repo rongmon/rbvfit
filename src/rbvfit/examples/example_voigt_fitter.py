@@ -87,7 +87,7 @@ fitter = mc.vfit(
     )
         
 # Run MCMC
-fitter.runmcmc(optimize=False, verbose=False, use_pool=True)
+fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
         
 # Extract results
 samples = fitter._extract_samples(fitter.sampler, burnin=300)

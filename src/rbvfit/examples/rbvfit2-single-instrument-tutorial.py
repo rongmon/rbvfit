@@ -74,7 +74,7 @@ print("=" * 60)
 
 
 config_A = FitConfiguration()
-config_A.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=4)
+config_A.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=3)
 
 
 print("\n✓ Physical system configured")
@@ -123,9 +123,9 @@ print("SETTING UP MCMC PARAMETERS")
 print("=" * 60)
 
 # Initial parameter guesses based on visual inspection or previous fits
-nguess = [13.15, 13.58, 13.5, 12.5]  # log10(column density in cm^-2) 
-bguess = [23.0,25.,30.,15.]  # Doppler parameter in km/s - thermal + turbulent broadening
-vguess = [-67.,0.,10.,70.] # Velocity offset in km/s - relative to systemic redshift
+nguess = [13.15, 13.58, 13.5]  # log10(column density in cm^-2) 
+bguess = [23.0,25.,30.]  # Doppler parameter in km/s - thermal + turbulent broadening
+vguess = [-67.,0.,10.] # Velocity offset in km/s - relative to systemic redshift
 
 print("Initial parameter guesses:")
 print(f"  N (log column density): {nguess[0]:.1f} [log cm^-2]")
@@ -162,7 +162,7 @@ fitter = mc.vfit(
     theta, lb, ub,            # Parameters and bounds
     wave_obs, flux, error,        # Primary dataset (XShooter data)
     no_of_Chain=50,
-    no_of_steps=50000,
+    no_of_steps=500,
     perturbation=1e-4
     )
 
@@ -195,6 +195,6 @@ print("Generating corner plot (parameter posterior distributions)...")
 print("\nExtracting results...")
 fig = mc.plot_model(model_A, fitter, 
                 outfile=False,           # or 'output.png' to save
-                show_residuals=False,     # Include residual plots
+                show_residuals=True,     # Include residual plots
                 velocity_marks=True,     # Mark component velocities
                 verbose=True)            # Print parameter summary

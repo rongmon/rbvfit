@@ -64,8 +64,8 @@ def simple_v1_v2_test():
 
     
     
-    # 5. Run v2 MCMC with v1-style setup
-    print("\n5. Running v2 MCMC with v1-style functions...")
+    # 5. Run v2 MCMC
+    print("\n5. Running v2 MCMC ...")
     start = time.time()
     
     

@@ -30,7 +30,7 @@ qt=np.isnan(flux)
 flux[qt]=0.
 error[qt]=0.
 
-q=((wave_full/(1.+zabs) >1189.5) & (wave_full/(1.+zabs) < 1195.))
+q=((wave_full/(1.+zabs) >1189.5) * (wave_full/(1.+zabs) < 1195.))#+((wave_full/(1.+zabs) >1524.5) * (wave_full/(1.+zabs) < 1527.5))
 
 wave=wave_full[q]
 flux=flux[q]
@@ -38,12 +38,12 @@ error=error[q]
 
 
 #Which transitions to fit
-lambda_rest = [1190.5,1193.5]
+lambda_rest = [1190.5,1193.5]#,1526.5]
 lambda_rest1=[1025.7]
 #Initial guess of clouds
-nguess=[13.8,13.8,13.5]
-bguess=[70.,30.,30.]
-vguess=[-180.,0.,0.]
+nguess=[14.2,14.5]
+bguess=[40.,30.]
+vguess=[0.,0.]
 
 
 #Setting the upper and lower limits for the fit. You can also do it by hand if you prefer
@@ -60,7 +60,7 @@ print("\n=== Setting up V2 Model ===")
     
 # Create V2 model
 config = FitConfiguration()
-config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=2)
+config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=1)
 config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
 v2_model = VoigtModel(config, FWHM='6.5')
 v2_compiled = v2_model.compile()
@@ -88,37 +88,13 @@ fitter = mc.vfit(
         
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
-        
-# Extract results
-samples = fitter._extract_samples(fitter.sampler, burnin=300)
-best_fit = np.median(samples, axis=0)
-best_model = v2_compiled.model_flux(best_fit, wave)
-        
-# Get sampler info
-sampler_info = fitter.get_sampler_info()
-        
-elapsed_time = time.time() - start_time
-success = True
-        
+elapsed_time=time.time()-start_time        
 print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
         
-# Print diagnostics
-if 'acceptance_fraction' in sampler_info:
-    print(f"  Acceptance fraction: {sampler_info['acceptance_fraction']:.3f}")
-if 'r_hat_max' in sampler_info:
-    print(f"  R-hat max: {sampler_info['r_hat_max']:.3f}")
 
-    
+#plot corner     
 fitter.plot_corner()
 
-#mc.plot_model(wave,flux,error,fitter,v2_compiled)
-fig,ax = plt.subplots(1, 1, figsize=(10, 4))
+#plot models
+mc.plot_model(v2_model,fitter,show_residuals=True)
 
-# Top panel: Model fits
-ax.step(wave, flux, 'k-', where='mid', linewidth=1.5, 
-            label='Observed Data', alpha=0.8)
-ax.fill_between(wave, flux - error, flux + error,
-                     color='gray', alpha=0.3, step='mid', label='1σ Error')
-ax.plot(wave, best_model, 'g--', linewidth=2, 
-            label='Best Model', alpha=0.7)
-plt.show()

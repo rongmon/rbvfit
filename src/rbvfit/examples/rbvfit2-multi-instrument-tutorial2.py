@@ -1,30 +1,4 @@
-#!/usr/bin/env python
-"""
-===============================================================================
-rbvfit 2.0 Tutorial: Multi-Instrument Absorption Line Fitting
-===============================================================================
 
-This tutorial demonstrates how to simultaneously fit the same absorption line
-observed with two different instruments (XShooter and FIRE) using rbvfit 2.0.
-
-WHAT THIS SCRIPT DOES:
-1. Loads real spectroscopic data from two instruments
-2. Sets up shared physical parameters with different instrumental resolutions
-3. Runs joint MCMC fitting to constrain absorption line properties
-4. Visualizes results showing how both datasets contribute to the fit
-
-SCIENTIFIC MOTIVATION:
-- Joint fitting provides better parameter constraints than individual fits
-- Accounts for different instrumental resolutions automatically
-- Validates results across multiple instruments
-- Combines data from different wavelength coverages/sensitivities
-
-LEARNING OBJECTIVES:
-- Understand multi-instrument configuration setup
-- Learn parameter sharing concepts in rbvfit 2.0
-- Practice MCMC fitting with joint datasets
-- Interpret multi-instrument fitting results
-"""
 
 import numpy as np
 import sys
@@ -38,6 +12,7 @@ from rbvfit import vfit_mcmc as mc  # MCMC fitting engine
 
 import matplotlib.pyplot as plt
 
+# User-specific imports for data loading
 from rbcodes.GUIs.rb_spec import load_rb_spec_object
 
 # Global settings
@@ -46,26 +21,8 @@ verbose = True  # Print detailed information during execution
 # ============================================================================
 # PART 1: DATA LOADING AND PREPARATION
 # ============================================================================
-# This section loads real spectroscopic data from both instruments
-# In your own work, replace this with your data loading procedure
 
 def load_spectrum(slice_name):
-    """
-    Load spectrum from saved rb_spec object.
-    
-    This is a custom data loading function. For your own data, replace this
-    with whatever method you use to load wavelength, flux, and error arrays.
-    
-    Parameters
-    ----------
-    slice_name : str
-        Filename of the saved spectrum object
-        
-    Returns
-    -------
-    wave, flux, error : np.ndarray
-        Wavelength (Angstroms), normalized flux, and error arrays
-    """
     print(f"Loading spectrum: {slice_name}")
     s_HIRES = load_rb_spec_object(filename=slice_name, verbose=verbose)
     
@@ -83,20 +40,34 @@ print("LOADING OBSERVATIONAL DATA")
 print("=" * 60)
 
 # XShooter spectrum (higher resolution)
-wave, flux, error = load_spectrum('J159_7921_XShooter_OI1302.json')
+wave, flux, error = load_spectrum('J1030_9089_XShooter_OI1302.json')
 print(f"XShooter: {len(wave)} points, {wave.min():.1f}-{wave.max():.1f} Å")
 
 # FIRE spectrum (lower resolution)  
-wave1, flux1, error1 = load_spectrum('J159_7921_FIRE_OI1302.json')
+wave1, flux1, error1 = load_spectrum('J1030_9089_FIRE_OI1302.json')
 print(f"FIRE: {len(wave1)} points, {wave1.min():.1f}-{wave1.max():.1f} Å")
+
+
+# FIRE spectrum (lower resolution)  
+wave2, flux2, error2 = load_spectrum('J1030_9089_HIRES_OI_air2vac_updated.json')
+print(f"HIRES: {len(wave2)} points, {wave2.min():.1f}-{wave2.max():.1f} Å")
+
+#some tweaking to get everything to CIV redshift. This is rb_spec object specfic
+
+z=6.074762
+
+zabs_CIV = 4.9484
+
+wave_obs = wave * (z+1.)
+wave1_obs = wave1 * (z+1.)
+wave2_obs = wave2 * (z+1.) 
+
 
 print("\n✓ Data loading complete")
 
 # ============================================================================
 # PART 2: PHYSICAL SYSTEM CONFIGURATION
 # ============================================================================
-# This section sets up the physical absorption system that both instruments observe
-# KEY CONCEPT: Same physics, different instrumental responses
 
 print("\n" + "=" * 60)
 print("CONFIGURING PHYSICAL ABSORPTION SYSTEM")
@@ -105,21 +76,26 @@ print("=" * 60)
 # Both instruments observe the same physical system (OI 1302 at z=0.0)
 # but with different instrumental resolutions
 
+
+
+
 config_A = FitConfiguration()
-config_A.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
-print("XShooter configuration: OI 1302 at z=0.0, 1 component")
+config_A.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=2)
+config_A.add_system(z=z, ion='OI', transitions=[1302.17], components=1)
+config_A.add_system(z=z, ion='SiII', transitions=[1304.5], components=1)
+
 
 config_B = FitConfiguration()
-config_B.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
-print("FIRE configuration: identical physical system")
+config_B.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=2)
+config_B.add_system(z=z, ion='OI', transitions=[1302.17], components=1)
+config_B.add_system(z=z, ion='SiII', transitions=[1304.5], components=1)
 
-# Display the configuration details
-print(f"\nPhysical system details:")
-print(f"  Ion: OI (neutral oxygen)")
-print(f"  Rest wavelength: 1302.17 Å")
-print(f"  Redshift: z = 0.0 (systemic)")
-print(f"  Components: 1 velocity component")
-print(f"  Parameters to fit: N (column density), b (Doppler), v (velocity)")
+
+config_C = FitConfiguration()
+config_C.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=2)
+config_C.add_system(z=z, ion='OI', transitions=[1302.17], components=1)
+config_C.add_system(z=z, ion='SiII', transitions=[1304.5], components=1)
+
 
 print("\n✓ Physical system configured")
 
@@ -134,11 +110,13 @@ print("SETTING UP INSTRUMENTAL PARAMETERS")
 print("=" * 60)
 
 # Define instrumental resolutions (Full Width at Half Maximum in pixels)
-FWHM_XShooter = '2.2'  # Higher spectral resolution (sharper lines)
-FWHM_FIRE = '4.0'      # Lower spectral resolution (broader lines)
+FWHM_XShooter = '2.2' # XShooter
+FWHM_HIRES = '4.285' # HIRES
+FWHM_FIRE = '4.0'
 
 print(f"Instrumental resolutions:")
-print(f"  XShooter FWHM: {FWHM_XShooter} pixels (higher resolution)")
+print(f"  HIRES FWHM:     {FWHM_HIRES} pixels (highest resolution)")
+print(f"  XShooter FWHM: {FWHM_XShooter} pixels (medium resolution)")
 print(f"  FIRE FWHM:     {FWHM_FIRE} pixels (lower resolution)")
 
 # Create instrument-specific models
@@ -148,6 +126,11 @@ print(f"XShooter model: convolves with {FWHM_XShooter}-pixel Gaussian")
 
 model_B = VoigtModel(config_B, FWHM=FWHM_FIRE)      
 print(f"FIRE model: convolves with {FWHM_FIRE}-pixel Gaussian")
+
+
+model_C = VoigtModel(config_C, FWHM=FWHM_HIRES)      
+print(f"FIRE model: convolves with {FWHM_HIRES}-pixel Gaussian")
+
 
 print("\n✓ Instrumental models created")
 
@@ -163,8 +146,9 @@ print("=" * 60)
 
 # Dictionary maps instrument names to their configurations
 instrument_configs = {
-    'XShooter': config_A,  # High-resolution configuration
-    'FIRE': config_B       # Lower-resolution configuration
+    'XShooter': config_A,  
+    'FIRE': config_B,
+    'HIRES': config_C       
 }
 
 print("Instrument mapping:")
@@ -194,45 +178,16 @@ print("CREATING MODEL EVALUATION FUNCTIONS")
 print("=" * 60)
 
 def model_xshooter(theta, wave):
-    """
-    Evaluate XShooter model with high resolution (2.2-pixel FWHM).
-    
-    Parameters
-    ----------
-    theta : np.ndarray
-        Parameter array [N, b, v] for all components
-    wave : np.ndarray  
-        Wavelength array for evaluation
-        
-    Returns
-    -------
-    np.ndarray
-        Model flux convolved with XShooter instrumental response
-    """
     return compiled.model_flux(theta, wave, instrument='XShooter')
 
 def model_fire(theta, wave):
-    """
-    Evaluate FIRE model with lower resolution (4.0-pixel FWHM).
-    
-    Parameters
-    ----------
-    theta : np.ndarray
-        Same parameter array as XShooter (shared physics!)
-    wave : np.ndarray
-        Wavelength array for evaluation
-        
-    Returns
-    -------
-    np.ndarray
-        Model flux convolved with FIRE instrumental response
-    """
     return compiled.model_flux(theta, wave, instrument='FIRE')
 
+def model_hires(theta, wave):
+    return compiled.model_flux(theta, wave, instrument='HIRES')
+
+
 print("Model evaluation functions created:")
-print("  model_xshooter(): applies 2.2-pixel FWHM convolution")
-print("  model_fire():     applies 4.0-pixel FWHM convolution")
-print("  Both use same theta parameters (shared physics)")
 
 print("\n✓ Evaluation functions ready")
 
@@ -247,9 +202,9 @@ print("SETTING UP MCMC PARAMETERS")
 print("=" * 60)
 
 # Initial parameter guesses based on visual inspection or previous fits
-nguess = [14.4]  # log10(column density in cm^-2) - typical for OI
-bguess = [18.0]  # Doppler parameter in km/s - thermal + turbulent broadening
-vguess = [200.0] # Velocity offset in km/s - relative to systemic redshift
+nguess = [13.25, 13.63, 13.12,13.2]  # log10(column density in cm^-2) - typical for OI
+bguess = [23.0,25.,50.,13.2]  # Doppler parameter in km/s - thermal + turbulent broadening
+vguess = [-67.,0.,-20.,-20.] # Velocity offset in km/s - relative to systemic redshift
 
 print("Initial parameter guesses:")
 print(f"  N (log column density): {nguess[0]:.1f} [log cm^-2]")
@@ -286,20 +241,28 @@ print("Setting up multi-instrument fitter...")
 fitter = mc.vfit(
     model_xshooter,           # Primary model function (XShooter)
     theta, lb, ub,            # Parameters and bounds
-    wave, flux, error,        # Primary dataset (XShooter data)
+    wave_obs, flux, error,        # Primary dataset (XShooter data)
     no_of_Chain=50,
-    no_of_steps=2000,
+    no_of_steps=500,
     perturbation=1e-6,
     multi_instrument=True,    # Enable multi-instrument mode
     instrument_data={         # Additional instruments
         'FIRE': {
             'model': model_fire,  # FIRE model function
-            'wave': wave1,        # FIRE wavelength array
+            'wave': wave1_obs,        # FIRE wavelength array
             'flux': flux1,        # FIRE flux array
             'error': error1       # FIRE error array
+        },
+        'HIRES': {
+            'model': model_hires,  # FIRE model function
+            'wave': wave2_obs,        # FIRE wavelength array
+            'flux': flux2,        # FIRE flux array
+            'error': error2       # FIRE error array
         }
     }
 )
+
+
 
 print("Fitter configuration:")
 print("  Primary instrument: XShooter")
@@ -329,78 +292,11 @@ print("=" * 60)
 print("Generating corner plot (parameter posterior distributions)...")
 fitter.plot_corner()
 
+
 # Extract key results
 print("\nExtracting results...")
-samples = fitter.samples      # MCMC samples (posterior chains)
-best_theta = fitter.best_theta # Best-fit parameters (median of posterior)
-
-# Print best-fit results
-print(f"\nBest-fit parameters:")
-print(f"  N = {best_theta[0]:.2f} ± {np.std(samples[:,0]):.2f} [log cm^-2]")
-print(f"  b = {best_theta[1]:.1f} ± {np.std(samples[:,1]):.1f} km/s")
-print(f"  v = {best_theta[2]:.1f} ± {np.std(samples[:,2]):.1f} km/s")
-
-# Calculate derived quantities
-linear_N = 10**best_theta[0]
-print(f"\nDerived quantities:")
-print(f"  Linear column density: {linear_N:.2e} cm^-2")
-print(f"  Thermal velocity (for T=10^4 K): ~12.9 km/s")
-print(f"  Turbulent component: ~{np.sqrt(best_theta[1]**2 - 12.9**2):.1f} km/s")
-
-print("\n✓ Results analysis complete")
-
-# ============================================================================
-# PART 9: DATA AND MODEL VISUALIZATION
-# ============================================================================
-# Create publication-quality plots showing the joint fit
-# KEY CONCEPT: Visualize how both datasets contribute to the constraints
-
-print("\n" + "=" * 60)
-print("CREATING VISUALIZATION")
-print("=" * 60)
-
-print("Preparing data/model comparison plots...")
-
 fig = mc.plot_model(model_A, fitter, 
                 outfile=False,           # or 'output.png' to save
                 show_residuals=False,     # Include residual plots
                 velocity_marks=True,     # Mark component velocities
                 verbose=True)            # Print parameter summary
-
-print("\n✓ Visualization complete")
-
-# ============================================================================
-# TUTORIAL SUMMARY AND NEXT STEPS
-# ============================================================================
-print("\n" + "=" * 80)
-print("TUTORIAL COMPLETE - SUMMARY")
-print("=" * 80)
-
-print("\nWhat you learned:")
-print("  ✓ How to load and prepare multi-instrument spectroscopic data")
-print("  ✓ How to configure shared physical systems in rbvfit 2.0")
-print("  ✓ How to handle different instrumental resolutions")
-print("  ✓ How to compile and use multi-instrument models")
-print("  ✓ How to run joint MCMC fitting")
-print("  ✓ How to analyze and visualize results")
-
-print("\nKey advantages of multi-instrument fitting:")
-print("  • Better parameter constraints from combined data")
-print("  • Automatic handling of different instrumental responses")
-print("  • Consistency checks across multiple datasets")
-print("  • Reduced systematic uncertainties")
-
-print(f"\nYour results:")
-print(f"  OI 1302 column density: N = {best_theta[0]:.2f} ± {np.std(samples[:,0]):.2f} [log cm^-2]")
-print(f"  Doppler parameter:      b = {best_theta[1]:.1f} ± {np.std(samples[:,1]):.1f} km/s")
-print(f"  Velocity offset:        v = {best_theta[2]:.1f} ± {np.std(samples[:,2]):.1f} km/s")
-
-print("\nNext steps for your research:")
-print("  1. Try adding more velocity components if needed")
-print("  2. Fit additional transitions (e.g., OI 1355) jointly")
-print("  3. Add more instruments if available")
-print("  4. Compare results with single-instrument fits")
-print("  5. Explore different ion species in the same system")
-
-print("\nFor questions or issues, consult the rbvfit 2.0 documentation")
-print("Happy fitting! 🎉")

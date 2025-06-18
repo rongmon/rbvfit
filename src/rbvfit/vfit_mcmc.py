@@ -254,10 +254,10 @@ class vfit(object):
         return lp + self.lnlike(theta)
     
     def optimize_guess(self, theta):
-        nll = lambda *args: -self.lnprob(*args)
-        result = op.minimize(nll, [theta])
-        p = result["x"]
-        return p
+        bounds = list(zip(self.lb, self.ub))  # assuming self.lb and self.ub are arrays
+        nll = lambda theta: -self.lnprob(theta)
+        result = op.minimize(nll, theta, method='L-BFGS-B',bounds=bounds)
+        return result["x"]
 
     def _setup_emcee_sampler(self, guesses, use_pool=True):
         """Set up emcee sampler with optimized multiprocessing."""
@@ -1291,8 +1291,7 @@ def _plot_multi_instrument_v2_with_datasets(model, plot_datasets, best_theta, sa
         axes[-1].set_xlabel('Observed Wavelength (Å)')
     
     # Add overall title
-    plt.suptitle(f'rbvfit 2.0 Multi-Instrument Joint Fit\n'
-                f'Shared Physics Parameters • {n_samples} Posterior Samples', 
+    plt.suptitle(f'rbvfit 2.0 Multi-Instrument Joint Fit\n', 
                 fontsize=14, y=0.98)
     
     plt.tight_layout()
@@ -1489,7 +1488,7 @@ def _print_v1_parameter_summary(samples, n_params):
 def _print_parameter_summary_v2(model, best_theta, samples):
     """Print v2.0 parameter summary with ion organization."""
     print("\n" + "=" * 60)
-    print("RBVFIT 2.0 PARAMETER SUMMARY")
+    print("rbvfit 2.0 PARAMETER SUMMARY")
     print("=" * 60)
     
     try:

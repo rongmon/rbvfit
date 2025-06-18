@@ -817,4 +817,4 @@ class VoigtModel:
 
 if __name__ == "__main__":
     print(" rbvfit 2.0 ready to use!")
-    
+    print("Happy fitting! 🎉")

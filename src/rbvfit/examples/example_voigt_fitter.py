@@ -30,7 +30,7 @@ qt=np.isnan(flux)
 flux[qt]=0.
 error[qt]=0.
 
-q=((wave_full/(1.+zabs) >1189.5) * (wave_full/(1.+zabs) < 1195.))+((wave_full/(1.+zabs) >1524.5) * (wave_full/(1.+zabs) < 1527.5))
+q=((wave_full/(1.+zabs) >1189.5) * (wave_full/(1.+zabs) < 1195.))#+((wave_full/(1.+zabs) >1524.5) * (wave_full/(1.+zabs) < 1527.5))
 
 wave=wave_full[q]
 flux=flux[q]
@@ -38,7 +38,7 @@ error=error[q]
 
 
 #Which transitions to fit
-lambda_rest = [1190.5,1193.5,1526.5]
+lambda_rest = [1190.5,1193.5]#,1526.5]
 lambda_rest1=[1025.7]
 #Initial guess of clouds
 nguess=[14.2,14.5]

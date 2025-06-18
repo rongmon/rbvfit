@@ -7,6 +7,7 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 import numpy as np
 from scipy.special import wofz
 from astropy.convolution import convolve as astropy_convolve, Gaussian1DKernel, CustomKernel
+
 from dataclasses import dataclass
 import copy
 
@@ -195,6 +196,7 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
     # Apply convolution if kernel is provided
     if kernel is not None:
         flux = astropy_convolve(flux, kernel, boundary="extend")
+
 
     return flux
 
@@ -549,7 +551,10 @@ class VoigtModel:
 
     def _setup_kernel(self):
         """Set up the convolution kernel based on FWHM parameter."""
-        if self.FWHM == 'COS':
+        if self.FWHM is None:
+            # No convolution - return unconvolved line profiles
+            self.kernel = None
+        elif self.FWHM == 'COS':
             if not HAS_LINETOOLS:
                 raise ImportError("COS LSF requires linetools package")
             instr_config = dict(

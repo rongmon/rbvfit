@@ -23,7 +23,7 @@ def simple_v1_v2_test():
     n_component=len(nguess)
     
 
-    wave = np.linspace(3760, 3800, 10000)
+    wave = np.linspace(3760, 3800, 500)
     
     v1_m = v1_model.create_voigt(
         np.array([zabs]), lambda_rest, nclump=n_component, ntransition=2,
@@ -46,7 +46,7 @@ def simple_v1_v2_test():
     
     v1_fitter = v1_mcmc.vfit(
         v1_m.model_flux, theta_true, lb, ub, wave, observed_flux, error,
-        no_of_Chain=50, no_of_steps=5000, perturbation=1e-6
+        no_of_Chain=50, no_of_steps=500, perturbation=1e-6
     )
     v1_fitter.runmcmc(optimize=True, verbose=False)
     
@@ -71,7 +71,7 @@ def simple_v1_v2_test():
     
     v2_fitter = v1_mcmc.vfit(
         v2_m_compile.model_flux, theta_true, lb, ub, wave, observed_flux, error,
-        no_of_Chain=50, no_of_steps=5000, perturbation=1e-6
+        no_of_Chain=50, no_of_steps=500, perturbation=1e-6
     )
     v2_fitter.runmcmc(optimize=True, verbose=False)
     

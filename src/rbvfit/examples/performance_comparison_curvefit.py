@@ -128,7 +128,7 @@ def setup_models(scenario):
         models['v2_regular'] = {
             'model': v2_model_obj,
             'setup_time': v2_setup_time,
-            'eval_func': lambda theta, wave: v2_model_obj.evaluate(theta, wave),
+            'eval_func': v2_model_obj.evaluate,#lambda theta, wave: v2_model_obj.evaluate(theta, wave),
             'curvefit_func': None  # v2 doesn't have direct curvefit interface
         }
         

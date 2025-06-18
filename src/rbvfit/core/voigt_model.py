@@ -56,7 +56,8 @@ def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float,
     a = gamma / (4 * np.pi * b_f)
     x = (freq - freq0) / b_f
     
-    H = np.real(wofz(x + 1j * a))
+    #H = np.real(wofz(x + 1j * a))
+    H = wofz(x + 1j * a).real
     tau = N * f * constant * H
     return tau
 
@@ -112,7 +113,9 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     z = x + 1j * a
     
     # Vectorized wofz calculation - handles complex arrays natively
-    H = np.real(wofz(z))
+    #H = np.real(wofz(z))
+    H = wofz(x + 1j * a).real
+
     
     # Vectorized final calculation
     tau_all = N_bc * f_bc * constant * H

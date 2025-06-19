@@ -87,13 +87,17 @@ fitter = mc.vfit(
     )
         
 # Run MCMC
-fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+#fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+#plot corner     
+#fitter.plot_corner()
+
+fitter.fit_quick() 
+
 elapsed_time=time.time()-start_time        
 print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
-        
 
-#plot corner     
-fitter.plot_corner()
+
+
 
 #plot models
 mc.plot_model(v2_model,fitter,show_residuals=True)

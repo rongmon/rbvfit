@@ -7,7 +7,6 @@ import sys
 import scipy.optimize as op
 from rbvfit.rb_vfit import rb_veldiff as rb_veldiff
 from rbvfit import rb_setline as rb
-import pdb
 import warnings
 import multiprocessing as mp
 from typing import Dict, List, Tuple, Optional, Union
@@ -578,69 +577,123 @@ class vfit(object):
         self.sampler = sampler
         self.ndim = len(self.lb)
         self.nwalkers = no_of_Chain
+        self.mcmc_flag=True
     
     
+    def fit_quick(self, verbose=True):
+        """
+        Quick deterministic fitting using scipy optimization.
         
-    
+        Parameters
+        ----------
+        verbose : bool, optional
+            Print fitting progress
+            
+        Returns
+        -------
+        theta_best : np.ndarray
+            Best-fit parameters
+        theta_best_error : np.ndarray
+            Parameter uncertainties (1-sigma)
+        """
+        self.mcmc_flag=False
+        try:
+            from rbvfit.core.quick_fit_interface import quick_fit_vfit
+        except ImportError as e:
+            raise ImportError("Quick fitting requires scipy") from e
+        
+        # Multi-instrument warning
+        if self.multi_instrument and verbose:
+            print("⚠️  Multi-instrument mode: Uses primary dataset only")
+        
+        # Validate required attributes
+        required_attrs = ['model', 'theta', 'wave_obs', 'fnorm', 'enorm']
+        for attr in required_attrs:
+            if not hasattr(self, attr):
+                raise AttributeError(f"Missing: {attr}")
+        
+        if verbose:
+            print("🚀 Starting quick fit...")
+        
+        try:
+            theta_best, theta_best_error = quick_fit_vfit(self)
+            
+            if verbose:
+                print("✅ Quick fit completed")
+                if np.any(np.isnan(theta_best_error)):
+                    print("⚠️  Some uncertainties are NaN")
+            
+            self.theta_best=theta_best
+            self.theta_best_error=theta_best_error
+        except Exception as e:
+            if verbose:
+                print(f"❌ Quick fit failed: {str(e)}")
+            raise RuntimeError("Quick fitting failed") from e
+        
 
     def plot_corner(self, outfile=False, burntime=100, **kwargs):
         """Plot corner plot with sampler-agnostic sample extraction."""
-        ndim = self.ndim
-        
-        # Extract samples based on sampler type
-        samples = self._extract_samples(self.sampler, burntime)
 
-        st = np.percentile(samples, 50, axis=0)
+        if self.mcmc_flag==True:
+            ndim = self.ndim
+            
+            # Extract samples based on sampler type
+            samples = self._extract_samples(self.sampler, burntime)
 
-        nfit = int(ndim / 3)
-        N_tile = np.tile("logN", nfit)
-        b_tile = np.tile("b", nfit)
-        v_tile = np.tile("v", nfit)
+            st = np.percentile(samples, 50, axis=0)
 
-        tmp = np.append(N_tile, b_tile)
-        text_label = np.append(tmp, v_tile)
+            nfit = int(ndim / 3)
+            N_tile = np.tile("logN", nfit)
+            b_tile = np.tile("b", nfit)
+            v_tile = np.tile("v", nfit)
 
-        if 'True_values' in kwargs:
-            figure = corner.corner(samples, labels=text_label, truths=kwargs['True_values'])
+            tmp = np.append(N_tile, b_tile)
+            text_label = np.append(tmp, v_tile)
+
+            if 'True_values' in kwargs:
+                figure = corner.corner(samples, labels=text_label, truths=kwargs['True_values'])
+            else:
+                figure = corner.corner(samples, labels=text_label, truths=st)
+
+            # Sets title to outfile is not False
+            if outfile == False:
+                pass
+            else:
+                plt.title(outfile, y=1.05*ndim, loc='right') 
+
+            theta_prime = st
+            value1 = np.percentile(samples, 10, axis=0)
+            value2 = np.percentile(samples, 90, axis=0)
+            
+            # Extract the axes
+            axes = np.array(figure.axes).reshape((ndim, ndim))
+
+            # Loop over the diagonal
+            for i in range(ndim):
+                ax = axes[i, i]
+                ax.axvline(value1[i], color="aqua")
+                ax.axvline(value2[i], color="aqua")
+
+            # Loop over the histograms
+            for yi in range(ndim):
+                for xi in range(yi):
+                    ax = axes[yi, xi]
+                    ax.axvline(value1[xi], color="aqua")
+                    ax.axvline(value2[xi], color="aqua")
+
+            self.best_theta = theta_prime
+            self.low_theta = value1
+            self.high_theta = value2
+            self.samples = samples
+
+            if outfile == False:
+                plt.show()
+            else:
+                outfile_fig = outfile
+                figure.savefig(outfile_fig, bbox_inches='tight')
         else:
-            figure = corner.corner(samples, labels=text_label, truths=st)
+            print("⚠️  MCMC Fit not done! Can't do corner plot. Exiting gracefully.")
 
-        # Sets title to outfile is not False
-        if outfile == False:
-            pass
-        else:
-            plt.title(outfile, y=1.05*ndim, loc='right') 
-
-        theta_prime = st
-        value1 = np.percentile(samples, 10, axis=0)
-        value2 = np.percentile(samples, 90, axis=0)
-        
-        # Extract the axes
-        axes = np.array(figure.axes).reshape((ndim, ndim))
-
-        # Loop over the diagonal
-        for i in range(ndim):
-            ax = axes[i, i]
-            ax.axvline(value1[i], color="aqua")
-            ax.axvline(value2[i], color="aqua")
-
-        # Loop over the histograms
-        for yi in range(ndim):
-            for xi in range(yi):
-                ax = axes[yi, xi]
-                ax.axvline(value1[xi], color="aqua")
-                ax.axvline(value2[xi], color="aqua")
-
-        self.best_theta = theta_prime
-        self.low_theta = value1
-        self.high_theta = value2
-        self.samples = samples
-
-        if outfile == False:
-            plt.show()
-        else:
-            outfile_fig = outfile
-            figure.savefig(outfile_fig, bbox_inches='tight')
 
     def get_sampler_info(self):
         """Get information about the sampler used."""
@@ -724,20 +777,35 @@ def plot_model(model, fitter, outfile=False, xlim=None, ylim=None, show_residual
         The plot figure
     """
     
-    # Detect rbvfit version
-    if _is_v2_model(model):
-        print("Detected rbvfit 2.0 model - using enhanced plotting")
-        return _plot_model_v2(model, fitter, outfile=outfile, xlim=xlim, ylim=ylim, 
-                             show_residuals=show_residuals, show_components=show_components, 
-                             velocity_marks=velocity_marks, burntime=burntime, 
-                             burn_fraction=burn_fraction, n_posterior_samples=n_posterior_samples, 
-                             verbose=verbose, datasets=datasets, **kwargs)
+    # Detect result type first
+    if fitter.mcmc_flag==True:
+        print('IDENTIFIED MCMC ')
+        # MCMC results available
+        if _is_v2_model(model):
+            print("Detected rbvfit 2.0 MCMC results - using enhanced plotting")
+            return _plot_model_v2(model, fitter, outfile=outfile, xlim=xlim, ylim=ylim, 
+                                 show_residuals=show_residuals, show_components=show_components, 
+                                 velocity_marks=velocity_marks, burntime=burntime, 
+                                 burn_fraction=burn_fraction, n_posterior_samples=n_posterior_samples, 
+                                 verbose=verbose, datasets=datasets, **kwargs)
+        else:
+            print("Detected rbvfit 1.0 MCMC results - using original plotting")
+            return _plot_model_v1(model, fitter, outfile=outfile, xlim=xlim, ylim=ylim, 
+                                 show_residuals=show_residuals, show_components=show_components, 
+                                 velocity_marks=velocity_marks, verbose=verbose, datasets=datasets, **kwargs)
+    
+    elif  fitter.mcmc_flag==False:
+        # Quick fit results or deterministic results
+        print("Detected quick fit results - using deterministic plotting")
+        return _plot_quick_fit(model, fitter, outfile=outfile, xlim=xlim, ylim=ylim,
+                              show_residuals=show_residuals, show_components=show_components,
+                              velocity_marks=velocity_marks, verbose=verbose, 
+                              datasets=datasets, **kwargs)
+    
     else:
-        print("Detected rbvfit 1.0 model - using original plotting")
-        return _plot_model_v1(model, fitter, outfile=outfile, xlim=xlim, ylim=ylim, 
-                             show_residuals=show_residuals, show_components=show_components, 
-                             velocity_marks=velocity_marks, verbose=verbose, datasets=datasets, 
-                         **kwargs)
+        raise ValueError("Cannot determine result type. Fitter must have either MCMC samples or quick fit results.")
+
+
 def _setup_datasets(fitter, datasets=None,verbose=True):
     """
     Set up datasets for plotting, with optional override.
@@ -1538,6 +1606,264 @@ def _print_parameter_summary_v2(model, best_theta, samples):
         print(f"Parameters: {len(best_theta)} fitted")
         print(f"Samples: {len(samples)}")
         print("=" * 60)
+
+
+def _plot_quick_fit(model, fitter, outfile=False, xlim=None, ylim=None,
+                   show_residuals=True, show_components=False, velocity_marks=True,
+                   verbose=True, datasets=None, **kwargs):
+    """
+    Plot quick fit (deterministic) results for both rbvfit 1.0 and 2.0.
+    
+    Parameters
+    ----------
+    model : object
+        Model object (v1.0 create_voigt object or v2.0 VoigtModel)
+    fitter : vfit
+        Fitter object with quick fit results or best_theta
+    outfile : str or False, optional
+        Save figure to file (default: False)
+    xlim : list, optional
+        X-axis limits [start, end]
+    ylim : list, optional
+        Y-axis limits [start, end] for flux plots
+    show_residuals : bool, optional
+        Include residual plots (default: True)
+    show_components : bool, optional
+        Show individual velocity components (default: False for quick fits)
+    velocity_marks : bool, optional
+        Mark component velocities (default: True)
+    verbose : bool, optional
+        Print parameter summary (default: True)
+    datasets : dict, optional
+        Override datasets for plotting
+    **kwargs
+        Additional plotting parameters
+        
+    Returns
+    -------
+    plt.Figure
+        The plot figure
+    """
+    
+    print("Creating quick fit visualization...")
+    
+    # Extract best-fit parameters
+    if hasattr(fitter, 'theta_best'):
+        # From QuickFitResults object
+        best_theta = fitter.theta_best
+        theta_errors = fitter.theta_best_error
+        fit_info = getattr(fitter, 'fit_info', {})
+        method = getattr(fitter, 'method', 'quick_fit')
+        success = getattr(fitter, 'success', True)
+    else:
+        # Fallback to current theta (assumes already fitted)
+        best_theta = fitter.theta
+        theta_errors = None
+        fit_info = {}
+        method = 'quick_fit'
+        success = True
+    
+    # Set up datasets
+    plot_datasets = _setup_datasets(fitter, datasets, verbose=verbose)
+    
+    # Detect rbvfit version for model evaluation
+    is_v2_model = _is_v2_model(model)
+    
+    
+    # Set default y-limits based on version
+    if ylim is None:
+        ylim = [0, 1.2] if is_v2_model else [0, 1.6]
+    
+    if show_residuals:
+        fig, (ax_main, ax_resid) = plt.subplots(2, 1, figsize=(12, 10),
+                                               gridspec_kw={'height_ratios': [3, 1]})
+        axes = [ax_main, ax_resid]
+    else:
+        fig, ax_main = plt.subplots(1, 1, figsize=(12, 6))
+        axes = [ax_main]
+    
+    # Set up larger font sizes for publication quality
+    BIGGER_SIZE = 14
+    plt.rc('font', size=BIGGER_SIZE)
+    plt.rc('axes', titlesize=BIGGER_SIZE)
+    plt.rc('axes', labelsize=BIGGER_SIZE)
+    plt.rc('xtick', labelsize=BIGGER_SIZE)
+    plt.rc('ytick', labelsize=BIGGER_SIZE)
+    plt.rc('legend', fontsize=BIGGER_SIZE)
+    
+    
+    # Calculate model spectrum
+    try:
+        if is_v2_model:
+            # rbvfit 2.0
+            model_flux = model.evaluate(best_theta, fitter.wave_obs)
+        else:
+            # rbvfit 1.0
+            model_flux = model.model_flux(best_theta, fitter.wave_obs)
+        
+        ax_main = axes[0]
+        
+        # Plot data
+        data_label = f'Observed Data'
+        ax_main.step(fitter.wave_obs, fitter.fnorm, 'k-', where='mid', linewidth=1,
+                    alpha=0.8, label=data_label)
+        ax_main.step(fitter.wave_obs, fitter.enorm, 'gray', where='mid', alpha=0.3,
+                    linewidth=0.5, label='1σ Error')
+        
+        # Plot best-fit model
+        ax_main.plot(fitter.wave_obs, model_flux, 'red', linewidth=2, label='Best Fit')
+        
+        # Add parameter uncertainty band if available
+        if theta_errors is not None and np.any(np.isfinite(theta_errors)):
+            try:
+                # Calculate model uncertainty using simple parameter perturbation
+                n_samples = 50
+                model_samples = []
+                
+                for _ in range(n_samples):
+                    # Perturb parameters within 1-sigma
+                    perturbed_theta = best_theta + np.random.normal(0, theta_errors)
+                    
+                    try:
+                        if is_v2_model:
+                            perturbed_flux = model.evaluate(perturbed_theta, fitter.wave_obs)
+                        else:
+                            perturbed_flux = model.model_flux(perturbed_theta, fitter.wave_obs)
+                        
+                        model_samples.append(perturbed_flux)
+                    except:
+                        continue
+                
+                if model_samples:
+                    model_samples = np.array(model_samples)
+                    model_std = np.std(model_samples, axis=0)
+                    ax_main.fill_between(fitter.wave_obs, model_flux - model_std, model_flux + model_std,
+                                       color='red', alpha=0.2, label='1σ Model Uncertainty')
+            except Exception as e:
+                if verbose:
+                    print(f"Could not calculate model uncertainty: {e}")
+        
+        # Add velocity marks for rbvfit 2.0
+        if is_v2_model and velocity_marks:
+            try:
+                _add_rail_system_v2(ax_main, model, best_theta, fitter.wave_obs)
+            except Exception as e:
+                if verbose:
+                    print(f"Could not add velocity marks: {e}")
+        
+        # Format main plot
+        ax_main.set_ylabel('Normalized Flux')        
+        title = f'Quick Fit Results ({method})'
+        
+        if not success:
+            title += ' [FAILED]'
+        
+        ax_main.set_title(title)
+        ax_main.legend()
+        ax_main.grid(True, alpha=0.3)
+        ax_main.set_ylim(ylim)
+        
+        if xlim is not None:
+            ax_main.set_xlim(xlim)
+        
+        # Residuals plot
+        if show_residuals:
+            ax_resid = axes[1]
+            
+            residuals = (fitter.fnorm - model_flux) / fitter.enorm
+            
+            ax_resid.step(fitter.wave_obs, residuals, 'k-', where='mid', alpha=0.7, linewidth=1)
+            ax_resid.axhline(0, color='r', linestyle='--', alpha=0.7)
+            ax_resid.axhline(1, color='gray', linestyle=':', alpha=0.5)
+            ax_resid.axhline(-1, color='gray', linestyle=':', alpha=0.5)
+            
+            ax_resid.set_ylabel('Residuals (σ)')
+            ax_resid.grid(True, alpha=0.3)
+            
+            if xlim is not None:
+                ax_resid.set_xlim(xlim)
+            
+            # Calculate and display statistics
+            rms = np.sqrt(np.mean(residuals**2))
+            chi2_reduced = np.mean(residuals**2)
+            
+            stats_text = f'RMS = {rms:.2f}\nχ²/ν = {chi2_reduced:.2f}'
+            
+            # Add method-specific info
+            if 'nfev' in fit_info:
+                stats_text += f'\nFunc evals: {fit_info["nfev"]}'
+            
+            ax_resid.text(0.02, 0.95, stats_text,
+                         transform=ax_resid.transAxes, verticalalignment='top',
+                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8),
+                         fontsize=10)
+        
+    except Exception as e:
+        if verbose:
+            print(f"Error creating plot: {e}")
+        return None
+    
+    # Final formatting
+    if show_residuals:
+        axes[-1].set_xlabel('Observed Wavelength (Å)')
+    else:
+        axes[-1].set_xlabel('Observed Wavelength (Å)')
+    
+    # Add overall title with fit information
+    title_parts = []
+    if success:
+        title_parts.append("✅ Quick Fit Results")
+    else:
+        title_parts.append("❌ Quick Fit Failed")
+    
+    if len(plot_datasets) > 1:
+        title_parts.append(f"({len(plot_datasets)} datasets)")
+    
+    if theta_errors is not None:
+        n_finite_errors = np.sum(np.isfinite(theta_errors))
+        title_parts.append(f"• {n_finite_errors}/{len(best_theta)} parameter uncertainties")
+    
+    plt.suptitle(" ".join(title_parts), fontsize=16, y=0.98)
+    
+    plt.tight_layout()
+    
+    # Print parameter summary if verbose
+    if verbose:
+        _print_quick_fit_summary(best_theta, theta_errors, fit_info, method, fitter)
+    
+    # Save or show
+    if outfile:
+        fig.savefig(outfile, dpi=300, bbox_inches='tight')
+        print(f"Saved quick fit plot to {outfile}")
+    else:
+        plt.show()
+    
+    return fig
+
+
+def _print_quick_fit_summary(best_theta, theta_errors, fit_info, method, fitter):
+    """Print summary of quick fit results."""
+    print("\n" + "=" * 60)
+    print("QUICK FIT PARAMETER SUMMARY")
+    print("=" * 60)
+    
+    print(f"Method: {method}")
+    print(f"Parameters: {len(best_theta)}")
+    
+    
+    # Parameter values
+    print(f"\nParameter Values:")
+    print("-" * 40)
+    
+    for i, val in enumerate(best_theta):
+        if theta_errors is not None and np.isfinite(theta_errors[i]):
+            print(f"  theta[{i:2d}] = {val:8.3f} ± {theta_errors[i]:.3f}")
+        else:
+            print(f"  theta[{i:2d}] = {val:8.3f}")
+    
+    
+    print("=" * 60)
+
 
 # Convenience function to create fitter with sampler selection
 def create_fitter(model, theta, lb, ub, wave_obs, fnorm, enorm, 

@@ -1,30 +1,27 @@
 """
-Comprehensive results management for rbvfit 2.0 with ion-aware analysis.
+Enhanced results management for rbvfit 2.0 with simplified architecture.
 
-This module provides the FitResults class with enhanced analysis capabilities,
-ion-specific parameter organization, multi-instrument support, correlation analysis
-with parameter tying awareness, and publication-ready plotting methods.
+This module provides the FitResults class for managing MCMC fitting results
+with HDF5 persistence, analysis capabilities, and enhanced plotting.
+
+Phase I: Core functionality (save/load, parameter summary)
+Phase II: Analysis (convergence diagnostics, correlation matrix, corner plots)
 """
 
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional, Any, Union
 import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-from dataclasses import dataclass
-import pandas as pd
-from pathlib import Path
 import h5py
 import json
+from pathlib import Path
+import warnings
+from dataclasses import dataclass
+
+# Core dependencies
+import matplotlib.pyplot as plt
 from scipy.stats import chi2
 
-# Core rbvfit 2.0 imports
-from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.core.parameter_manager import ParameterManager, ParameterBounds
-from rbvfit.core.voigt_model import VoigtModel
-from rbvfit.core.voigt_fitter import Dataset, MCMCSettings
-
-# Try to import corner for plotting
+# Optional dependencies with fallbacks
 try:
     import corner
     HAS_CORNER = True
@@ -32,172 +29,31 @@ except ImportError:
     HAS_CORNER = False
     corner = None
 
+try:
+    import pandas as pd
+    HAS_PANDAS = True
+except ImportError:
+    HAS_PANDAS = False
+    pd = None
+
 
 @dataclass
 class ParameterSummary:
-    """
-    Summary statistics for a single parameter with ion-aware metadata.
-    
-    Attributes
-    ----------
-    name : str
-        Parameter name (e.g., 'N_MgII_z0.348_c0')
-    best_fit : float
-        Best-fit value (median of posterior)
-    lower_error : float
-        Lower 1-sigma error
-    upper_error : float
-        Upper 1-sigma error
-    percentile_16 : float
-        16th percentile value
-    percentile_84 : float
-        84th percentile value
-    mean : float
-        Mean of posterior
-    std : float
-        Standard deviation of posterior
-    ion_name : str, optional
-        Ion species (e.g., 'MgII')
-    redshift : float, optional
-        System redshift
-    component_idx : int, optional
-        Component index within ion group
-    param_type : str, optional
-        Parameter type ('N', 'b', 'v')
-    units : str, optional
-        Physical units
-    """
-    name: str
-    best_fit: float
-    lower_error: float
-    upper_error: float
-    percentile_16: float
-    percentile_84: float
-    mean: float
-    std: float
-    ion_name: Optional[str] = None
-    redshift: Optional[float] = None
-    component_idx: Optional[int] = None
-    param_type: Optional[str] = None
-    units: Optional[str] = None
-    
-    def __str__(self) -> str:
-        """String representation for display."""
-        unit_str = f" {self.units}" if self.units else ""
-        return f"{self.name}: {self.best_fit:.3f} +{self.upper_error:.3f} -{self.lower_error:.3f}{unit_str}"
-    
-    def latex_string(self) -> str:
-        """LaTeX representation for publication."""
-        unit_str = f"\\,\\mathrm{{{self.units}}}" if self.units else ""
-        return f"{self.name} = {self.best_fit:.3f}_{{-{self.lower_error:.3f}}}^{{+{self.upper_error:.3f}}}{unit_str}"
-    
-    def physical_interpretation(self) -> str:
-        """Get physical interpretation of parameter value."""
-        if self.param_type == 'N':
-            linear_N = 10**self.best_fit
-            return f"Linear column density: {linear_N:.2e} cm^-2"
-        elif self.param_type == 'b':
-            thermal_b_oi = 12.9  # km/s for OI at 10^4 K
-            thermal_b_mgii = 6.1  # km/s for MgII at 10^4 K
-            if 'OI' in str(self.ion_name):
-                thermal_component = thermal_b_oi
-            elif 'MgII' in str(self.ion_name):
-                thermal_component = thermal_b_mgii
-            else:
-                thermal_component = 10.0  # Generic estimate
-            
-            if self.best_fit > thermal_component:
-                turbulent = np.sqrt(self.best_fit**2 - thermal_component**2)
-                return f"Thermal: ~{thermal_component:.1f} km/s, Turbulent: ~{turbulent:.1f} km/s"
-            else:
-                return f"Dominated by thermal motion (~{thermal_component:.1f} km/s)"
-        elif self.param_type == 'v':
-            return f"Velocity offset from systemic redshift"
-        else:
-            return ""
-
-
-@dataclass
-class DerivedQuantity:
-    """
-    Container for derived physical quantities.
-    
-    Attributes
-    ----------
-    name : str
-        Quantity name
-    value : float
-        Best-fit value
-    error : float
-        Uncertainty
-    units : str
-        Physical units
-    description : str
-        Physical meaning
-    """
-    name: str
-    value: float
-    error: float
-    units: str
-    description: str
-    
-    def __str__(self) -> str:
-        return f"{self.name}: {self.value:.3e} ± {self.error:.3e} {self.units}"
-
-
-@dataclass
-class IonGroupResults:
-    """
-    Results for a specific ion group (tied parameters).
-    
-    Attributes
-    ----------
-    ion_name : str
-        Ion species
-    redshift : float
-        System redshift
-    transitions : List[float]
-        Rest wavelengths included
-    components : int
-        Number of velocity components
-    parameters : Dict[str, ParameterSummary]
-        Parameter summaries by type
-    derived_quantities : List[DerivedQuantity]
-        Derived physical quantities
-    """
-    ion_name: str
-    redshift: float
-    transitions: List[float]
-    components: int
-    parameters: Dict[str, ParameterSummary]
-    derived_quantities: List[DerivedQuantity]
-    
-    def get_total_column_density(self) -> DerivedQuantity:
-        """Calculate total column density for this ion."""
-        N_params = [p for p in self.parameters.values() if p.param_type == 'N']
-        total_linear = sum(10**p.best_fit for p in N_params)
-        total_log = np.log10(total_linear)
-        
-        # Error propagation (simplified)
-        error_linear = np.sqrt(sum((10**p.best_fit * np.log(10) * p.std)**2 for p in N_params))
-        error_log = error_linear / (total_linear * np.log(10))
-        
-        return DerivedQuantity(
-            name=f"N_total_{self.ion_name}",
-            value=total_log,
-            error=error_log,
-            units="log cm^-2",
-            description=f"Total {self.ion_name} column density"
-        )
+    """Container for parameter summary statistics."""
+    names: List[str]
+    best_fit: np.ndarray
+    errors: np.ndarray
+    percentiles: Dict[str, np.ndarray]  # 16th, 50th, 84th percentiles
+    mean: np.ndarray
+    std: np.ndarray
 
 
 class FitResults:
     """
-    Enhanced container for single-instrument MCMC fitting results with ion-aware analysis.
+    Enhanced container for rbvfit 2.0 MCMC fitting results.
     
-    This class provides detailed analysis capabilities including parameter
-    summaries, correlation analysis, model comparison metrics, ion-specific
-    organization, and publication-ready plotting methods.
+    This class provides analysis capabilities, HDF5 persistence, and enhanced
+    plotting methods for absorption line fitting results.
     
     Attributes
     ----------
@@ -205,15 +61,9 @@ class FitResults:
         The MCMC fitter object (contains sampler, data, bounds, etc.)
     model : VoigtModel
         The fitted model with configuration
-    dataset : Dataset, optional
-        Override dataset for visualization (if None, uses fitter's data)
-    param_manager : ParameterManager
-        Parameter management object (created from model.config)
-    ion_groups : Dict[Tuple[float, str], IonGroupResults]
-        Results organized by ion groups
     """
     
-    def __init__(self, fitter, model: VoigtModel, dataset: Optional[Dataset] = None):
+    def __init__(self, fitter, model):
         """
         Initialize results container from fitter and model.
         
@@ -222,460 +72,1096 @@ class FitResults:
         fitter : vfit
             MCMC fitter object after running fit
         model : VoigtModel
-            The model object with configuration
-        dataset : Dataset, optional
-            Override dataset for visualization. If None, extracts from fitter.
+            The v2.0 model object with configuration
         """
         self.fitter = fitter
         self.model = model
         
-        # Create parameter manager from model configuration
-        self.param_manager = ParameterManager(model.config)
+        # Validate inputs
+        self._validate_inputs()
         
-        # Set up datasets
-        if dataset is not None:
-            # Use provided dataset for visualization
-            self.datasets = [dataset]
-        else:
-            # Extract from fitter
-            self.datasets = [Dataset(
-                fitter.wave_obs, fitter.fnorm, fitter.enorm, 
-                name="Fitted Data"
-            )]
-        
-        # Extract key information from fitter
-        self.sampler = fitter.sampler
-        self.fit_time = getattr(fitter, 'fit_time', 0.0)
-        
-        # Simplify bounds storage
-        self.bounds = {
-            'lower': getattr(fitter, 'lb', None),
-            'upper': getattr(fitter, 'ub', None)
-        }
-        
-        # Auto-detect MCMC settings from fitter
-        self.mcmc_settings = self._extract_mcmc_settings()
-        
-        # Extract and analyze results
-        self._extract_samples()
-        self._calculate_parameter_summaries()
-        self._organize_ion_group_results()
-        self._calculate_model_statistics()
-        self._calculate_derived_quantities()
+        # Extract key information
+        self._extract_mcmc_info()
         
         # Cache for expensive operations
-        self._correlation_matrix = None
-        self._covariance_matrix = None
-        self._ion_correlation_matrices = None
+        self._cached_samples = None
+        self._cached_param_summary = None
+        self._cached_correlation = None
+        self._cached_convergence = None
+        
+    def _validate_inputs(self):
+        """Validate that inputs are compatible with rbvfit 2.0."""
+        # Check fitter has required attributes
+        required_fitter_attrs = ['sampler', 'theta', 'wave_obs', 'fnorm', 'enorm']
+        for attr in required_fitter_attrs:
+            if not hasattr(self.fitter, attr):
+                raise ValueError(f"Fitter missing required attribute: {attr}")
+        
+        # Check model is v2.0 VoigtModel
+        required_model_attrs = ['config', 'evaluate']
+        for attr in required_model_attrs:
+            if not hasattr(self.model, attr):
+                raise ValueError(f"Model appears to be v1.0, not v2.0. Missing: {attr}")
+        
+        # Check if MCMC was actually run
+        if not hasattr(self.fitter, 'sampler') or self.fitter.sampler is None:
+            raise ValueError("MCMC has not been run. No sampler found.")
     
-    def _extract_mcmc_settings(self):
-        """Extract MCMC settings from fitter object."""
-        # Simple object to hold settings
-        class MCMCSettings:
-            def __init__(self, sampler, n_walkers, n_steps, n_burn, thin=1):
-                self.sampler = sampler
-                self.n_walkers = n_walkers
-                self.n_steps = n_steps
-                self.n_burn = n_burn
-                self.thin = thin
+    def _extract_mcmc_info(self):
+        """Extract basic MCMC information from fitter."""
+        self.n_walkers = getattr(self.fitter, 'no_of_Chain', 50)
+        self.n_steps = getattr(self.fitter, 'no_of_steps', 1000)
+        self.sampler_name = getattr(self.fitter, 'sampler_name', 'emcee')
         
-        # Extract from fitter attributes
-        sampler_name = getattr(self.fitter, 'sampler_name', 'emcee')
-        n_walkers = getattr(self.fitter, 'no_of_Chain', 30)
-        n_steps = getattr(self.fitter, 'no_of_steps', 1000)
+        # Extract bounds
+        self.bounds_lower = getattr(self.fitter, 'lb', None)
+        self.bounds_upper = getattr(self.fitter, 'ub', None)
         
-        # Estimate burn-in (fitter might have this, or use 20% default)
-        n_burn = getattr(self.fitter, 'burnin', int(0.2 * n_steps))
-        
-        return MCMCSettings(sampler_name, n_walkers, n_steps, n_burn)
-        
-    def _extract_samples(self):
-        """Extract samples from the sampler."""
-        # Get samples (discard burn-in)
-        if hasattr(self.sampler, 'get_chain'):  # emcee
-            self.samples = self.sampler.get_chain(
-                discard=self.mcmc_settings.n_burn,
-                thin=self.mcmc_settings.thin,
-                flat=True
-            )
-            self.chain = self.sampler.get_chain()
-        else:  # zeus
-            chain = self.sampler.get_chain(flat=True)
-            n_total = len(chain)
-            start_idx = self.mcmc_settings.n_burn * self.mcmc_settings.n_walkers
-            self.samples = chain[start_idx::self.mcmc_settings.thin]
-            self.chain = self.sampler.get_chain()
-            
-        self.n_samples = len(self.samples)
-        self.n_params = self.samples.shape[1]
-        
-    def _calculate_parameter_summaries(self):
-        """Calculate detailed parameter summaries with ion-aware metadata."""
-        param_names = self.param_manager.get_parameter_names()
-        
-        self.parameter_summaries = []
-        
-        for i, name in enumerate(param_names):
-            samples_i = self.samples[:, i]
-            
-            # Calculate percentiles
-            p16, p50, p84 = np.percentile(samples_i, [16, 50, 84])
-            
-            # Parse parameter metadata from name
-            ion_name, redshift, component_idx, param_type, units = self._parse_parameter_name(name)
-            
-            summary = ParameterSummary(
-                name=name,
-                best_fit=p50,
-                lower_error=p50 - p16,
-                upper_error=p84 - p50,
-                percentile_16=p16,
-                percentile_84=p84,
-                mean=np.mean(samples_i),
-                std=np.std(samples_i),
-                ion_name=ion_name,
-                redshift=redshift,
-                component_idx=component_idx,
-                param_type=param_type,
-                units=units
-            )
-            
-            self.parameter_summaries.append(summary)
-        
-        # Convenience arrays
-        self.best_fit = np.array([s.best_fit for s in self.parameter_summaries])
-        self.uncertainties = np.array([s.std for s in self.parameter_summaries])
-        self.lower_errors = np.array([s.lower_error for s in self.parameter_summaries])
-        self.upper_errors = np.array([s.upper_error for s in self.parameter_summaries])
+        # Extract datasets info
+        self.is_multi_instrument = getattr(self.fitter, 'multi_instrument', False)
+        if self.is_multi_instrument:
+            self.instrument_data = getattr(self.fitter, 'instrument_data', {})
+        else:
+            self.instrument_data = None
     
-    def _parse_parameter_name(self, name: str) -> Tuple[str, float, int, str, str]:
+    def _get_samples(self, burnin_fraction: float = 0.2, thin: int = 1) -> np.ndarray:
         """
-        Parse parameter name to extract metadata.
+        Extract samples from sampler with caching.
         
         Parameters
         ----------
-        name : str
-            Parameter name like 'N_MgII_z0.348_c0'
+        burnin_fraction : float
+            Fraction of chain to discard as burn-in
+        thin : int
+            Thinning factor for samples
             
         Returns
         -------
-        tuple
-            (ion_name, redshift, component_idx, param_type, units)
+        np.ndarray
+            MCMC samples array (n_samples, n_params)
         """
+        if self._cached_samples is not None:
+            return self._cached_samples
+        
+        # Auto-detect burn-in based on autocorrelation if possible
         try:
-            # Expected format: param_type_ion_zredshift_ccomponent
-            parts = name.split('_')
-            param_type = parts[0]  # N, b, or v
-            ion_name = parts[1]    # MgII, FeII, etc.
-            z_part = parts[2]      # z0.348
-            c_part = parts[3]      # c0
-            
-            redshift = float(z_part[1:])  # Remove 'z' prefix
-            component_idx = int(c_part[1:])  # Remove 'c' prefix
-            
-            # Determine units
-            if param_type == 'N':
-                units = 'log cm^-2'
-            elif param_type == 'b':
-                units = 'km/s'
-            elif param_type == 'v':
-                units = 'km/s'
-            else:
-                units = ''
-            
-            return ion_name, redshift, component_idx, param_type, units
-            
-        except (IndexError, ValueError):
-            # Fallback for non-standard naming
-            return None, None, None, None, ''
-    
-    def _organize_ion_group_results(self):
-        """Organize results by ion groups for easier analysis."""
-        self.ion_groups = {}
+            burnin = self._estimate_burnin()
+        except:
+            burnin = int(self.n_steps * burnin_fraction)
         
-        # Group parameters by (redshift, ion_name)
-        param_groups = {}
-        for summary in self.parameter_summaries:
-            if summary.ion_name and summary.redshift is not None:
-                key = (summary.redshift, summary.ion_name)
-                if key not in param_groups:
-                    param_groups[key] = []
-                param_groups[key].append(summary)
-        
-        # Create IonGroupResults for each group
-        for (redshift, ion_name), params in param_groups.items():
-            # Get transitions for this ion group from model config
-            transitions = []
-            components = 0
-            for system in self.model.config.systems:
-                if abs(system.redshift - redshift) < 1e-6:
-                    for ion_group in system.ion_groups:
-                        if ion_group.ion_name == ion_name:
-                            transitions = ion_group.transitions
-                            components = ion_group.components
-                            break
-            
-            # Organize parameters by type
-            param_dict = {}
-            for param in params:
-                param_dict[f"{param.param_type}_{param.component_idx}"] = param
-            
-            self.ion_groups[key] = IonGroupResults(
-                ion_name=ion_name,
-                redshift=redshift,
-                transitions=transitions,
-                components=components,
-                parameters=param_dict,
-                derived_quantities=[]
-            )
-    
-    def _calculate_derived_quantities(self):
-        """Calculate derived physical quantities for each ion group."""
-        for ion_group in self.ion_groups.values():
-            # Total column density
-            total_N = ion_group.get_total_column_density()
-            ion_group.derived_quantities.append(total_N)
-            
-            # Velocity dispersion
-            v_params = [p for p in ion_group.parameters.values() if p.param_type == 'v']
-            if len(v_params) > 1:
-                velocities = [p.best_fit for p in v_params]
-                v_dispersion = np.std(velocities)
-                v_range = max(velocities) - min(velocities)
-                
-                ion_group.derived_quantities.extend([
-                    DerivedQuantity(
-                        name=f"v_dispersion_{ion_group.ion_name}",
-                        value=v_dispersion,
-                        error=0.0,  # TODO: Proper error propagation
-                        units="km/s",
-                        description=f"{ion_group.ion_name} velocity dispersion"
-                    ),
-                    DerivedQuantity(
-                        name=f"v_range_{ion_group.ion_name}",
-                        value=v_range,
-                        error=0.0,
-                        units="km/s", 
-                        description=f"{ion_group.ion_name} velocity range"
+        # Extract samples using fitter method (borrowed from vfit_mcmc)
+        try:
+            if hasattr(self.fitter.sampler, 'get_chain'):
+                # emcee or zeus with get_chain method
+                try:
+                    samples = self.fitter.sampler.get_chain(
+                        discard=burnin, thin=thin, flat=True
                     )
-                ])
+                except TypeError:
+                    # Older versions might not support these parameters
+                    chain = self.fitter.sampler.get_chain()
+                    samples = chain[burnin::thin].reshape(-1, chain.shape[-1])
+            else:
+                # Fallback for other samplers
+                chain = self.fitter.sampler.chain
+                samples = chain[:, burnin::thin, :].reshape(-1, chain.shape[-1])
+                
+        except Exception as e:
+            raise RuntimeError(f"Could not extract samples from sampler: {e}")
+        
+        self._cached_samples = samples
+        return samples
     
-    def _calculate_model_statistics(self):
-        """Calculate model comparison statistics with ion tying corrections."""
-        # Calculate chi-squared for best fit using the fitted data (from fitter)
-        self.chi2_best = 0.0
-        self.n_data_points = 0
-        
-        # Use the data that was actually fitted (from fitter object)
-        fitted_dataset = Dataset(
-            self.fitter.wave_obs, self.fitter.fnorm, self.fitter.enorm, 
-            name="Fitted Data"
-        )
-        
-        # Evaluate model on fitted data
-        model_flux = self.model.evaluate(self.best_fit, fitted_dataset.wavelength)
-        chi2_dataset = np.sum((fitted_dataset.flux - model_flux)**2 / fitted_dataset.error**2)
-        self.chi2_best += chi2_dataset
-        self.n_data_points += len(fitted_dataset.wavelength)
-        
-        # Handle multi-instrument case if present
-        if hasattr(self.fitter, 'instrument_data') and self.fitter.instrument_data:
-            for instrument_name, data in self.fitter.instrument_data.items():
-                inst_dataset = Dataset(data['wave'], data['flux'], data['error'], name=instrument_name)
+    def _estimate_burnin(self) -> int:
+        """Estimate burn-in length based on autocorrelation time."""
+        try:
+            if hasattr(self.fitter.sampler, 'get_autocorr_time'):
+                tau = self.fitter.sampler.get_autocorr_time()
+                mean_tau = np.nanmean(tau)
                 
-                # Need to evaluate model for this specific instrument
-                if hasattr(data, 'model'):
-                    model_flux = data['model'](self.best_fit, inst_dataset.wavelength)
-                else:
-                    # Fallback: use main model
-                    model_flux = self.model.evaluate(self.best_fit, inst_dataset.wavelength)
-                
-                chi2_dataset = np.sum((inst_dataset.flux - model_flux)**2 / inst_dataset.error**2)
-                self.chi2_best += chi2_dataset
-                self.n_data_points += len(inst_dataset.wavelength)
+                if np.isfinite(mean_tau) and mean_tau > 0:
+                    # Use 3x autocorrelation time, but cap at 40% of chain
+                    burnin = min(int(3 * mean_tau), int(0.4 * self.n_steps))
+                    return max(burnin, int(0.1 * self.n_steps))  # Minimum 10%
+            
+        except Exception:
+            pass
         
-        # Rest of statistics calculation remains the same
-        self.dof = self.n_data_points - self.n_params
-        self.reduced_chi2 = self.chi2_best / self.dof if self.dof > 0 else np.inf
-        
-        # Calculate effective number of parameters accounting for ion tying
-        n_transitions = sum(
-            len(ion_group.transitions) 
-            for ion_group in self.ion_groups.values()
-        )
-        n_untied_params = n_transitions * 3  # If all transitions were independent
-        tying_reduction = n_untied_params - self.n_params
-        
-        # Store tying information
-        self.n_transitions = n_transitions
-        self.n_untied_params = n_untied_params
-        self.tying_reduction = tying_reduction
-        self.tying_efficiency = tying_reduction / n_untied_params if n_untied_params > 0 else 0
-        
-        # Calculate AIC and BIC with ion tying awareness
-        self.aic = self.chi2_best + 2 * self.n_params
-        self.bic = self.chi2_best + self.n_params * np.log(self.n_data_points)
-        
-        # Alternative AIC/BIC using effective parameter count
-        self.aic_effective = self.chi2_best + 2 * self.n_params * (1 + self.tying_efficiency)
-        self.bic_effective = self.chi2_best + self.n_params * np.log(self.n_data_points) * (1 + self.tying_efficiency)
-        
-        # P-value from chi-squared distribution
-        if self.dof > 0:
-            self.p_value = 1.0 - chi2.cdf(self.chi2_best, self.dof)
-        else:
-            self.p_value = np.nan
-
-
-    def get_correlation_matrix(self) -> np.ndarray:
+        # Fallback to 20% of chain
+        return int(0.2 * self.n_steps)
+    
+    # =============================================================================
+    # PHASE I: Core Functionality
+    # =============================================================================
+    
+    def save(self, filename: Union[str, Path]) -> None:
         """
-        Calculate parameter correlation matrix with caching.
+        Save complete fit results to HDF5 file for full reproducibility.
         
+        Parameters
+        ----------
+        filename : str or Path
+            Output HDF5 filename
+        """
+        filename = Path(filename)
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        with h5py.File(filename, 'w') as f:
+            # Metadata
+            meta = f.create_group('metadata')
+            meta.attrs['rbvfit_version'] = '2.0'
+            meta.attrs['sampler'] = self.sampler_name
+            meta.attrs['n_walkers'] = self.n_walkers
+            meta.attrs['n_steps'] = self.n_steps
+            meta.attrs['is_multi_instrument'] = self.is_multi_instrument
+            
+            # MCMC results
+            mcmc = f.create_group('mcmc')
+            
+            # Save full chain
+            if hasattr(self.fitter.sampler, 'get_chain'):
+                try:
+                    chain = self.fitter.sampler.get_chain()
+                    mcmc.create_dataset('chain', data=chain)
+                except:
+                    # Fallback: save flattened samples
+                    samples = self._get_samples()
+                    mcmc.create_dataset('samples', data=samples)
+            
+            # Save sampler state for reproducibility
+            if hasattr(self.fitter.sampler, 'random_state'):
+                # Save random state if available
+                try:
+                    state = self.fitter.sampler.random_state
+                    if state is not None:
+                        mcmc.attrs['random_state_available'] = True
+                except:
+                    pass
+            
+            # Parameters and bounds
+            params = f.create_group('parameters')
+            params.create_dataset('initial_guess', data=self.fitter.theta)
+            if self.bounds_lower is not None:
+                params.create_dataset('bounds_lower', data=self.bounds_lower)
+            if self.bounds_upper is not None:
+                params.create_dataset('bounds_upper', data=self.bounds_upper)
+            
+            # Data
+            data = f.create_group('data')
+            data.create_dataset('wave_obs', data=self.fitter.wave_obs)
+            data.create_dataset('flux_norm', data=self.fitter.fnorm)
+            data.create_dataset('error_norm', data=self.fitter.enorm)
+            
+            # Multi-instrument data if available
+            if self.is_multi_instrument and self.instrument_data:
+                multi = f.create_group('multi_instrument')
+                for name, inst_data in self.instrument_data.items():
+                    if name == 'main':  # Skip main dataset (already saved above)
+                        continue
+                    inst_group = multi.create_group(name)
+                    inst_group.create_dataset('wave', data=inst_data['wave'])
+                    inst_group.create_dataset('flux', data=inst_data['flux'])
+                    inst_group.create_dataset('error', data=inst_data['error'])
+            
+            # Model configuration
+            model_group = f.create_group('model')
+            try:
+                # Save model configuration as JSON string
+                config_dict = {
+                    'systems': []
+                }
+                
+                for system in self.model.config.systems:
+                    sys_dict = {
+                        'redshift': system.redshift,
+                        'ion_groups': []
+                    }
+                    for ion_group in system.ion_groups:
+                        ion_dict = {
+                            'ion_name': ion_group.ion_name,
+                            'transitions': ion_group.transitions,
+                            'components': ion_group.components
+                        }
+                        sys_dict['ion_groups'].append(ion_dict)
+                    config_dict['systems'].append(sys_dict)
+                
+                config_json = json.dumps(config_dict)
+                model_group.attrs['configuration'] = config_json
+                
+            except Exception as e:
+                warnings.warn(f"Could not save model configuration: {e}")
+        
+        print(f"✓ Saved fit results to {filename}")
+    
+    @classmethod
+    def load(cls, filename: Union[str, Path]) -> 'FitResults':
+        """
+        Load fit results from HDF5 file.
+        
+        Parameters
+        ----------
+        filename : str or Path
+            HDF5 filename to load
+            
+        Returns
+        -------
+        FitResults
+            Loaded fit results object
+            
+        Note
+        ----
+        This creates a minimal fitter and model object for analysis.
+        Full MCMC functionality may not be available.
+        """
+        filename = Path(filename)
+        if not filename.exists():
+            raise FileNotFoundError(f"File not found: {filename}")
+        
+        # Create minimal objects for analysis
+        class MinimalFitter:
+            """Minimal fitter object for loaded results."""
+            pass
+        
+        class MinimalModel:
+            """Minimal model object for loaded results."""
+            pass
+        
+        with h5py.File(filename, 'r') as f:
+            # Load metadata
+            meta = f['metadata']
+            
+            # Create minimal fitter
+            fitter = MinimalFitter()
+            fitter.sampler_name = meta.attrs.get('sampler', 'emcee')
+            fitter.no_of_Chain = meta.attrs.get('n_walkers', 50)
+            fitter.no_of_steps = meta.attrs.get('n_steps', 1000)
+            fitter.multi_instrument = meta.attrs.get('is_multi_instrument', False)
+            
+            # Load MCMC data
+            mcmc = f['mcmc']
+            
+            # Create a minimal sampler object with samples
+            class MinimalSampler:
+                def __init__(self, samples_or_chain):
+                    if samples_or_chain.ndim == 2:
+                        # Flattened samples
+                        self._samples = samples_or_chain
+                        self._chain = None
+                    else:
+                        # Full chain
+                        self._chain = samples_or_chain
+                        self._samples = None
+                
+                def get_chain(self, discard=0, thin=1, flat=False):
+                    if self._chain is not None:
+                        if flat:
+                            return self._chain[discard::thin].reshape(-1, self._chain.shape[-1])
+                        else:
+                            return self._chain[discard::thin]
+                    else:
+                        # Return samples as flattened chain
+                        return self._samples[discard::thin]
+            
+            # Load samples or chain
+            if 'chain' in mcmc:
+                sampler_data = mcmc['chain'][...]
+            elif 'samples' in mcmc:
+                sampler_data = mcmc['samples'][...]
+            else:
+                raise ValueError("No MCMC samples found in file")
+            
+            fitter.sampler = MinimalSampler(sampler_data)
+            
+            # Load parameters and data
+            params = f['parameters']
+            fitter.theta = params['initial_guess'][...]
+            fitter.lb = params['bounds_lower'][...] if 'bounds_lower' in params else None
+            fitter.ub = params['bounds_upper'][...] if 'bounds_upper' in params else None
+            
+            data = f['data']
+            fitter.wave_obs = data['wave_obs'][...]
+            fitter.fnorm = data['flux_norm'][...]
+            fitter.enorm = data['error_norm'][...]
+            
+            # Load multi-instrument data if present
+            if 'multi_instrument' in f:
+                fitter.instrument_data = {'main': {
+                    'wave': fitter.wave_obs,
+                    'flux': fitter.fnorm,
+                    'error': fitter.enorm
+                }}
+                
+                multi = f['multi_instrument']
+                for name in multi.keys():
+                    inst_data = multi[name]
+                    fitter.instrument_data[name] = {
+                        'wave': inst_data['wave'][...],
+                        'flux': inst_data['flux'][...],
+                        'error': inst_data['error'][...]
+                    }
+            
+            # Create minimal model
+            model = MinimalModel()
+            
+            # Try to load model configuration
+            if 'model' in f and 'configuration' in f['model'].attrs:
+                try:
+                    config_json = f['model'].attrs['configuration']
+                    config_dict = json.loads(config_json)
+                    
+                    # Create minimal config object
+                    class MinimalConfig:
+                        def __init__(self, config_dict):
+                            self.systems = []
+                            for sys_dict in config_dict['systems']:
+                                sys_obj = type('System', (), {
+                                    'redshift': sys_dict['redshift'],
+                                    'ion_groups': []
+                                })
+                                
+                                for ion_dict in sys_dict['ion_groups']:
+                                    ion_obj = type('IonGroup', (), ion_dict)
+                                    sys_obj.ion_groups.append(ion_obj)
+                                
+                                self.systems.append(sys_obj)
+                    
+                    model.config = MinimalConfig(config_dict)
+                    
+                except Exception as e:
+                    warnings.warn(f"Could not load model configuration: {e}")
+                    model.config = None
+            else:
+                model.config = None
+        
+        # Create and return FitResults object
+        results = cls.__new__(cls)  # Create without calling __init__
+        results.fitter = fitter
+        results.model = model
+        results.n_walkers = fitter.no_of_Chain
+        results.n_steps = fitter.no_of_steps
+        results.sampler_name = fitter.sampler_name
+        results.bounds_lower = fitter.lb
+        results.bounds_upper = fitter.ub
+        results.is_multi_instrument = fitter.multi_instrument
+        results.instrument_data = getattr(fitter, 'instrument_data', None)
+        
+        # Initialize caches
+        results._cached_samples = None
+        results._cached_param_summary = None
+        results._cached_correlation = None
+        results._cached_convergence = None
+        
+        print(f"✓ Loaded fit results from {filename}")
+        return results
+    
+    def parameter_summary(self, verbose: bool = True) -> ParameterSummary:
+        """
+        Generate parameter summary table (borrowed and enhanced from vfit_mcmc).
+        
+        Parameters
+        ----------
+        verbose : bool
+            Whether to print the summary table
+            
+        Returns
+        -------
+        ParameterSummary
+            Container with parameter statistics
+        """
+        if self._cached_param_summary is not None:
+            if verbose:
+                self._print_parameter_summary(self._cached_param_summary)
+            return self._cached_param_summary
+        
+        # Get samples
+        samples = self._get_samples()
+        n_params = samples.shape[1]
+        
+        # Generate parameter names (borrowed from vfit_mcmc logic)
+        names = self._generate_parameter_names(n_params)
+        
+        # Calculate statistics
+        percentiles = {
+            '16th': np.percentile(samples, 16, axis=0),
+            '50th': np.percentile(samples, 50, axis=0),
+            '84th': np.percentile(samples, 84, axis=0)
+        }
+        
+        best_fit = percentiles['50th']  # Median as best fit
+        lower_err = best_fit - percentiles['16th']
+        upper_err = percentiles['84th'] - best_fit
+        
+        # Combine errors (take larger of lower/upper for symmetric error)
+        errors = np.maximum(lower_err, upper_err)
+        
+        summary = ParameterSummary(
+            names=names,
+            best_fit=best_fit,
+            errors=errors,
+            percentiles=percentiles,
+            mean=np.mean(samples, axis=0),
+            std=np.std(samples, axis=0)
+        )
+        
+        self._cached_param_summary = summary
+        
+        if verbose:
+            self._print_parameter_summary(summary)
+        
+        return summary
+    
+    def _generate_parameter_names(self, n_params: int) -> List[str]:
+        """Generate parameter names based on model structure."""
+        # Try to use model configuration if available
+        if hasattr(self.model, 'config') and self.model.config is not None:
+            try:
+                # Use v2.0 parameter manager approach
+                names = []
+                param_idx = 0
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"N_{ion}_z{z:.3f}_c{comp}")
+                            param_idx += 1
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"b_{ion}_z{z:.3f}_c{comp}")
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"v_{ion}_z{z:.3f}_c{comp}")
+                
+                if len(names) == n_params:
+                    return names
+                    
+            except Exception:
+                pass
+        
+        # Fallback to generic names (borrowed from vfit_mcmc)
+        nfit = n_params // 3
+        names = []
+        
+        # Add logN names
+        for i in range(nfit):
+            names.append(f"logN_{i+1}")
+        
+        # Add b names
+        for i in range(nfit):
+            names.append(f"b_{i+1}")
+        
+        # Add v names
+        for i in range(nfit):
+            names.append(f"v_{i+1}")
+        
+        return names
+    
+    def _print_parameter_summary(self, summary: ParameterSummary) -> None:
+        """Print formatted parameter summary (enhanced from vfit_mcmc)."""
+        print("\n" + "=" * 70)
+        print("PARAMETER SUMMARY")
+        print("=" * 70)
+        
+        print(f"Sampler: {self.sampler_name}")
+        print(f"Walkers: {self.n_walkers}")
+        print(f"Steps: {self.n_steps}")
+        print(f"Parameters: {len(summary.names)}")
+        if self.is_multi_instrument:
+            n_instruments = len(self.instrument_data) if self.instrument_data else 1
+            print(f"Instruments: {n_instruments}")
+        
+        print(f"\nParameter Values:")
+        print("-" * 70)
+        print(f"{'Parameter':<20} {'Best Fit':<12} {'Error':<12} {'Mean':<12} {'Std':<12}")
+        print("-" * 70)
+        
+        for i, name in enumerate(summary.names):
+            print(f"{name:<20} {summary.best_fit[i]:11.4f} "
+                  f"{summary.errors[i]:11.4f} {summary.mean[i]:11.4f} "
+                  f"{summary.std[i]:11.4f}")
+        
+        print("=" * 70)
+    
+    # =============================================================================
+    # PHASE II: Analysis
+    # =============================================================================
+    
+    def convergence_diagnostics(self, verbose: bool = True) -> Dict[str, Any]:
+        """
+        Comprehensive convergence diagnostics with recommendations.
+        
+        Parameters
+        ----------
+        verbose : bool
+            Whether to print diagnostic results
+            
+        Returns
+        -------
+        dict
+            Dictionary containing all diagnostic metrics and recommendations
+        """
+        if self._cached_convergence is not None:
+            if verbose:
+                self._print_convergence_diagnostics(self._cached_convergence)
+            return self._cached_convergence
+        
+        diagnostics = {}
+        recommendations = []
+        
+        try:
+            # 1. Acceptance fraction analysis
+            acceptance_fraction = self._get_acceptance_fraction()
+            diagnostics['acceptance_fraction'] = {
+                'mean': np.mean(acceptance_fraction) if hasattr(acceptance_fraction, '__len__') else acceptance_fraction,
+                'individual': acceptance_fraction
+            }
+            
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if mean_accept < 0.2:
+                recommendations.append("❌ Low acceptance fraction (<0.2). Consider reducing step size or relaxing bounds.")
+            elif mean_accept > 0.7:
+                recommendations.append("⚠️ High acceptance fraction (>0.7). Consider increasing step size for better mixing.")
+            else:
+                recommendations.append("✅ Good acceptance fraction (0.2-0.7).")
+            
+        except Exception as e:
+            diagnostics['acceptance_fraction'] = None
+            recommendations.append(f"❓ Could not calculate acceptance fraction: {e}")
+        
+        try:
+            # 2. Autocorrelation time analysis
+            autocorr_time = self._get_autocorr_time()
+            diagnostics['autocorr_time'] = {
+                'tau': autocorr_time,
+                'mean_tau': np.nanmean(autocorr_time) if autocorr_time is not None else None
+            }
+            
+            if autocorr_time is not None:
+                mean_tau = np.nanmean(autocorr_time)
+                if np.isfinite(mean_tau):
+                    chain_length_ratio = self.n_steps / mean_tau
+                    diagnostics['chain_length_ratio'] = chain_length_ratio
+                    
+                    if chain_length_ratio < 50:
+                        recommended_length = int(50 * mean_tau)
+                        recommendations.append(
+                            f"⏱️ Chain too short. Current: {self.n_steps} steps, "
+                            f"Recommended: >{recommended_length} steps (50x autocorr time)"
+                        )
+                        recommendations.append("📈 **Check trace plots** for visual confirmation of mixing")
+                    else:
+                        recommendations.append("✅ Chain length adequate (>50x autocorr time).")
+                        recommendations.append("📊 Trace plots should show stable, well-mixed chains")
+                else:
+                    recommendations.append("❓ Could not determine autocorrelation time.")
+                    recommendations.append("📈 **Examine trace plots** for mixing assessment")
+            else:
+                # Autocorr time calculation failed
+                recommendations.append("❓ Autocorrelation time could not be calculated - chain likely too short")
+                recommended_steps = self.n_steps * 3
+                recommendations.append(f"⏱️ Recommend running 2-3x longer (try {recommended_steps} steps)")
+                recommendations.append("📈 **CRITICAL: Check trace plots** for visual confirmation of mixing")
+                recommendations.append("🔍 Look for: stable mixing, no trends, good between-chain agreement")
+            
+        except Exception as e:
+            diagnostics['autocorr_time'] = None
+            recommendations.append(f"❓ Could not calculate autocorrelation time: {e}")
+            recommendations.append("📈 **Examine trace plots** and parameter evolution carefully")
+        
+        try:
+            # 3. Effective sample size
+            samples = self._get_samples()
+            n_eff = self._estimate_effective_sample_size(samples)
+            diagnostics['effective_sample_size'] = {
+                'n_eff': n_eff,
+                'min_n_eff': np.min(n_eff) if n_eff is not None else None
+            }
+            
+            if n_eff is not None:
+                min_eff = np.min(n_eff)
+                if min_eff < 50:
+                    recommendations.append(f"❌ Very low effective sample size (min: {min_eff:.0f}). Results NOT reliable.")
+                    recommendations.append("📈 **Check trace plots** - likely show poor mixing or trends")
+                elif min_eff < 100:
+                    recommendations.append(f"⚠️ Low effective sample size (min: {min_eff:.0f}). Consider longer chains.")
+                    recommendations.append("📈 **Check trace plots** for parameter drift or poor mixing")
+                else:
+                    recommendations.append(f"✅ Good effective sample size (min: {min_eff:.0f}).")
+            
+        except Exception as e:
+            diagnostics['effective_sample_size'] = None
+            recommendations.append(f"❓ Could not calculate effective sample size: {e}")
+        
+        try:
+            # 4. Gelman-Rubin R-hat (if zeus sampler)
+            if self.sampler_name.lower() == 'zeus':
+                r_hat = self._get_gelman_rubin()
+                diagnostics['gelman_rubin'] = {
+                    'r_hat': r_hat,
+                    'max_r_hat': np.max(r_hat) if r_hat is not None else None
+                }
+                
+                if r_hat is not None:
+                    max_r_hat = np.max(r_hat)
+                    if max_r_hat > 1.2:
+                        recommendations.append(f"❌ Poor convergence (max R-hat: {max_r_hat:.3f} > 1.2). Chains have NOT converged.")
+                        recommendations.append("📈 **Examine trace plots** - likely show poor mixing or trends")
+                    elif max_r_hat > 1.1:
+                        recommendations.append(f"⚠️ Marginal convergence (max R-hat: {max_r_hat:.3f} > 1.1). Chains may not have converged.")
+                        recommendations.append("📈 **Check trace plots** for parameter drift or poor mixing")
+                    else:
+                        recommendations.append(f"✅ Good convergence (max R-hat: {max_r_hat:.3f} < 1.1).")
+            else:
+                diagnostics['gelman_rubin'] = None
+                
+        except Exception as e:
+            diagnostics['gelman_rubin'] = None
+            if self.sampler_name.lower() == 'zeus':
+                recommendations.append(f"❓ Could not calculate Gelman-Rubin diagnostic: {e}")
+        
+        # 5. Overall assessment with enhanced recommendations
+        overall_status = self._assess_overall_convergence(diagnostics)
+        diagnostics['overall_status'] = overall_status
+        
+        # Add status-specific recommendations
+        if overall_status == "GOOD":
+            recommendations.append("✅ Excellent convergence - results are reliable")
+            recommendations.append("💾 Consider thinning samples if storage is a concern")
+        elif overall_status == "MARGINAL":
+            recommendations.append("⚠️ Borderline convergence - proceed with caution")
+            recommendations.append("🔄 Consider running 1.5-2x longer for better statistics")
+            recommendations.append("📊 Results may be reliable but uncertainties could be underestimated")
+        elif overall_status == "POOR":
+            recommendations.append("❌ Poor convergence - results NOT reliable")
+            recommendations.append("🚫 DO NOT use these results for scientific analysis")
+            recommendations.append("🔧 Try: longer chains, more walkers, different initial conditions")
+            recommendations.append("⚠️ Check bounds - parameters may be hitting limits")
+        elif overall_status == "UNKNOWN":
+            recommendations.append("❓ Convergence status unclear - requires manual inspection")
+            recommendations.append("⚠️ Use results with extreme caution until convergence confirmed")
+        
+        # Always recommend trace plots for non-GOOD status
+        if overall_status != "GOOD":
+            recommendations.append("📈 **CRITICAL: Examine trace plots** and parameter evolution carefully")
+        
+        diagnostics['recommendations'] = recommendations
+        
+        self._cached_convergence = diagnostics
+        
+        if verbose:
+            self._print_convergence_diagnostics(diagnostics)
+        
+        return diagnostics
+    
+    def _get_acceptance_fraction(self):
+        """Get acceptance fraction from sampler."""
+        if hasattr(self.fitter.sampler, 'acceptance_fraction'):
+            return self.fitter.sampler.acceptance_fraction
+        elif hasattr(self.fitter.sampler, 'get_chain'):
+            # Estimate from chain for zeus
+            try:
+                chain = self.fitter.sampler.get_chain()
+                # Count unique consecutive steps
+                n_accepted = 0
+                n_total = 0
+                for walker_chain in chain.T:
+                    for i in range(1, len(walker_chain)):
+                        n_total += 1
+                        if not np.array_equal(walker_chain[i], walker_chain[i-1]):
+                            n_accepted += 1
+                return n_accepted / n_total if n_total > 0 else 0.0
+            except:
+                return None
+        return None
+    
+    def _get_autocorr_time(self):
+        """Get autocorrelation time from sampler."""
+        try:
+            if hasattr(self.fitter.sampler, 'get_autocorr_time'):
+                return self.fitter.sampler.get_autocorr_time()
+        except:
+            pass
+        return None
+    
+    def _get_gelman_rubin(self):
+        """Get Gelman-Rubin R-hat statistic for zeus sampler."""
+        try:
+            if self.sampler_name.lower() == 'zeus':
+                import zeus
+                chain = self.fitter.sampler.get_chain()
+                return zeus.diagnostics.gelman_rubin(chain)
+        except:
+            pass
+        return None
+    
+    def _estimate_effective_sample_size(self, samples):
+        """Estimate effective sample size for each parameter."""
+        try:
+            from scipy import signal
+            
+            n_eff = np.zeros(samples.shape[1])
+            
+            for i in range(samples.shape[1]):
+                # Calculate autocorrelation function
+                data = samples[:, i] - np.mean(samples[:, i])
+                autocorr = signal.correlate(data, data, mode='full')
+                autocorr = autocorr[autocorr.size // 2:]
+                autocorr = autocorr / autocorr[0]
+                
+                # Find first negative value
+                first_negative = np.where(autocorr < 0)[0]
+                if len(first_negative) > 0:
+                    cutoff = first_negative[0]
+                else:
+                    cutoff = len(autocorr) // 4
+                
+                # Integrated autocorr time
+                tau_int = 1 + 2 * np.sum(autocorr[1:cutoff])
+                n_eff[i] = len(samples) / (2 * tau_int)
+            
+            return n_eff
+            
+        except Exception:
+            return None
+    
+    def _assess_overall_convergence(self, diagnostics):
+        """Assess overall convergence status with conservative approach."""
+        issues = []
+        autocorr_failed = False
+        
+        # Check acceptance fraction
+        if diagnostics['acceptance_fraction'] is not None:
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if mean_accept < 0.2 or mean_accept > 0.7:
+                issues.append("acceptance_fraction")
+        else:
+            issues.append("acceptance_fraction_unavailable")
+        
+        # Check autocorrelation time availability
+        if diagnostics['autocorr_time'] is None or diagnostics['autocorr_time']['mean_tau'] is None:
+            autocorr_failed = True
+            issues.append("autocorr_unavailable")
+        else:
+            # Check chain length ratio
+            if diagnostics.get('chain_length_ratio') is not None:
+                if diagnostics['chain_length_ratio'] < 50:
+                    issues.append("chain_length")
+        
+        # Check effective sample size
+        if diagnostics['effective_sample_size'] is not None:
+            min_eff = diagnostics['effective_sample_size']['min_n_eff']
+            if min_eff is not None and min_eff < 100:
+                issues.append("effective_sample_size")
+        
+        # Check Gelman-Rubin
+        if diagnostics['gelman_rubin'] is not None:
+            max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+            if max_r_hat is not None and max_r_hat > 1.1:
+                issues.append("convergence")
+        
+        # Conservative assessment logic
+        if autocorr_failed and len([i for i in issues if i != "autocorr_unavailable"]) == 0:
+            # Only autocorr failed, other indicators good/unknown
+            return "MARGINAL"  # Conservative when missing key diagnostic
+        elif autocorr_failed and len(issues) > 2:
+            return "UNKNOWN"  # Too many unknowns for reliable assessment
+        elif len(issues) == 0:
+            return "GOOD"
+        elif len(issues) <= 2:
+            return "MARGINAL"
+        else:
+            return "POOR"
+    
+    def _print_convergence_diagnostics(self, diagnostics):
+        """Print formatted convergence diagnostics with emojis."""
+        print("\n" + "=" * 70)
+        print("CONVERGENCE DIAGNOSTICS")
+        print("=" * 70)
+        
+        status = diagnostics['overall_status']
+        status_symbols = {
+            "GOOD": "✅", 
+            "MARGINAL": "⚠️", 
+            "POOR": "❌", 
+            "UNKNOWN": "❓"
+        }
+        print(f"Overall Status: {status_symbols.get(status, '?')} {status}")
+        
+        print(f"\nDetailed Metrics:")
+        print("-" * 50)
+        
+        # Acceptance fraction
+        if diagnostics['acceptance_fraction'] is not None:
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if 0.2 <= mean_accept <= 0.7:
+                symbol = "✅"
+            elif mean_accept < 0.1 or mean_accept > 0.8:
+                symbol = "❌"
+            else:
+                symbol = "⚠️"
+            print(f"Acceptance Fraction: {symbol} {mean_accept:.3f}")
+        else:
+            print("Acceptance Fraction: ❓ Not available")
+        
+        # Autocorrelation time
+        if diagnostics['autocorr_time'] is not None:
+            mean_tau = diagnostics['autocorr_time']['mean_tau']
+            if mean_tau is not None:
+                if 'chain_length_ratio' in diagnostics:
+                    ratio = diagnostics['chain_length_ratio']
+                    if ratio >= 50:
+                        symbol = "✅"
+                    elif ratio >= 20:
+                        symbol = "⚠️"
+                    else:
+                        symbol = "❌"
+                    print(f"Mean Autocorr Time: {symbol} {mean_tau:.1f} steps")
+                    print(f"Chain Length Ratio: {symbol} {ratio:.1f}x autocorr time")
+                else:
+                    print(f"Mean Autocorr Time: ⚠️ {mean_tau:.1f} steps")
+            else:
+                print("Autocorr Time: ❌ Could not calculate")
+        else:
+            print("Autocorr Time: ❓ Not available")
+        
+        # Effective sample size
+        if diagnostics['effective_sample_size'] is not None:
+            min_eff = diagnostics['effective_sample_size']['min_n_eff']
+            if min_eff is not None:
+                if min_eff >= 100:
+                    symbol = "✅"
+                elif min_eff >= 50:
+                    symbol = "⚠️"
+                else:
+                    symbol = "❌"
+                print(f"Min Effective N: {symbol} {min_eff:.0f}")
+            else:
+                print("Effective Sample Size: ❌ Could not calculate")
+        else:
+            print("Effective Sample Size: ❓ Not available")
+        
+        # Gelman-Rubin
+        if diagnostics['gelman_rubin'] is not None:
+            max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+            if max_r_hat is not None:
+                if max_r_hat <= 1.1:
+                    symbol = "✅"
+                elif max_r_hat <= 1.2:
+                    symbol = "⚠️"
+                else:
+                    symbol = "❌"
+                print(f"Max R-hat: {symbol} {max_r_hat:.3f}")
+            else:
+                print("Gelman-Rubin: ❌ Could not calculate")
+        elif self.sampler_name.lower() == 'zeus':
+            print("Gelman-Rubin: ❓ Not available (expected for zeus)")
+        
+        print(f"\nRecommendations:")
+        print("-" * 50)
+        for i, rec in enumerate(diagnostics['recommendations'], 1):
+            print(f"{i}. {rec}")
+        
+        print("=" * 70)
+    
+    def chain_trace_plot(self, save_path: Optional[str] = None, 
+                        n_cols: int = 3, figsize: Optional[Tuple[float, float]] = None) -> plt.Figure:
+        """
+        Create trace plots for visual convergence assessment.
+        
+        Parameters
+        ----------
+        save_path : str, optional
+            Path to save the trace plot
+        n_cols : int, optional
+            Number of columns in subplot grid
+        figsize : tuple, optional
+            Figure size (width, height)
+            
+        Returns
+        -------
+        plt.Figure
+            The trace plot figure
+        """
+        # Get samples and chain
+        try:
+            if hasattr(self.fitter.sampler, 'get_chain'):
+                chain = self.fitter.sampler.get_chain()
+            else:
+                # Fallback: create artificial chain from samples
+                samples = self._get_samples()
+                chain = samples.reshape(self.n_walkers, -1, samples.shape[1])
+        except Exception as e:
+            print(f"Could not extract chain for trace plots: {e}")
+            return None
+        
+        # Get parameter names
+        summary = self.parameter_summary(verbose=False)
+        param_names = summary.names
+        n_params = len(param_names)
+        
+        # Calculate subplot layout
+        n_rows = (n_params + n_cols - 1) // n_cols
+        
+        # Set figure size
+        if figsize is None:
+            figsize = (4 * n_cols, 3 * n_rows)
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+        if n_params == 1:
+            axes = [axes]
+        elif n_rows == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+        
+        # Plot each parameter
+        for i in range(n_params):
+            ax = axes[i]
+            
+            # Plot all walkers for this parameter
+            for walker in range(self.n_walkers):
+                ax.plot(chain[walker, :, i], alpha=0.7, linewidth=0.5)
+            
+            # Add best-fit line
+            ax.axhline(summary.best_fit[i], color='red', linestyle='--', 
+                      linewidth=2, alpha=0.8, label='Best fit')
+            
+            # Format subplot
+            ax.set_title(param_names[i])
+            ax.set_xlabel('Step')
+            ax.set_ylabel('Value')
+            ax.grid(True, alpha=0.3)
+            
+            # Add convergence assessment text
+            convergence = self.convergence_diagnostics(verbose=False)
+            status = convergence['overall_status']
+            status_colors = {
+                "GOOD": "green", 
+                "MARGINAL": "orange", 
+                "POOR": "red", 
+                "UNKNOWN": "purple"
+            }
+            
+            ax.text(0.02, 0.98, status, transform=ax.transAxes, 
+                   verticalalignment='top', fontsize=10, weight='bold',
+                   color=status_colors.get(status, 'black'),
+                   bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Hide empty subplots
+        for i in range(n_params, len(axes)):
+            axes[i].set_visible(False)
+        
+        # Overall title
+        convergence = self.convergence_diagnostics(verbose=False)
+        status = convergence['overall_status']
+        status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        
+        fig.suptitle(f'Chain Trace Plots - {status_symbol.get(status, "?")} {status} Convergence\n'
+                    f'{self.sampler_name} sampler: {self.n_walkers} walkers × {self.n_steps} steps', 
+                    fontsize=14, y=0.98)
+        
+        plt.tight_layout()
+        
+        # Add interpretation guide
+        fig.text(0.02, 0.02, 
+                'Good traces: stable mixing around best-fit, no trends or jumps\n'
+                'Poor traces: trending, stuck walkers, large jumps, non-stationary behavior',
+                fontsize=10, style='italic', alpha=0.7,
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.5))
+        
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Saved trace plot to {save_path}")
+        else:
+            plt.show()
+        
+        return fig
+    
+    def correlation_matrix(self, plot: bool = False, save_path: Optional[str] = None) -> np.ndarray:
+        """
+        Calculate parameter correlation matrix.
+        
+        Parameters
+        ----------
+        plot : bool
+            Whether to create a correlation plot
+        save_path : str, optional
+            Path to save correlation plot
+            
         Returns
         -------
         np.ndarray
             Correlation matrix (n_params x n_params)
         """
-        if self._correlation_matrix is None:
-            self._correlation_matrix = np.corrcoef(self.samples.T)
-        return self._correlation_matrix
-    
-    def get_covariance_matrix(self) -> np.ndarray:
-        """
-        Calculate parameter covariance matrix with caching.
-        
-        Returns
-        -------
-        np.ndarray
-            Covariance matrix (n_params x n_params)
-        """
-        if self._covariance_matrix is None:
-            self._covariance_matrix = np.cov(self.samples.T)
-        return self._covariance_matrix
-    
-    def summary(self, verbose: bool = False, show_tying: bool = True) -> str:
-        """
-        Generate a comprehensive summary of fit results with ion-aware organization.
-        
-        Parameters
-        ----------
-        verbose : bool
-            Whether to include detailed parameter information
-        show_tying : bool
-            Whether to show ion parameter tying information
-            
-        Returns
-        -------
-        str
-            Formatted summary string
-        """
-        lines = ["MCMC Fit Results", "=" * 60]
-        
-        # Basic fit information
-        lines.append(f"Sampler: {self.mcmc_settings.sampler}")
-        lines.append(f"Walkers: {self.mcmc_settings.n_walkers}")
-        lines.append(f"Steps: {self.mcmc_settings.n_steps}")
-        lines.append(f"Burn-in: {self.mcmc_settings.n_burn}")
-        lines.append(f"Samples: {self.n_samples}")
-        lines.append(f"Fit time: {self.fit_time:.1f} seconds")
-        lines.append(f"Datasets: {len(self.datasets)}")
-        
-        # Ion tying information
-        if show_tying and hasattr(self, 'n_transitions'):
-            lines.append(f"\nIon Parameter Tying:")
-            lines.append(f"Total transitions: {self.n_transitions}")
-            lines.append(f"Fitted parameters: {self.n_params}")
-            lines.append(f"Untied parameters: {self.n_untied_params}")
-            lines.append(f"Parameter reduction: {self.tying_reduction} ({self.tying_efficiency*100:.1f}%)")
-        
-        # Model statistics
-        lines.append(f"\nModel Statistics:")
-        lines.append(f"Chi-squared: {self.chi2_best:.2f}")
-        lines.append(f"Degrees of freedom: {self.dof}")
-        lines.append(f"Reduced chi-squared: {self.reduced_chi2:.3f}")
-        lines.append(f"AIC: {self.aic:.2f}")
-        lines.append(f"BIC: {self.bic:.2f}")
-        if hasattr(self, 'aic_effective'):
-            lines.append(f"AIC (tying-aware): {self.aic_effective:.2f}")
-            lines.append(f"BIC (tying-aware): {self.bic_effective:.2f}")
-        lines.append(f"P-value: {self.p_value:.4f}")
-        
-        # Data points information
-        lines.append(f"\nData Information:")
-        for i, dataset in enumerate(self.datasets):
-            lines.append(f"  Dataset {i+1} ({dataset.name}): {len(dataset.wavelength)} points")
-        
-        # Ion group summaries
-        if hasattr(self, 'ion_groups') and self.ion_groups:
-            lines.append(f"\nIon Groups Summary:")
-            for key, ion_group in self.ion_groups.items():
-                redshift, ion_name = key
-                lines.append(f"  {ion_name} at z={redshift:.6f}: {ion_group.components} components, "
-                            f"{len(ion_group.transitions)} transitions")
-                
-                # Show derived quantities
-                for derived in ion_group.derived_quantities:
-                    lines.append(f"    {derived}")
-        
-        # Parameter summary
-        if verbose:
-            lines.append(f"\nDetailed Parameter Summary:")
-            lines.append("-" * 50)
-            for summary in self.parameter_summaries:
-                lines.append(str(summary))
-                if hasattr(summary, 'physical_interpretation') and summary.physical_interpretation():
-                    lines.append(f"    → {summary.physical_interpretation()}")
+        if self._cached_correlation is not None:
+            correlation = self._cached_correlation
         else:
-            lines.append(f"\nParameter Summary by Ion:")
-            lines.append("-" * 40)
-            
-            if hasattr(self, 'ion_groups') and self.ion_groups:
-                for key, ion_group in self.ion_groups.items():
-                    redshift, ion_name = key
-                    lines.append(f"\n{ion_name} at z={redshift:.6f}:")
-                    
-                    for comp_idx in range(ion_group.components):
-                        lines.append(f"  Component {comp_idx+1}:")
-                        
-                        # Find parameters for this component
-                        for param_type in ['N', 'b', 'v']:
-                            param_key = f"{param_type}_{comp_idx}"
-                            if param_key in ion_group.parameters:
-                                param = ion_group.parameters[param_key]
-                                lines.append(f"    {param_type} = {param.best_fit:.3f} ± {param.std:.3f} {param.units or ''}")
-            else:
-                # Fallback if no ion groups
-                lines.append("  Basic parameter summary:")
-                for summary in self.parameter_summaries[:6]:  # Show first 6
-                    lines.append(f"  {summary.name}: {summary.best_fit:.3f} ± {summary.std:.3f}")
+            samples = self._get_samples()
+            correlation = np.corrcoef(samples.T)
+            self._cached_correlation = correlation
+        
+        if plot:
+            self._plot_correlation_matrix(correlation, save_path)
+        
+        return correlation
     
-        return "\n".join(lines)
+    def _plot_correlation_matrix(self, correlation, save_path=None):
+        """Plot correlation matrix heatmap."""
+        summary = self.parameter_summary(verbose=False)
+        
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Create heatmap
+        im = ax.imshow(correlation, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
+        
+        # Set ticks and labels
+        n_params = len(summary.names)
+        ax.set_xticks(range(n_params))
+        ax.set_yticks(range(n_params))
+        ax.set_xticklabels(summary.names, rotation=45, ha='right')
+        ax.set_yticklabels(summary.names)
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Correlation Coefficient')
+        
+        # Add correlation values as text
+        for i in range(n_params):
+            for j in range(n_params):
+                if abs(correlation[i, j]) > 0.3:  # Only show significant correlations
+                    text = ax.text(j, i, f'{correlation[i, j]:.2f}', 
+                                 ha="center", va="center", 
+                                 color="white" if abs(correlation[i, j]) > 0.7 else "black",
+                                 fontsize=8)
+        
+        ax.set_title('Parameter Correlation Matrix')
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✓ Saved correlation plot to {save_path}")
+        else:
+            plt.show()
     
-
-    def plot_corner(self, figsize: Tuple[float, float] = (12, 12), 
-                   show_titles: bool = True, title_fmt: str = ".3f",
-                   color: str = "blue", truth_color: str = "red",
-                   save_path: Optional[str] = None, 
-                   group_by_ion: bool = False) -> plt.Figure:
+    def corner_plot(self, save_path: Optional[str] = None, **kwargs) -> plt.Figure:
         """
         Create corner plot of parameter posterior distributions.
         
         Parameters
         ----------
-        figsize : tuple
-            Figure size in inches
-        show_titles : bool
-            Whether to show parameter values as titles
-        title_fmt : str
-            Format string for title values
-        color : str
-            Color for histograms and contours
-        truth_color : str
-            Color for truth values (if provided)
         save_path : str, optional
-            Path to save the figure
-        group_by_ion : bool
-            Whether to create separate corner plots for each ion group
+            Path to save the corner plot
+        **kwargs
+            Additional arguments passed to corner.corner()
             
         Returns
         -------
@@ -683,1058 +1169,906 @@ class FitResults:
             The corner plot figure
         """
         if not HAS_CORNER:
-            raise ImportError("Corner plots require the 'corner' package. "
-                            "Install with: pip install corner")
+            raise ImportError(
+                "Corner plots require the 'corner' package. "
+                "Install with: pip install corner"
+            )
         
-        # Get parameter names for labels
-        param_names = self.param_manager.get_parameter_latex_names()
+        # Get samples and parameter info
+        samples = self._get_samples()
+        summary = self.parameter_summary(verbose=False)
+        
+        # Default corner plot arguments
+        corner_kwargs = {
+            'labels': summary.names,
+            'truths': summary.best_fit,
+            'show_titles': True,
+            'title_fmt': '.3f',
+            'quantiles': [0.16, 0.5, 0.84],
+            'levels': (1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4.5)),
+            'plot_density': False,
+            'plot_datapoints': True,
+            'fill_contours': True,
+            'max_n_ticks': 3
+        }
+        
+        # Update with user-provided kwargs
+        corner_kwargs.update(kwargs)
         
         # Create corner plot
-        fig = corner.corner(
-            self.samples,
-            labels=param_names,
-            show_titles=show_titles,
-            title_fmt=title_fmt,
-            color=color,
-            figsize=figsize,
-            truths=self.best_fit,
-            truth_color=truth_color
-        )
+        fig = corner.corner(samples, **corner_kwargs)
+        
+        # Add title with convergence status
+        convergence = self.convergence_diagnostics(verbose=False)
+        status = convergence['overall_status']
+        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗"}
+        
+        fig.suptitle(f'{status_symbol.get(status, "?")} MCMC Results - {status} Convergence\n'
+                    f'{self.sampler_name} sampler, {self.n_walkers} walkers, {self.n_steps} steps', 
+                    fontsize=14, y=0.98)
         
         if save_path:
             fig.savefig(save_path, dpi=300, bbox_inches='tight')
-            
+            print(f"✓ Saved corner plot to {save_path}")
+        else:
+            plt.show()
+        
         return fig
     
-    def plot_model_comparison(self, figsize: Tuple[float, float] = (15, 10),
-                             show_residuals: bool = True,
-                             show_components: bool = False,
-                             save_path: Optional[str] = None) -> plt.Figure:
-        """
-        Plot data vs model comparison for all datasets.
-        
-        Parameters
-        ----------
-        figsize : tuple
-            Figure size in inches
-        show_residuals : bool
-            Whether to show residual plots
-        show_components : bool
-            Whether to show individual velocity components (if available)
-        save_path : str, optional
-            Path to save the figure
-            
-        Returns
-        -------
-        plt.Figure
-            The model comparison figure
-        """
-        n_datasets = len(self.datasets)
-        n_rows = n_datasets * (2 if show_residuals else 1)
-        
-        fig, axes = plt.subplots(n_rows, 1, figsize=figsize)
-        if n_rows == 1:
-            axes = [axes]
-        
-        for i, dataset in enumerate(self.datasets):
-            # Calculate model
-            try:
-                model_flux = self.model.evaluate(self.best_fit, dataset.wavelength)
-            except Exception as e:
-                print(f"Warning: Could not evaluate model for dataset {i}: {e}")
-                continue
-            
-            # Main plot
-            ax_main = axes[i * (2 if show_residuals else 1)]
-            
-            # Plot data
-            ax_main.step(dataset.wavelength, dataset.flux, 'k-', where='mid',
-                        label='Observed', alpha=0.7, linewidth=1)
-            ax_main.step(dataset.wavelength, dataset.error, 'gray', where='mid',
-                        alpha=0.3, linewidth=0.5, label='Error')
-            
-            # Plot model
-            ax_main.plot(dataset.wavelength, model_flux, 'r-', 
-                        label='Best fit', linewidth=2)
-            
-            # Mark transition locations if we have ion groups
-            if hasattr(self, 'ion_groups') and self.ion_groups:
-                for ion_group in self.ion_groups.values():
-                    for trans_wave in ion_group.transitions:
-                        obs_wave = trans_wave * (1 + ion_group.redshift)
-                        if min(dataset.wavelength) <= obs_wave <= max(dataset.wavelength):
-                            ax_main.axvline(obs_wave, color='red', linestyle=':', alpha=0.5, linewidth=1)
-                            ax_main.text(obs_wave, 1.05, f'{trans_wave:.0f}', ha='center', fontsize=8, rotation=90)
-            
-            ax_main.set_ylabel('Normalized Flux')
-            ax_main.set_title(f'Dataset {i+1}: {dataset.name}')
-            ax_main.legend()
-            ax_main.grid(True, alpha=0.3)
-            ax_main.set_ylim(0, 1.2)
-            
-            # Residuals plot
-            if show_residuals:
-                ax_resid = axes[i * 2 + 1]
-                residuals = (dataset.flux - model_flux) / dataset.error
-                
-                ax_resid.step(dataset.wavelength, residuals, 'k-', where='mid',
-                             alpha=0.7, linewidth=1)
-                ax_resid.axhline(0, color='r', linestyle='--', alpha=0.7)
-                ax_resid.axhline(1, color='gray', linestyle=':', alpha=0.5)
-                ax_resid.axhline(-1, color='gray', linestyle=':', alpha=0.5)
-                
-                ax_resid.set_ylabel('Residuals (σ)')
-                ax_resid.grid(True, alpha=0.3)
-                
-                # Calculate residual statistics
-                rms = np.sqrt(np.mean(residuals**2))
-                mean_resid = np.mean(residuals)
-                ax_resid.text(0.02, 0.95, f'RMS = {rms:.2f}\nMean = {mean_resid:.2f}', 
-                             transform=ax_resid.transAxes, 
-                             verticalalignment='top',
-                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        axes[-1].set_xlabel('Wavelength (Å)')
-        
-        # Add summary title
-        if hasattr(self, 'ion_groups') and self.ion_groups:
-            n_ions = len(self.ion_groups)
-            n_components = sum(ig.components for ig in self.ion_groups.values())
-            plt.suptitle(f'Fit Results: {n_ions} ion groups, {n_components} components, '
-                        f'χ²/ν = {self.reduced_chi2:.2f}', fontsize=12, y=0.98)
-        else:
-            plt.suptitle(f'Fit Results: χ²/ν = {self.reduced_chi2:.2f}', fontsize=12, y=0.98)
-        
-        plt.tight_layout()
-        
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
-            
-        return fig
+    # =============================================================================
+    # Additional Utility Methods
+    # =============================================================================
     
-    def to_pandas(self) -> pd.DataFrame:
+    def chi_squared(self) -> Dict[str, float]:
         """
-        Convert results to pandas DataFrame.
-        
-        Returns
-        -------
-        pd.DataFrame
-            DataFrame with parameter samples
-        """
-        param_names = self.param_manager.get_parameter_names()
-        return pd.DataFrame(self.samples, columns=param_names)
-    
-    def export_csv(self, filepath: str, include_samples: bool = False):
-        """
-        Export results to CSV file.
-        
-        Parameters
-        ----------
-        filepath : str
-            Output file path
-        include_samples : bool
-            Whether to export full sample chains
-        """
-        filepath = Path(filepath)
-        filepath.parent.mkdir(parents=True, exist_ok=True)
-        
-        if include_samples:
-            # Export full sample chain
-            df = self.to_pandas()
-            df.to_csv(filepath, index=False)
-        else:
-            # Export parameter summary
-            data = []
-            for summary in self.parameter_summaries:
-                data.append({
-                    'parameter': summary.name,
-                    'best_fit': summary.best_fit,
-                    'lower_error': summary.lower_error,
-                    'upper_error': summary.upper_error,
-                    'std': summary.std,
-                    'mean': summary.mean
-                })
-            
-            df = pd.DataFrame(data)
-            df.to_csv(filepath, index=False)    
-
-class MultiInstrumentFitResults(FitResults):
-    """
-    Enhanced container for multi-instrument MCMC fitting results.
-    
-    Extends FitResults to handle multiple instruments with shared parameters
-    but different instrumental responses and wavelength coverage.
-    
-    Attributes
-    ----------
-    fitter : vfit
-        Multi-instrument MCMC fitter object
-    master_model : VoigtModel
-        Master model compiled with all instrument configurations
-    datasets : Dict[str, Dataset] or None
-        Override datasets for visualization, keyed by instrument name
-    """
-    
-    def __init__(self, fitter, master_model: VoigtModel, 
-                 datasets: Optional[Union[Dict[str, Dataset], Dataset]] = None):
-        """
-        Initialize multi-instrument results container.
-        
-        Parameters
-        ----------
-        fitter : vfit
-            Multi-instrument MCMC fitter object
-        master_model : VoigtModel
-            Master model compiled with instrument configurations
-        datasets : dict, Dataset, or None
-            Override datasets for visualization:
-            - None: Use fitter's internal data
-            - Dict: {'instrument_name': Dataset} for specific overrides
-            - Single Dataset: Override primary instrument only
-        """
-        # Set the master model
-        self.model = master_model
-        self.fitter = fitter
-        
-        # Create parameter manager from master model configuration
-        self.param_manager = ParameterManager(master_model.config)
-        
-        # Handle datasets setup for multi-instrument
-        self._setup_multi_instrument_datasets(datasets)
-        
-        # Extract key information from fitter
-        self.sampler = fitter.sampler
-        self.fit_time = getattr(fitter, 'fit_time', 0.0)
-        
-        # Simplify bounds storage
-        self.bounds = {
-            'lower': getattr(fitter, 'lb', None),
-            'upper': getattr(fitter, 'ub', None)
-        }
-        
-        # Auto-detect MCMC settings
-        self.mcmc_settings = self._extract_mcmc_settings()
-        
-        # Extract and analyze results
-        self._extract_samples()
-        self._calculate_parameter_summaries()
-        self._calculate_multi_instrument_statistics()
-        self._organize_ion_group_results()
-        self._calculate_derived_quantities()
-        
-        # Cache for expensive operations
-        self._correlation_matrix = None
-        self._covariance_matrix = None
-        self._ion_correlation_matrices = None
-    
-    def _setup_multi_instrument_datasets(self, datasets):
-        """Set up datasets for multi-instrument analysis."""
-        # Always start with primary dataset
-        self.datasets = [Dataset(
-            self.fitter.wave_obs, self.fitter.fnorm, self.fitter.enorm,
-            name="Primary"
-        )]
-        
-        # Track instrument datasets separately for multi-instrument operations
-        self.instrument_datasets = {
-            "Primary": self.datasets[0]
-        }
-        
-        # Add additional instruments from fitter
-        if hasattr(self.fitter, 'instrument_data') and self.fitter.instrument_data:
-            for instrument_name, data in self.fitter.instrument_data.items():
-                fitted_dataset = Dataset(
-                    data['wave'], data['flux'], data['error'], 
-                    name=instrument_name
-                )
-                self.datasets.append(fitted_dataset)
-                self.instrument_datasets[instrument_name] = fitted_dataset
-        
-        # Handle override datasets
-        if datasets is not None:
-            if isinstance(datasets, dict):
-                # Dictionary: override specific instruments
-                for instrument_name, override_dataset in datasets.items():
-                    if override_dataset is not None:
-                        self.instrument_datasets[instrument_name] = override_dataset
-                        # Update main datasets list
-                        for i, ds in enumerate(self.datasets):
-                            if ds.name == instrument_name:
-                                self.datasets[i] = override_dataset
-                                break
-                        
-            elif hasattr(datasets, 'name'):
-                # Single Dataset: override primary only
-                self.instrument_datasets["Primary"] = datasets
-                self.datasets[0] = datasets
-            else:
-                raise ValueError("datasets must be None, dict, or single Dataset object")
-    
-    def _calculate_multi_instrument_statistics(self):
-        """Calculate model statistics for multi-instrument fit."""
-        self.chi2_best = 0.0
-        self.n_data_points = 0
-        self.chi2_by_instrument = {}
-        
-        # Calculate chi-squared for each instrument using FITTED data (not override datasets)
-        for instrument_name in self.instrument_datasets.keys():
-            # Always use the data that was actually fitted
-            if instrument_name == "Primary":
-                fitted_data = Dataset(
-                    self.fitter.wave_obs, self.fitter.fnorm, self.fitter.enorm,
-                    name="Primary"
-                )
-            else:
-                data = self.fitter.instrument_data[instrument_name]
-                fitted_data = Dataset(
-                    data['wave'], data['flux'], data['error'],
-                    name=instrument_name
-                )
-            
-            # Evaluate model for this instrument
-            if hasattr(data, 'model') and instrument_name != "Primary":
-                # Use instrument-specific model function if available
-                model_flux = data['model'](self.best_fit, fitted_data.wavelength)
-            else:
-                # Use master model (assumes it can handle instrument specification)
-                try:
-                    # Try instrument-specific evaluation
-                    model_flux = self.model.evaluate(
-                        self.best_fit, fitted_data.wavelength, 
-                        instrument=instrument_name if instrument_name != "Primary" else None
-                    )
-                except TypeError:
-                    # Fallback to standard evaluation
-                    model_flux = self.model.evaluate(self.best_fit, fitted_data.wavelength)
-            
-            # Calculate chi-squared for this instrument
-            chi2_instrument = np.sum((fitted_data.flux - model_flux)**2 / fitted_data.error**2)
-            self.chi2_by_instrument[instrument_name] = chi2_instrument
-            self.chi2_best += chi2_instrument
-            self.n_data_points += len(fitted_data.wavelength)
-        
-        # Continue with standard statistics
-        self.dof = self.n_data_points - self.n_params
-        self.reduced_chi2 = self.chi2_best / self.dof if self.dof > 0 else np.inf
-        
-        # Ion tying calculations (same as parent class)
-        n_transitions = sum(
-            len(ion_group.transitions) 
-            for ion_group in self.ion_groups.values()
-        )
-        n_untied_params = n_transitions * 3
-        tying_reduction = n_untied_params - self.n_params
-        
-        self.n_transitions = n_transitions
-        self.n_untied_params = n_untied_params  
-        self.tying_reduction = tying_reduction
-        self.tying_efficiency = tying_reduction / n_untied_params if n_untied_params > 0 else 0
-        
-        # Information criteria
-        self.aic = self.chi2_best + 2 * self.n_params
-        self.bic = self.chi2_best + self.n_params * np.log(self.n_data_points)
-        self.aic_effective = self.chi2_best + 2 * self.n_params * (1 + self.tying_efficiency)
-        self.bic_effective = self.chi2_best + self.n_params * np.log(self.n_data_points) * (1 + self.tying_efficiency)
-        
-        if self.dof > 0:
-            self.p_value = 1.0 - chi2.cdf(self.chi2_best, self.dof)
-        else:
-            self.p_value = np.nan
-    
-    def summary(self, verbose: bool = False, show_tying: bool = True) -> str:
-        """
-        Generate multi-instrument fit summary with per-instrument statistics.
-        """
-        lines = ["Multi-Instrument MCMC Fit Results", "=" * 60]
-        
-        # Basic fit information
-        lines.append(f"Sampler: {self.mcmc_settings.sampler}")
-        lines.append(f"Walkers: {self.mcmc_settings.n_walkers}")
-        lines.append(f"Steps: {self.mcmc_settings.n_steps}")
-        lines.append(f"Burn-in: {self.mcmc_settings.n_burn}")
-        lines.append(f"Samples: {self.n_samples}")
-        lines.append(f"Fit time: {self.fit_time:.1f} seconds")
-        lines.append(f"Instruments: {len(self.instrument_datasets)}")
-        
-        # Per-instrument chi-squared
-        lines.append(f"\nPer-Instrument Statistics:")
-        for instrument, chi2 in self.chi2_by_instrument.items():
-            dataset = self.instrument_datasets[instrument]
-            n_points = len(dataset.wavelength)
-            lines.append(f"  {instrument}: χ² = {chi2:.2f} ({n_points} points)")
-        
-        # Continue with standard summary
-        if show_tying:
-            lines.append(f"\nIon Parameter Tying:")
-            lines.append(f"Total transitions: {self.n_transitions}")
-            lines.append(f"Fitted parameters: {self.n_params}")
-            lines.append(f"Untied parameters: {self.n_untied_params}")
-            lines.append(f"Parameter reduction: {self.tying_reduction} ({self.tying_efficiency*100:.1f}%)")
-        
-        # Model statistics
-        lines.append(f"\nOverall Model Statistics:")
-        lines.append(f"Combined χ²: {self.chi2_best:.2f}")
-        lines.append(f"Degrees of freedom: {self.dof}")
-        lines.append(f"Reduced χ²: {self.reduced_chi2:.3f}")
-        lines.append(f"AIC: {self.aic:.2f}")
-        lines.append(f"BIC: {self.bic:.2f}")
-        if hasattr(self, 'aic_effective'):
-            lines.append(f"AIC (tying-aware): {self.aic_effective:.2f}")
-        lines.append(f"P-value: {self.p_value:.4f}")
-        
-        # Ion group summaries (same as parent)
-        lines.append(f"\nIon Groups Summary:")
-        for key, ion_group in self.ion_groups.items():
-            redshift, ion_name = key
-            lines.append(f"  {ion_name} at z={redshift:.6f}: {ion_group.components} components, "
-                        f"{len(ion_group.transitions)} transitions")
-        
-        return "\n".join(lines)
-            
-    def get_correlation_matrix(self) -> np.ndarray:
-        """
-        Calculate parameter correlation matrix with caching.
-        
-        Returns
-        -------
-        np.ndarray
-            Correlation matrix (n_params x n_params)
-        """
-        if self._correlation_matrix is None:
-            self._correlation_matrix = np.corrcoef(self.samples.T)
-        return self._correlation_matrix
-    
-    def get_covariance_matrix(self) -> np.ndarray:
-        """
-        Calculate parameter covariance matrix with caching.
-        
-        Returns
-        -------
-        np.ndarray
-            Covariance matrix (n_params x n_params)
-        """
-        if self._covariance_matrix is None:
-            self._covariance_matrix = np.cov(self.samples.T)
-        return self._covariance_matrix
-    
-    def get_ion_correlation_matrices(self) -> Dict[Tuple[float, str], np.ndarray]:
-        """
-        Calculate correlation matrices for individual ion groups.
+        Calculate chi-squared statistics for the fit.
         
         Returns
         -------
         dict
-            Mapping from (redshift, ion_name) to correlation matrix for that ion's parameters
+            Dictionary containing chi-squared metrics
         """
-        if self._ion_correlation_matrices is None:
-            self._ion_correlation_matrices = {}
+        summary = self.parameter_summary(verbose=False)
+        best_theta = summary.best_fit
+        
+        # Calculate model for primary dataset
+        try:
+            model_flux = self.model.evaluate(best_theta, self.fitter.wave_obs)
+        except:
+            # Fallback for loaded results
+            print("Warning: Could not evaluate model. Chi-squared calculation skipped.")
+            return {'chi2': np.nan, 'reduced_chi2': np.nan, 'dof': np.nan}
+        
+        # Primary dataset chi-squared
+        chi2 = np.sum((self.fitter.fnorm - model_flux)**2 / self.fitter.enorm**2)
+        n_data = len(self.fitter.fnorm)
+        n_params = len(best_theta)
+        dof = n_data - n_params
+        
+        chi2_stats = {
+            'chi2': chi2,
+            'dof': dof,
+            'reduced_chi2': chi2 / dof if dof > 0 else np.inf,
+            'n_data_points': n_data,
+            'n_parameters': n_params
+        }
+        
+        # Add multi-instrument contributions if available
+        if self.is_multi_instrument and self.instrument_data:
+            chi2_total = chi2
+            n_total = n_data
             
-            for key, ion_group in self.ion_groups.items():
-                # Find parameter indices for this ion group
-                param_indices = []
-                for param_name, param_summary in ion_group.parameters.items():
-                    param_idx = next(i for i, p in enumerate(self.parameter_summaries) 
-                                   if p.name == param_summary.name)
-                    param_indices.append(param_idx)
+            for name, inst_data in self.instrument_data.items():
+                if name == 'main':
+                    continue
                 
-                if param_indices:
-                    ion_samples = self.samples[:, param_indices]
-                    self._ion_correlation_matrices[key] = np.corrcoef(ion_samples.T)
+                try:
+                    # Try to evaluate model for this instrument
+                    # This will fail for loaded results without full model
+                    inst_model = self.model.evaluate(best_theta, inst_data['wave'])
+                    inst_chi2 = np.sum((inst_data['flux'] - inst_model)**2 / inst_data['error']**2)
+                    
+                    chi2_total += inst_chi2
+                    n_total += len(inst_data['wave'])
+                    chi2_stats[f'chi2_{name}'] = inst_chi2
+                    
+                except:
+                    print(f"Warning: Could not evaluate model for instrument {name}")
+            
+            chi2_stats['chi2_total'] = chi2_total
+            chi2_stats['n_total_points'] = n_total
+            chi2_stats['dof_total'] = n_total - n_params
+            chi2_stats['reduced_chi2_total'] = chi2_total / (n_total - n_params) if (n_total - n_params) > 0 else np.inf
         
-        return self._ion_correlation_matrices
+        return chi2_stats
     
-    def get_parameter_degeneracies(self, threshold: float = 0.95) -> List[Tuple[str, str, float]]:
-        """
-        Identify highly correlated (degenerate) parameter pairs.
+    def print_fit_summary(self) -> None:
+        """Print comprehensive fit summary."""
+        print("\n" + "=" * 80)
+        print("RBVFIT 2.0 FIT SUMMARY")
+        print("=" * 80)
         
-        Parameters
-        ----------
-        threshold : float
-            Correlation threshold for flagging degeneracies
-            
-        Returns
-        -------
-        list
-            List of (param1, param2, correlation) for degenerate pairs
-        """
-        corr_matrix = self.get_correlation_matrix()
-        param_names = [p.name for p in self.parameter_summaries]
+        # Basic info
+        print(f"Model: rbvfit 2.0 VoigtModel")
+        print(f"Sampler: {self.sampler_name}")
+        print(f"Configuration: {self.n_walkers} walkers × {self.n_steps} steps")
         
-        degeneracies = []
-        n_params = len(param_names)
+        if self.is_multi_instrument:
+            n_instruments = len(self.instrument_data) if self.instrument_data else 1
+            print(f"Multi-instrument fit: {n_instruments} datasets")
         
-        for i in range(n_params):
-            for j in range(i + 1, n_params):
-                corr = abs(corr_matrix[i, j])
-                if corr > threshold:
-                    degeneracies.append((param_names[i], param_names[j], corr_matrix[i, j]))
+        # Model configuration
+        if hasattr(self.model, 'config') and self.model.config is not None:
+            try:
+                n_systems = len(self.model.config.systems)
+                total_ions = sum(len(sys.ion_groups) for sys in self.model.config.systems)
+                total_components = sum(ig.components for sys in self.model.config.systems 
+                                     for ig in sys.ion_groups)
+                
+                print(f"Physical model: {n_systems} system(s), {total_ions} ion group(s), {total_components} component(s)")
+                
+                for i, system in enumerate(self.model.config.systems):
+                    ions = [ig.ion_name for ig in system.ion_groups]
+                    print(f"  System {i+1}: z={system.redshift:.6f}, ions={ions}")
+                    
+            except Exception:
+                print("Physical model: Configuration not available")
         
-        return sorted(degeneracies, key=lambda x: abs(x[2]), reverse=True)
-    
-    def summary(self, verbose: bool = False, show_tying: bool = True) -> str:
-        """
-        Generate a comprehensive summary of fit results with ion-aware organization.
+        # Chi-squared statistics
+        chi2_stats = self.chi_squared()
+        if not np.isnan(chi2_stats['chi2']):
+            print(f"\nGoodness of fit:")
+            if self.is_multi_instrument and 'chi2_total' in chi2_stats:
+                print(f"  Combined χ² = {chi2_stats['chi2_total']:.2f}")
+                print(f"  Combined χ²/ν = {chi2_stats['reduced_chi2_total']:.3f}")
+                print(f"  DOF = {chi2_stats['dof_total']}")
+            else:
+                print(f"  χ² = {chi2_stats['chi2']:.2f}")
+                print(f"  χ²/ν = {chi2_stats['reduced_chi2']:.3f}")
+                print(f"  DOF = {chi2_stats['dof']}")
         
-        Parameters
-        ----------
-        verbose : bool
-            Whether to include detailed parameter information
-        show_tying : bool
-            Whether to show ion parameter tying information
-            
-        Returns
-        -------
-        str
-            Formatted summary string
-        """
-        lines = ["MCMC Fit Results", "=" * 60]
+        # Convergence status
+        convergence = self.convergence_diagnostics(verbose=False)
+        status = convergence['overall_status']
+        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗"}
+        print(f"\nConvergence: {status_symbol.get(status, '?')} {status}")
         
-        # Basic fit information
-        lines.append(f"Sampler: {self.mcmc_settings.sampler}")
-        lines.append(f"Walkers: {self.mcmc_settings.n_walkers}")
-        lines.append(f"Steps: {self.mcmc_settings.n_steps}")
-        lines.append(f"Burn-in: {self.mcmc_settings.n_burn}")
-        lines.append(f"Samples: {self.n_samples}")
-        lines.append(f"Fit time: {self.fit_time:.1f} seconds")
-        lines.append(f"Datasets: {len(self.datasets)}")
+        # Quick parameter summary
+        summary = self.parameter_summary(verbose=False)
+        print(f"\nParameters: {len(summary.names)} fitted")
         
-        # Ion tying information
-        if show_tying:
-            lines.append(f"\nIon Parameter Tying:")
-            lines.append(f"Total transitions: {self.n_transitions}")
-            lines.append(f"Fitted parameters: {self.n_params}")
-            lines.append(f"Untied parameters: {self.n_untied_params}")
-            lines.append(f"Parameter reduction: {self.tying_reduction} ({self.tying_efficiency*100:.1f}%)")
-        
-        # Model statistics
-        lines.append(f"\nModel Statistics:")
-        lines.append(f"Chi-squared: {self.chi2_best:.2f}")
-        lines.append(f"Degrees of freedom: {self.dof}")
-        lines.append(f"Reduced chi-squared: {self.reduced_chi2:.3f}")
-        lines.append(f"AIC: {self.aic:.2f}")
-        lines.append(f"BIC: {self.bic:.2f}")
-        if hasattr(self, 'aic_effective'):
-            lines.append(f"AIC (tying-aware): {self.aic_effective:.2f}")
-            lines.append(f"BIC (tying-aware): {self.bic_effective:.2f}")
-        lines.append(f"P-value: {self.p_value:.4f}")
-        
-        # Data points information
-        lines.append(f"\nData Information:")
-        for i, dataset in enumerate(self.datasets):
-            lines.append(f"  Dataset {i+1} ({dataset.name}): {len(dataset.wavelength)} points")
-        
-        # Ion group summaries
-        lines.append(f"\nIon Groups Summary:")
-        for key, ion_group in self.ion_groups.items():
-            redshift, ion_name = key
-            lines.append(f"  {ion_name} at z={redshift:.6f}: {ion_group.components} components, "
-                        f"{len(ion_group.transitions)} transitions")
-            
-            # Show derived quantities
-            for derived in ion_group.derived_quantities:
-                lines.append(f"    {derived}")
-        
-        # Parameter summary
-        if verbose:
-            lines.append(f"\nDetailed Parameter Summary:")
-            lines.append("-" * 50)
-            for summary in self.parameter_summaries:
-                lines.append(str(summary))
-                if hasattr(summary, 'physical_interpretation') and summary.physical_interpretation():
-                    lines.append(f"    → {summary.physical_interpretation()}")
+        if len(summary.names) <= 12:  # Show details for small parameter sets
+            print("  Best-fit values:")
+            for name, value, error in zip(summary.names, summary.best_fit, summary.errors):
+                print(f"    {name}: {value:.3f} ± {error:.3f}")
         else:
-            lines.append(f"\nParameter Summary by Ion:")
-            lines.append("-" * 40)
-            
-            for key, ion_group in self.ion_groups.items():
-                redshift, ion_name = key
-                lines.append(f"\n{ion_name} at z={redshift:.6f}:")
-                
-                for comp_idx in range(ion_group.components):
-                    lines.append(f"  Component {comp_idx+1}:")
-                    
-                    # Find parameters for this component
-                    for param_type in ['N', 'b', 'v']:
-                        param_key = f"{param_type}_{comp_idx}"
-                        if param_key in ion_group.parameters:
-                            param = ion_group.parameters[param_key]
-                            lines.append(f"    {param_type} = {param.best_fit:.3f} ± {param.std:.3f} {param.units or ''}")
+            print("  (Use .parameter_summary() for detailed values)")
         
-        # Degeneracy warnings
-        degeneracies = self.get_parameter_degeneracies(threshold=0.9)
-        if degeneracies:
-            lines.append(f"\n⚠ Parameter Degeneracy Warnings:")
-            for param1, param2, corr in degeneracies[:3]:  # Show top 3
-                lines.append(f"  {param1} ↔ {param2}: correlation = {corr:.3f}")
-        
-        return "\n".join(lines)
+        print("=" * 80)
     
-    def get_ion_summary_table(self, ion_name: str = None, redshift: float = None) -> str:
+    def __repr__(self) -> str:
+        """String representation of FitResults."""
+        summary = self.parameter_summary(verbose=False)
+        convergence = self.convergence_diagnostics(verbose=False)
+        
+        return (f"FitResults(sampler='{self.sampler_name}', "
+                f"parameters={len(summary.names)}, "
+                f"convergence='{convergence['overall_status']}')")
+
+    # =============================================================================
+    # PHASE III: Velocity Space Visualization
+    # =============================================================================
+    
+    def plot_velocity_fits(self, show_components: bool = True, 
+                          show_rail_system: bool = True,
+                          figsize_per_panel: Tuple[float, float] = (4, 3),
+                          save_path: Optional[str] = None,
+                          velocity_range: Optional[Tuple[float, float]] = None,
+                          **kwargs) -> Dict[str, plt.Figure]:
         """
-        Generate detailed summary table for specific ion or all ions.
+        Create velocity space plots for each ion group with multi-instrument support.
+        
+        This is the main plotting function that creates separate figures for each ion,
+        with transitions as rows and instruments as columns.
         
         Parameters
         ----------
-        ion_name : str, optional
-            Specific ion to summarize (if None, summarize all)
-        redshift : float, optional
-            Specific redshift to summarize (if None, summarize all)
-            
-        Returns
-        -------
-        str
-            Formatted table string
-        """
-        lines = []
-        
-        if ion_name or redshift is not None:
-            # Filter ion groups
-            filtered_groups = {}
-            for key, ion_group in self.ion_groups.items():
-                z, ion = key
-                if (ion_name is None or ion == ion_name) and (redshift is None or abs(z - redshift) < 1e-6):
-                    filtered_groups[key] = ion_group
-        else:
-            filtered_groups = self.ion_groups
-        
-        if not filtered_groups:
-            return "No ion groups match the specified criteria."
-        
-        lines.append("Ion Group Summary Table")
-        lines.append("=" * 80)
-        
-        for key, ion_group in filtered_groups.items():
-            redshift, ion_name = key
-            lines.append(f"\n{ion_name} at z = {redshift:.6f}")
-            lines.append(f"Transitions: {', '.join(f'{w:.1f}' for w in ion_group.transitions)} Å")
-            lines.append("-" * 60)
-            lines.append("Comp |    N     |   b    |    v    | Physical Interpretation")
-            lines.append("-" * 60)
-            
-            for comp_idx in range(ion_group.components):
-                N_key = f"N_{comp_idx}"
-                b_key = f"b_{comp_idx}"
-                v_key = f"v_{comp_idx}"
-                
-                N_param = ion_group.parameters.get(N_key)
-                b_param = ion_group.parameters.get(b_key)
-                v_param = ion_group.parameters.get(v_key)
-                
-                if N_param and b_param and v_param:
-                    # Physical interpretation
-                    linear_N = 10**N_param.best_fit
-                    if 'MgII' in ion_name:
-                        thermal_b = 6.1
-                    elif 'OI' in ion_name:
-                        thermal_b = 12.9
-                    else:
-                        thermal_b = 10.0
-                    
-                    if b_param.best_fit > thermal_b:
-                        turbulent_b = np.sqrt(b_param.best_fit**2 - thermal_b**2)
-                        b_interp = f"T+{turbulent_b:.1f}"
-                    else:
-                        b_interp = "Thermal"
-                    
-                    lines.append(
-                        f" {comp_idx+1:2d}  | {N_param.best_fit:8.2f} | {b_param.best_fit:6.1f} | "
-                        f"{v_param.best_fit:7.1f} | N={linear_N:.1e}, {b_interp}"
-                    )
-            
-            # Derived quantities
-            if ion_group.derived_quantities:
-                lines.append("")
-                lines.append("Derived Quantities:")
-                for derived in ion_group.derived_quantities:
-                    lines.append(f"  {derived.description}: {derived.value:.3f} ± {derived.error:.3f} {derived.units}")
-        
-        return "\n".join(lines)
-    
-    def plot_corner(self, figsize: Tuple[float, float] = (12, 12), 
-                   show_titles: bool = True, title_fmt: str = ".3f",
-                   color: str = "blue", truth_color: str = "red",
-                   save_path: Optional[str] = None, 
-                   group_by_ion: bool = True) -> Union[plt.Figure, Dict[str, plt.Figure]]:
-        """
-        Create corner plot of parameter posterior distributions with ion grouping.
-        
-        Parameters
-        ----------
-        figsize : tuple
-            Figure size in inches
-        show_titles : bool
-            Whether to show parameter values as titles
-        title_fmt : str
-            Format string for title values
-        color : str
-            Color for histograms and contours
-        truth_color : str
-            Color for truth values (if provided)
-        save_path : str, optional
-            Path to save the figure
-        group_by_ion : bool
-            Whether to create separate corner plots for each ion group
-            
-        Returns
-        -------
-        plt.Figure or dict
-            The corner plot figure(s)
-        """
-        if not HAS_CORNER:
-            raise ImportError("Corner plots require the 'corner' package. "
-                            "Install with: pip install corner")
-        
-        if group_by_ion and len(self.ion_groups) > 1:
-            # Create separate corner plots for each ion group
-            figures = {}
-            
-            for key, ion_group in self.ion_groups.items():
-                redshift, ion_name = key
-                
-                # Get parameter indices for this ion
-                param_indices = []
-                param_labels = []
-                param_truths = []
-                
-                for comp_idx in range(ion_group.components):
-                    for param_type in ['N', 'b', 'v']:
-                        param_key = f"{param_type}_{comp_idx}"
-                        if param_key in ion_group.parameters:
-                            param_summary = ion_group.parameters[param_key]
-                            param_idx = next(i for i, p in enumerate(self.parameter_summaries) 
-                                           if p.name == param_summary.name)
-                            param_indices.append(param_idx)
-                            
-                            # Create clean labels
-                            if param_type == 'N':
-                                label = f"$\\log N_{{{ion_name}}}^{{({comp_idx+1})}}$"
-                            elif param_type == 'b':
-                                label = f"$b_{{{ion_name}}}^{{({comp_idx+1})}}$"
-                            else:  # v
-                                label = f"$v_{{{ion_name}}}^{{({comp_idx+1})}}$"
-                            param_labels.append(label)
-                            param_truths.append(param_summary.best_fit)
-                
-                if param_indices:
-                    ion_samples = self.samples[:, param_indices]
-                    
-                    fig = corner.corner(
-                        ion_samples,
-                        labels=param_labels,
-                        show_titles=show_titles,
-                        title_fmt=title_fmt,
-                        color=color,
-                        figsize=figsize,
-                        truths=param_truths,
-                        truth_color=truth_color
-                    )
-                    
-                    fig.suptitle(f'{ion_name} at z = {redshift:.6f}', fontsize=14, y=0.98)
-                    figures[f"{ion_name}_z{redshift:.3f}"] = fig
-            
-            if save_path:
-                for name, fig in figures.items():
-                    path_parts = save_path.split('.')
-                    ion_path = f"{path_parts[0]}_{name}.{path_parts[1]}"
-                    fig.savefig(ion_path, dpi=300, bbox_inches='tight')
-            
-            return figures
-        
-        else:
-            # Standard corner plot for all parameters
-            param_names = self.param_manager.get_parameter_latex_names()
-            
-            fig = corner.corner(
-                self.samples,
-                labels=param_names,
-                show_titles=show_titles,
-                title_fmt=title_fmt,
-                color=color,
-                figsize=figsize,
-                truths=self.best_fit,
-                truth_color=truth_color
-            )
-            
-            if save_path:
-                fig.savefig(save_path, dpi=300, bbox_inches='tight')
-                
-            return fig
-    
-    def plot_model_comparison(self, figsize: Tuple[float, float] = (15, 10),
-                             show_residuals: bool = True,
-                             show_components: bool = False,
-                             velocity_space: bool = False,
-                             save_path: Optional[str] = None) -> plt.Figure:
-        """
-        Plot data vs model comparison for all datasets with enhanced options.
-        
-        Parameters
-        ----------
-        figsize : tuple
-            Figure size in inches
-        show_residuals : bool
-            Whether to show residual plots
         show_components : bool
             Whether to show individual velocity components
-        velocity_space : bool
-            Whether to plot in velocity space (requires transition info)
+        show_rail_system : bool
+            Whether to show rail system with component markers
+        figsize_per_panel : tuple
+            Size of each subplot panel (width, height)
         save_path : str, optional
-            Path to save the figure
-            
-        Returns
-        -------
-        plt.Figure
-            The model comparison figure
-        """
-        n_datasets = len(self.datasets)
-        n_rows = n_datasets * (2 if show_residuals else 1)
-        
-        fig, axes = plt.subplots(n_rows, 1, figsize=figsize)
-        if n_rows == 1:
-            axes = [axes]
-        
-        for i, dataset in enumerate(self.datasets):
-            # Calculate model
-            if dataset.lsf_params:
-                model_flux = self.model.evaluate(
-                    self.best_fit, dataset.wavelength,
-                    FWHM=dataset.lsf_params.get('FWHM', '6.5')
-                )
-            else:
-                model_flux = self.model.evaluate(self.best_fit, dataset.wavelength)
-            
-            # Main plot
-            ax_main = axes[i * (2 if show_residuals else 1)]
-            
-            # Determine x-axis (wavelength or velocity)
-            if velocity_space and len(self.ion_groups) == 1:
-                # Convert to velocity space for single ion
-                ion_group = list(self.ion_groups.values())[0]
-                rest_wave = ion_group.transitions[0]  # Use first transition
-                z_abs = ion_group.redshift
-                
-                # Convert to velocity
-                c = 299792.458  # km/s
-                x_data = c * (dataset.wavelength / (rest_wave * (1 + z_abs)) - 1)
-                x_label = 'Velocity (km/s)'
-                
-                # Mark component velocities
-                for comp_idx in range(ion_group.components):
-                    v_key = f"v_{comp_idx}"
-                    if v_key in ion_group.parameters:
-                        v_comp = ion_group.parameters[v_key].best_fit
-                        ax_main.axvline(v_comp, color='orange', linestyle='--', alpha=0.7, linewidth=1)
-                        ax_main.text(v_comp, 1.05, f'C{comp_idx+1}', ha='center', fontsize=8)
-            else:
-                x_data = dataset.wavelength
-                x_label = 'Wavelength (Å)'
-                
-                # Mark transition locations
-                for ion_group in self.ion_groups.values():
-                    for trans_wave in ion_group.transitions:
-                        obs_wave = trans_wave * (1 + ion_group.redshift)
-                        if min(x_data) <= obs_wave <= max(x_data):
-                            ax_main.axvline(obs_wave, color='red', linestyle=':', alpha=0.5, linewidth=1)
-                            ax_main.text(obs_wave, 1.05, f'{trans_wave:.0f}', ha='center', fontsize=8, rotation=90)
-            
-            # Plot data
-            ax_main.step(x_data, dataset.flux, 'k-', where='mid',
-                        label='Observed', alpha=0.7, linewidth=1)
-            ax_main.step(x_data, dataset.error, 'gray', where='mid',
-                        alpha=0.3, linewidth=0.5, label='Error')
-            
-            # Plot model
-            ax_main.plot(x_data, model_flux, 'r-', 
-                        label='Best fit', linewidth=2)
-            
-            # Plot individual components if requested and available
-            if show_components:
-                try:
-                    # This requires model to support component evaluation
-                    component_fluxes = self.model.evaluate(
-                        self.best_fit, dataset.wavelength, return_components=True
-                    )
-                    if isinstance(component_fluxes, dict) and 'components' in component_fluxes:
-                        for j, comp_flux in enumerate(component_fluxes['components']):
-                            ax_main.plot(x_data, comp_flux, ':', alpha=0.7, linewidth=1,
-                                       label=f'Component {j+1}')
-                except:
-                    pass  # Skip if model doesn't support component decomposition
-            
-            ax_main.set_ylabel('Normalized Flux')
-            ax_main.set_title(f'Dataset {i+1}: {dataset.name}')
-            ax_main.legend()
-            ax_main.grid(True, alpha=0.3)
-            ax_main.set_ylim(0, 1.2)
-            
-            # Residuals plot
-            if show_residuals:
-                ax_resid = axes[i * 2 + 1]
-                residuals = (dataset.flux - model_flux) / dataset.error
-                
-                ax_resid.step(x_data, residuals, 'k-', where='mid',
-                             alpha=0.7, linewidth=1)
-                ax_resid.axhline(0, color='r', linestyle='--', alpha=0.7)
-                ax_resid.axhline(1, color='gray', linestyle=':', alpha=0.5)
-                ax_resid.axhline(-1, color='gray', linestyle=':', alpha=0.5)
-                
-                ax_resid.set_ylabel('Residuals (σ)')
-                ax_resid.grid(True, alpha=0.3)
-                
-                # Calculate residual statistics
-                rms = np.sqrt(np.mean(residuals**2))
-                mean_resid = np.mean(residuals)
-                ax_resid.text(0.02, 0.95, f'RMS = {rms:.2f}\nMean = {mean_resid:.2f}', 
-                             transform=ax_resid.transAxes, 
-                             verticalalignment='top',
-                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        axes[-1].set_xlabel(x_label)
-        
-        # Add summary title
-        n_ions = len(self.ion_groups)
-        n_components = sum(ig.components for ig in self.ion_groups.values())
-        plt.suptitle(f'Multi-Ion Fit: {n_ions} ion groups, {n_components} components, '
-                    f'χ²/ν = {self.reduced_chi2:.2f}', fontsize=12, y=0.98)
-        
-        plt.tight_layout()
-        
-        if save_path:
-            fig.savefig(save_path, dpi=300, bbox_inches='tight')
-            
-        return fig
-    
-    def compare_models(self, other_result: 'FitResults') -> Dict[str, float]:
-        """
-        Compare this fit with another fit result with ion tying awareness.
-        
-        Parameters
-        ----------
-        other_result : FitResults
-            Other fit result to compare with
+            Base path for saving figures (will append ion names)
+        velocity_range : tuple, optional
+            Velocity range (vmin, vmax) in km/s for all plots
+        **kwargs
+            Additional plotting parameters
             
         Returns
         -------
         dict
-            Comparison metrics including tying-aware statistics
+            Dictionary mapping ion names to their figure objects
         """
-        comparison = {
-            'delta_aic': other_result.aic - self.aic,
-            'delta_bic': other_result.bic - self.bic,
-            'delta_chi2': other_result.chi2_best - self.chi2_best,
-            'delta_reduced_chi2': other_result.reduced_chi2 - self.reduced_chi2
+        # Detect ions and instruments from model and data
+        ion_info = self._detect_ions_and_instruments()
+        
+        if not ion_info:
+            print("❌ No ion information could be extracted from model")
+            return {}
+        
+        print(f"📊 Creating velocity plots for {len(ion_info)} ion group(s)")
+        
+        figures = {}
+        
+        for ion_key, ion_data in ion_info.items():
+            print(f"  📈 Plotting {ion_data['ion_name']} at z={ion_data['redshift']:.6f}")
+            
+            # Create figure for this ion
+            fig = self._create_ion_velocity_figure(
+                ion_data, show_components, show_rail_system, 
+                figsize_per_panel, velocity_range, **kwargs
+            )
+            
+            figures[ion_key] = fig
+            
+            # Save individual figure if requested
+            if save_path:
+                ion_filename = f"{save_path}_{ion_data['ion_name']}_z{ion_data['redshift']:.3f}.pdf"
+                fig.savefig(ion_filename, dpi=300, bbox_inches='tight')
+                print(f"  ✅ Saved {ion_data['ion_name']} plot to {ion_filename}")
+        
+        if not save_path:
+            plt.show()
+        
+        return figures
+    
+    def _detect_ions_and_instruments(self) -> Dict[str, Dict]:
+        """
+        Detect ion groups and instruments from model configuration and data.
+        
+        Returns
+        -------
+        dict
+            Dictionary mapping ion keys to ion information
+        """
+        ion_info = {}
+        
+        # Try to get ion information from model configuration
+        if hasattr(self.model, 'config') and self.model.config is not None:
+            try:
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    for ion_group in system.ion_groups:
+                        ion_key = f"{ion_group.ion_name}_z{system.redshift:.6f}"
+                        
+                        ion_info[ion_key] = {
+                            'ion_name': ion_group.ion_name,
+                            'redshift': system.redshift,
+                            'transitions': ion_group.transitions,
+                            'components': ion_group.components,
+                            'system_idx': sys_idx
+                        }
+                        
+            except Exception as e:
+                print(f"⚠️ Could not extract ion info from model config: {e}")
+        
+        # Detect instruments
+        instruments = ['Primary']
+        if self.is_multi_instrument and self.instrument_data:
+            instruments = [name for name in self.instrument_data.keys() if name != 'main']
+            if 'main' in self.instrument_data:
+                instruments = ['Primary'] + [name for name in instruments if name != 'Primary']
+        
+        # Add instrument info to each ion
+        for ion_key in ion_info:
+            ion_info[ion_key]['instruments'] = instruments
+        
+        return ion_info
+    
+    def _create_ion_velocity_figure(self, ion_data: Dict, show_components: bool,
+                                   show_rail_system: bool, figsize_per_panel: Tuple[float, float],
+                                   velocity_range: Optional[Tuple[float, float]], **kwargs) -> plt.Figure:
+        """
+        Create velocity space figure for a single ion group.
+        
+        Layout: transitions (rows) × instruments (columns)
+        """
+        transitions = ion_data['transitions']
+        instruments = ion_data['instruments']
+        ion_name = ion_data['ion_name']
+        redshift = ion_data['redshift']
+        
+        n_transitions = len(transitions)
+        n_instruments = len(instruments)
+        
+        # Calculate figure size
+        fig_width = figsize_per_panel[0] * n_instruments
+        fig_height = figsize_per_panel[1] * n_transitions
+        
+        # Create subplot grid
+        fig, axes = plt.subplots(n_transitions, n_instruments, 
+                                figsize=(fig_width, fig_height))
+        
+        # Handle single subplot cases
+        if n_transitions == 1 and n_instruments == 1:
+            axes = [[axes]]
+        elif n_transitions == 1:
+            axes = [axes]
+        elif n_instruments == 1:
+            axes = [[ax] for ax in axes]
+        
+        # Get model parameters for this ion
+        summary = self.parameter_summary(verbose=False)
+        ion_params = self._extract_ion_parameters(ion_data, summary)
+        
+        # Plot each transition × instrument combination
+        for i, transition in enumerate(transitions):
+            for j, instrument in enumerate(instruments):
+                ax = axes[i][j]
+                
+                # Get data for this instrument
+                if instrument == 'Primary':
+                    wave_data = self.fitter.wave_obs
+                    flux_data = self.fitter.fnorm
+                    error_data = self.fitter.enorm
+                else:
+                    inst_data = self.instrument_data[instrument]
+                    wave_data = inst_data['wave']
+                    flux_data = inst_data['flux']
+                    error_data = inst_data['error']
+                
+                # Convert to velocity space for this transition
+                velocity = self._wavelength_to_velocity(wave_data, transition, redshift)
+                
+                # Plot data and model for this panel
+                self._plot_velocity_panel(
+                    ax, velocity, flux_data, error_data,
+                    ion_data, transition, instrument, ion_params,
+                    show_components, show_rail_system and (i == 0),  # Rail only on top row
+                    velocity_range, **kwargs
+                )
+                
+                # Panel labeling
+                if i == 0:  # Top row
+                    ax.set_title(f'{instrument}', fontsize=12, weight='bold')
+                if j == 0:  # Left column
+                    ax.set_ylabel(f'{transition:.1f} Å\nNormalized Flux', fontsize=10)
+                if i == n_transitions - 1:  # Bottom row
+                    ax.set_xlabel('Velocity (km/s)', fontsize=10)
+        
+        # Overall figure title
+        convergence = self.convergence_diagnostics(verbose=False)
+        status = convergence['overall_status']
+        status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        
+        fig.suptitle(f'{status_symbol.get(status, "?")} {ion_name} at z = {redshift:.6f}\n'
+                    f'rbvfit 2.0: {ion_data["components"]} component(s), {status} convergence',
+                    fontsize=14, y=0.98)
+        
+        plt.tight_layout()
+        return fig
+    
+    def _extract_ion_parameters(self, ion_data: Dict, summary) -> Dict:
+        """Extract parameters for specific ion group."""
+        ion_name = ion_data['ion_name']
+        redshift = ion_data['redshift']
+        components = ion_data['components']
+        
+        # Find parameters matching this ion
+        ion_params = {
+            'N': [], 'b': [], 'v': [],
+            'N_err': [], 'b_err': [], 'v_err': []
         }
         
-        # Add tying-aware comparisons if available
-        if hasattr(self, 'aic_effective') and hasattr(other_result, 'aic_effective'):
-            comparison['delta_aic_effective'] = other_result.aic_effective - self.aic_effective
-            comparison['delta_bic_effective'] = other_result.bic_effective - self.bic_effective
+        for i, name in enumerate(summary.names):
+            # Check if parameter belongs to this ion
+            if (ion_name in name and 
+                f"z{redshift:.3f}" in name and
+                any(f"c{c}" in name for c in range(components))):
+                
+                if name.startswith('N_'):
+                    ion_params['N'].append(summary.best_fit[i])
+                    ion_params['N_err'].append(summary.errors[i])
+                elif name.startswith('b_'):
+                    ion_params['b'].append(summary.best_fit[i])
+                    ion_params['b_err'].append(summary.errors[i])
+                elif name.startswith('v_'):
+                    ion_params['v'].append(summary.best_fit[i])
+                    ion_params['v_err'].append(summary.errors[i])
         
-        # Interpretation
-        if comparison['delta_aic'] > 10:
-            comparison['aic_preference'] = 'strong evidence for this model'
-        elif comparison['delta_aic'] > 2:
-            comparison['aic_preference'] = 'moderate evidence for this model'
-        elif comparison['delta_aic'] < -10:
-            comparison['aic_preference'] = 'strong evidence for other model'
-        elif comparison['delta_aic'] < -2:
-            comparison['aic_preference'] = 'moderate evidence for other model'
-        else:
-            comparison['aic_preference'] = 'models comparable'
+        # Convert to arrays and sort by component index
+        for key in ion_params:
+            ion_params[key] = np.array(ion_params[key])
         
-        return comparison
+        return ion_params
     
-    def export_ion_table(self, format: str = 'latex', save_path: Optional[str] = None) -> str:
+    def _wavelength_to_velocity(self, wavelength: np.ndarray, rest_wavelength: float, 
+                               redshift: float) -> np.ndarray:
+        """Convert wavelength to velocity space relative to transition."""
+        c_kms = 299792.458  # km/s
+        
+        # Expected observed wavelength at systemic redshift
+        lambda_sys = rest_wavelength * (1 + redshift)
+        
+        # Convert to velocity relative to systemic
+        velocity = c_kms * (wavelength / lambda_sys - 1)
+        
+        return velocity
+    
+    def _plot_velocity_panel(self, ax, velocity: np.ndarray, flux: np.ndarray, 
+                           error: np.ndarray, ion_data: Dict, transition: float,
+                           instrument: str, ion_params: Dict, show_components: bool,
+                           show_rail: bool, velocity_range: Optional[Tuple[float, float]], **kwargs):
+        """Plot data and model for a single velocity panel."""
+        
+        # Plot data
+        ax.step(velocity, flux, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
+        ax.step(velocity, error, 'gray', where='mid', alpha=0.3, linewidth=0.5)
+        
+        # Plot model if possible
+        try:
+            # Get corresponding wavelength array
+            rest_wavelength = transition
+            redshift = ion_data['redshift']
+            c_kms = 299792.458
+            lambda_sys = rest_wavelength * (1 + redshift)
+            wavelength = lambda_sys * (1 + velocity / c_kms)
+            
+            # Evaluate model
+            summary = self.parameter_summary(verbose=False)
+            model_flux = self.model.evaluate(summary.best_fit, wavelength)
+            
+            ax.plot(velocity, model_flux, 'r-', linewidth=2, label='Best Fit')
+            
+            # Plot individual components if requested
+            if show_components and len(ion_params['v']) > 0:
+                self._add_component_profiles(ax, velocity, wavelength, ion_data, 
+                                           transition, ion_params)
+            
+        except Exception as e:
+            print(f"⚠️ Could not evaluate model for {instrument} {transition:.1f}Å: {e}")
+        
+        # Add rail system for component positions
+        if show_rail and len(ion_params['v']) > 0:
+            self._add_rail_system(ax, ion_params, velocity_range)
+        
+        # Format panel
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim(0, 1.2)
+        
+        if velocity_range:
+            ax.set_xlim(velocity_range)
+        else:
+            # Auto-range around components
+            if len(ion_params['v']) > 0:
+                v_center = np.mean(ion_params['v'])
+                v_range = max(200, np.ptp(ion_params['v']) * 2)
+                ax.set_xlim(v_center - v_range, v_center + v_range)
+        
+        # Add zero velocity reference
+        ax.axvline(0, color='gray', linestyle=':', alpha=0.5, linewidth=1)
+    
+    def _add_component_profiles(self, ax, velocity: np.ndarray, wavelength: np.ndarray,
+                              ion_data: Dict, transition: float, ion_params: Dict):
+        """Add individual component Voigt profiles to plot."""
+        try:
+            # This would require access to individual component evaluation
+            # For now, just mark component positions
+            colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink']
+            
+            for i, (v_comp, N_comp, b_comp) in enumerate(zip(
+                ion_params['v'], ion_params['N'], ion_params['b']
+            )):
+                color = colors[i % len(colors)]
+                
+                # Add vertical line at component velocity
+                ax.axvline(v_comp, color=color, linestyle='--', alpha=0.7, 
+                          linewidth=2, label=f'Comp {i+1}')
+                
+                # Add component info text
+                if i < 3:  # Only label first 3 components to avoid clutter
+                    y_pos = 0.9 - i * 0.15
+                    ax.text(0.02, y_pos, f'C{i+1}: N={N_comp:.2f}, b={b_comp:.0f}', 
+                           transform=ax.transAxes, fontsize=8, color=color,
+                           bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+                           
+        except Exception as e:
+            print(f"⚠️ Could not add component profiles: {e}")
+    
+    def _add_rail_system(self, ax, ion_params: Dict, velocity_range: Optional[Tuple[float, float]]):
+        """Add rail system showing component velocity positions."""
+        if len(ion_params['v']) == 0:
+            return
+            
+        # Rail positioning
+        y_rail = 1.05
+        rail_height = 0.03
+        tick_height = 0.02
+        
+        # Component colors
+        colors = ['blue', 'green', 'orange', 'purple', 'brown', 'pink']
+        
+        # Determine rail extent
+        if velocity_range:
+            rail_start, rail_end = velocity_range
+        else:
+            v_min, v_max = np.min(ion_params['v']), np.max(ion_params['v'])
+            v_range = max(100, v_max - v_min)
+            rail_start = v_min - v_range * 0.2
+            rail_end = v_max + v_range * 0.2
+        
+        # Draw horizontal rail
+        ax.plot([rail_start, rail_end], [y_rail, y_rail], 
+               color='gray', linewidth=3, alpha=0.7)
+        
+        # Add component ticks and labels
+        for i, (v_comp, v_err) in enumerate(zip(ion_params['v'], ion_params['v_err'])):
+            color = colors[i % len(colors)]
+            
+            # Vertical tick at component position
+            ax.plot([v_comp, v_comp], [y_rail - tick_height, y_rail + tick_height],
+                   color=color, linewidth=3, alpha=0.8)
+            
+            # Error bar if available
+            if v_err > 0:
+                ax.plot([v_comp - v_err, v_comp + v_err], [y_rail, y_rail],
+                       color=color, linewidth=2, alpha=0.5)
+            
+            # Component label
+            ax.text(v_comp, y_rail + tick_height + 0.01, f'C{i+1}', 
+                   ha='center', va='bottom', fontsize=9, color=color, weight='bold')
+        
+        # Adjust y-limits to accommodate rail
+        current_ylim = ax.get_ylim()
+        ax.set_ylim(current_ylim[0], max(current_ylim[1], y_rail + 0.08))
+    
+    # =============================================================================
+    # PHASE IV: Export Functionality
+    # =============================================================================
+    
+    def export_csv(self, filename: Union[str, Path], include_errors: bool = True) -> None:
         """
-        Export ion-organized parameter table for publication.
+        Export parameter results to CSV format.
         
         Parameters
         ----------
-        format : str
-            Output format ('latex', 'ascii', 'csv')
-        save_path : str, optional
-            Path to save the table
-            
-        Returns
-        -------
-        str
-            Formatted table string
+        filename : str or Path
+            Output CSV filename
+        include_errors : bool
+            Whether to include error columns
         """
-        lines = []
+        filename = Path(filename)
+        filename.parent.mkdir(parents=True, exist_ok=True)
         
-        if format == 'latex':
-            lines.extend([
-                r"\begin{table}[h]",
-                r"\centering",
-                r"\begin{tabular}{lcccccc}",
-                r"\hline",
-                r"Ion & $z$ & Comp & $\log N$ & $b$ & $v$ & Transitions \\",
-                r"    &     &      & [cm$^{-2}$] & [km s$^{-1}$] & [km s$^{-1}$] & [\AA] \\",
-                r"\hline"
-            ])
+        if not HAS_PANDAS:
+            # Fallback to basic CSV writing
+            self._export_csv_basic(filename, include_errors)
+            return
+        
+        # Use pandas for better formatting
+        summary = self.parameter_summary(verbose=False)
+        
+        # Create DataFrame
+        data = {
+            'parameter': summary.names,
+            'best_fit': summary.best_fit,
+            'mean': summary.mean,
+            'std': summary.std
+        }
+        
+        if include_errors:
+            data.update({
+                'lower_error': summary.best_fit - summary.percentiles['16th'],
+                'upper_error': summary.percentiles['84th'] - summary.best_fit,
+                'percentile_16': summary.percentiles['16th'],
+                'percentile_84': summary.percentiles['84th']
+            })
+        
+        df = pd.DataFrame(data)
+        
+        # Add metadata as comments
+        with open(filename, 'w') as f:
+            f.write(f"# rbvfit 2.0 Parameter Export\n")
+            f.write(f"# Sampler: {self.sampler_name}\n")
+            f.write(f"# Walkers: {self.n_walkers}\n")
+            f.write(f"# Steps: {self.n_steps}\n")
             
-            for key, ion_group in self.ion_groups.items():
-                redshift, ion_name = key
-                trans_str = ", ".join(f"{w:.0f}" for w in ion_group.transitions)
+            convergence = self.convergence_diagnostics(verbose=False)
+            f.write(f"# Convergence: {convergence['overall_status']}\n")
+            
+            chi2_stats = self.chi_squared()
+            if not np.isnan(chi2_stats['chi2']):
+                f.write(f"# Chi-squared: {chi2_stats['chi2']:.2f}\n")
+                f.write(f"# Reduced chi-squared: {chi2_stats['reduced_chi2']:.3f}\n")
+            
+            f.write("#\n")
+        
+        # Append DataFrame
+        df.to_csv(filename, mode='a', index=False, float_format='%.6f')
+        
+        print(f"✅ Exported parameters to {filename}")
+    
+    def _export_csv_basic(self, filename: Path, include_errors: bool):
+        """Basic CSV export without pandas."""
+        summary = self.parameter_summary(verbose=False)
+        
+        with open(filename, 'w') as f:
+            # Header
+            f.write("parameter,best_fit,mean,std")
+            if include_errors:
+                f.write(",lower_error,upper_error,percentile_16,percentile_84")
+            f.write("\n")
+            
+            # Data rows
+            for i, name in enumerate(summary.names):
+                row = [name, f"{summary.best_fit[i]:.6f}", 
+                      f"{summary.mean[i]:.6f}", f"{summary.std[i]:.6f}"]
                 
-                for comp_idx in range(ion_group.components):
-                    N_key = f"N_{comp_idx}"
-                    b_key = f"b_{comp_idx}"
-                    v_key = f"v_{comp_idx}"
-                    
-                    N_param = ion_group.parameters.get(N_key)
-                    b_param = ion_group.parameters.get(b_key)
-                    v_param = ion_group.parameters.get(v_key)
-                    
-                    if N_param and b_param and v_param:
-                        ion_col = ion_name if comp_idx == 0 else ""
-                        z_col = f"{redshift:.6f}" if comp_idx == 0 else ""
-                        trans_col = trans_str if comp_idx == 0 else ""
-                        
-                        lines.append(
-                            f"{ion_col} & {z_col} & {comp_idx+1} & "
-                            f"{N_param.best_fit:.2f}$_{{-{N_param.lower_error:.2f}}}^{{+{N_param.upper_error:.2f}}}$ & "
-                            f"{b_param.best_fit:.1f}$_{{-{b_param.lower_error:.1f}}}^{{+{b_param.upper_error:.1f}}}$ & "
-                            f"{v_param.best_fit:.1f}$_{{-{v_param.lower_error:.1f}}}^{{+{v_param.upper_error:.1f}}}$ & "
-                            f"{trans_col} \\\\"
-                        )
-            
-            lines.extend([
-                r"\hline",
-                r"\end{tabular}",
-                r"\caption{MCMC fit results for absorption line systems}",
-                r"\label{tab:absorption_results}",
-                r"\end{table}"
-            ])
-        
-        elif format == 'csv':
-            lines.append("Ion,Redshift,Component,logN,logN_err_low,logN_err_high,b,b_err_low,b_err_high,v,v_err_low,v_err_high,Transitions")
-            
-            for key, ion_group in self.ion_groups.items():
-                redshift, ion_name = key
-                trans_str = ";".join(f"{w:.1f}" for w in ion_group.transitions)
+                if include_errors:
+                    lower_err = summary.best_fit[i] - summary.percentiles['16th'][i]
+                    upper_err = summary.percentiles['84th'][i] - summary.best_fit[i]
+                    row.extend([
+                        f"{lower_err:.6f}", f"{upper_err:.6f}",
+                        f"{summary.percentiles['16th'][i]:.6f}",
+                        f"{summary.percentiles['84th'][i]:.6f}"
+                    ])
                 
-                for comp_idx in range(ion_group.components):
-                    N_key = f"N_{comp_idx}"
-                    b_key = f"b_{comp_idx}"
-                    v_key = f"v_{comp_idx}"
+                f.write(",".join(row) + "\n")
+        
+        print(f"✅ Exported parameters to {filename}")
+    
+    def export_latex(self, filename: Union[str, Path], 
+                    table_format: str = 'standard',
+                    caption: str = "MCMC fit results for absorption line systems",
+                    label: str = "tab:absorption_results") -> None:
+        """
+        Export parameter results to LaTeX table format.
+        
+        Parameters
+        ----------
+        filename : str or Path
+            Output LaTeX filename
+        table_format : str
+            Table format: 'standard', 'compact', or 'publication'
+        caption : str
+            Table caption
+        label : str
+            Table label for referencing
+        """
+        filename = Path(filename)
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        summary = self.parameter_summary(verbose=False)
+        
+        with open(filename, 'w') as f:
+            # Table header
+            f.write("\\begin{table}[h]\n")
+            f.write("\\centering\n")
+            
+            if table_format == 'compact':
+                f.write("\\begin{tabular}{lccc}\n")
+                f.write("\\hline\n")
+                f.write("Parameter & Value & Error & Units \\\\\n")
+                f.write("\\hline\n")
+                
+                for i, name in enumerate(summary.names):
+                    # Parse parameter for units
+                    if name.startswith('N_'):
+                        units = "[cm$^{-2}$]"
+                        value_str = f"{summary.best_fit[i]:.2f}"
+                    elif name.startswith('b_'):
+                        units = "[km s$^{-1}$]"
+                        value_str = f"{summary.best_fit[i]:.1f}"
+                    elif name.startswith('v_'):
+                        units = "[km s$^{-1}$]"
+                        value_str = f"{summary.best_fit[i]:.1f}"
+                    else:
+                        units = ""
+                        value_str = f"{summary.best_fit[i]:.3f}"
                     
-                    N_param = ion_group.parameters.get(N_key)
-                    b_param = ion_group.parameters.get(b_key)
-                    v_param = ion_group.parameters.get(v_key)
+                    error_str = f"{summary.errors[i]:.2f}"
                     
-                    if N_param and b_param and v_param:
-                        lines.append(
-                            f"{ion_name},{redshift:.6f},{comp_idx+1},"
-                            f"{N_param.best_fit:.3f},{N_param.lower_error:.3f},{N_param.upper_error:.3f},"
-                            f"{b_param.best_fit:.1f},{b_param.lower_error:.1f},{b_param.upper_error:.1f},"
-                            f"{v_param.best_fit:.1f},{v_param.lower_error:.1f},{v_param.upper_error:.1f},"
-                            f"{trans_str}"
-                        )
+                    # Clean parameter name for LaTeX
+                    param_name = name.replace('_', '\\_')
+                    
+                    f.write(f"{param_name} & {value_str} & {error_str} & {units} \\\\\n")
+                    
+            elif table_format == 'publication':
+                f.write("\\begin{tabular}{lcccc}\n")
+                f.write("\\hline\n")
+                f.write("Ion & $z$ & Component & $\\log N$ & $b$ & $v$ \\\\\n")
+                f.write("   &     &           & [cm$^{-2}$] & [km s$^{-1}$] & [km s$^{-1}$] \\\\\n")
+                f.write("\\hline\n")
+                
+                # Try to organize by ions
+                self._write_publication_table_rows(f, summary)
+                
+            else:  # standard
+                f.write("\\begin{tabular}{lcc}\n")
+                f.write("\\hline\n")
+                f.write("Parameter & Best Fit & $1\\sigma$ Error \\\\\n")
+                f.write("\\hline\n")
+                
+                for i, name in enumerate(summary.names):
+                    param_name = name.replace('_', '\\_')
+                    lower_err = summary.best_fit[i] - summary.percentiles['16th'][i]
+                    upper_err = summary.percentiles['84th'][i] - summary.best_fit[i]
+                    
+                    value_str = f"{summary.best_fit[i]:.3f}$_{{-{lower_err:.3f}}}^{{+{upper_err:.3f}}}$"
+                    error_str = f"{summary.errors[i]:.3f}"
+                    
+                    f.write(f"{param_name} & {value_str} & {error_str} \\\\\n")
+            
+            # Table footer
+            f.write("\\hline\n")
+            f.write("\\end{tabular}\n")
+            f.write(f"\\caption{{{caption}}}\n")
+            f.write(f"\\label{{{label}}}\n")
+            f.write("\\end{table}\n")
         
-        result = "\n".join(lines)
+        print(f"✅ Exported LaTeX table to {filename}")
+    
+    def _write_publication_table_rows(self, f, summary):
+        """Write publication-format table rows organized by ions."""
+        # Try to extract ion information
+        ion_info = self._detect_ions_and_instruments()
         
-        if save_path:
-            Path(save_path).write_text(result)
+        if not ion_info:
+            # Fallback to simple parameter listing
+            for i, name in enumerate(summary.names):
+                param_name = name.replace('_', '\\_')
+                f.write(f"{param_name} & & & {summary.best_fit[i]:.3f} & & \\\\\n")
+            return
         
-        return result
+        for ion_key, ion_data in ion_info.items():
+            ion_name = ion_data['ion_name']
+            redshift = ion_data['redshift']
+            components = ion_data['components']
+            
+            # Extract parameters for this ion
+            ion_params = self._extract_ion_parameters(ion_data, summary)
+            
+            for comp_idx in range(components):
+                if comp_idx < len(ion_params['N']):
+                    # Show ion name only for first component
+                    ion_col = ion_name if comp_idx == 0 else ""
+                    z_col = f"{redshift:.6f}" if comp_idx == 0 else ""
+                    
+                    N_val = ion_params['N'][comp_idx]
+                    N_err = ion_params['N_err'][comp_idx]
+                    b_val = ion_params['b'][comp_idx]
+                    b_err = ion_params['b_err'][comp_idx]
+                    v_val = ion_params['v'][comp_idx]
+                    v_err = ion_params['v_err'][comp_idx]
+                    
+                    f.write(f"{ion_col} & {z_col} & {comp_idx+1} & "
+                           f"{N_val:.2f}$\\pm${N_err:.2f} & "
+                           f"{b_val:.1f}$\\pm${b_err:.1f} & "
+                           f"{v_val:.1f}$\\pm${v_err:.1f} \\\\\n")
+    
+    def export_summary_report(self, filename: Union[str, Path], 
+                            include_plots: bool = True) -> None:
+        """
+        Export comprehensive summary report with all results.
+        
+        Parameters
+        ----------
+        filename : str or Path
+            Output text filename
+        include_plots : bool
+            Whether to save plots alongside the report
+        """
+        filename = Path(filename)
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(filename, 'w') as f:
+            f.write("=" * 80 + "\n")
+            f.write("RBVFIT 2.0 COMPREHENSIVE FIT REPORT\n")
+            f.write("=" * 80 + "\n\n")
+            
+            # Basic information
+            f.write("BASIC INFORMATION\n")
+            f.write("-" * 40 + "\n")
+            f.write(f"Sampler: {self.sampler_name}\n")
+            f.write(f"Walkers: {self.n_walkers}\n")
+            f.write(f"Steps: {self.n_steps}\n")
+            f.write(f"Multi-instrument: {self.is_multi_instrument}\n")
+            
+            if self.is_multi_instrument:
+                n_instruments = len(self.instrument_data) if self.instrument_data else 1
+                f.write(f"Number of instruments: {n_instruments}\n")
+            
+            f.write("\n")
+            
+            # Model configuration
+            f.write("MODEL CONFIGURATION\n")
+            f.write("-" * 40 + "\n")
+            if hasattr(self.model, 'config') and self.model.config is not None:
+                try:
+                    for i, system in enumerate(self.model.config.systems):
+                        f.write(f"System {i+1}: z = {system.redshift:.6f}\n")
+                        for ion_group in system.ion_groups:
+                            transitions_str = ", ".join(f"{w:.1f}" for w in ion_group.transitions)
+                            f.write(f"  {ion_group.ion_name}: [{transitions_str}] Å, {ion_group.components} components\n")
+                except Exception:
+                    f.write("Configuration information not available\n")
+            else:
+                f.write("Model configuration not available\n")
+            
+            f.write("\n")
+            
+            # Convergence diagnostics
+            f.write("CONVERGENCE DIAGNOSTICS\n")
+            f.write("-" * 40 + "\n")
+            convergence = self.convergence_diagnostics(verbose=False)
+            status = convergence['overall_status']
+            f.write(f"Overall Status: {status}\n\n")
+            
+            for i, rec in enumerate(convergence['recommendations'], 1):
+                # Remove emojis for text file
+                clean_rec = rec.encode('ascii', 'ignore').decode('ascii')
+                f.write(f"{i}. {clean_rec}\n")
+            
+            f.write("\n")
+            
+            # Chi-squared statistics
+            f.write("GOODNESS OF FIT\n")
+            f.write("-" * 40 + "\n")
+            chi2_stats = self.chi_squared()
+            if not np.isnan(chi2_stats['chi2']):
+                f.write(f"Chi-squared: {chi2_stats['chi2']:.2f}\n")
+                f.write(f"Degrees of freedom: {chi2_stats['dof']}\n")
+                f.write(f"Reduced chi-squared: {chi2_stats['reduced_chi2']:.3f}\n")
+                
+                if self.is_multi_instrument and 'chi2_total' in chi2_stats:
+                    f.write(f"Combined chi-squared: {chi2_stats['chi2_total']:.2f}\n")
+                    f.write(f"Combined reduced chi-squared: {chi2_stats['reduced_chi2_total']:.3f}\n")
+            else:
+                f.write("Chi-squared statistics not available\n")
+            
+            f.write("\n")
+            
+            # Parameter summary
+            #f.write("PARAMETER SUMMARY\n")
+            #f.write("-" * 40 + "\n")
+            #summary = self.parameter_summary("""
+
+
+
+# =============================================================================
+# Convenience Functions
+# =============================================================================
+
+def save_fit_results(fitter, model, filename: Union[str, Path]) -> None:
+    """
+    Convenience function to save fit results.
+    
+    Parameters
+    ----------
+    fitter : vfit
+        MCMC fitter object
+    model : VoigtModel
+        rbvfit 2.0 model object
+    filename : str or Path
+        Output HDF5 filename
+    """
+    results = FitResults(fitter, model)
+    results.save(filename)
+
+
+def load_fit_results(filename: Union[str, Path]) -> FitResults:
+    """
+    Convenience function to load fit results.
+    
+    Parameters
+    ----------
+    filename : str or Path
+        HDF5 filename to load
+        
+    Returns
+    -------
+    FitResults
+        Loaded fit results object
+    """
+    return FitResults.load(filename)

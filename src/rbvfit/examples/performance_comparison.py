@@ -384,14 +384,11 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
     # v2 regular MCMC setup
     if V2_AVAILABLE and v2_model is not None:
         # Generate synthetic data using v2 model
-        observed_flux, error, _ = generate_synthetic_data(
-            lambda theta, wave: v2_model.evaluate(theta, wave), theta, wave
-        )
+        observed_flux, error, _ = generate_synthetic_data(v2_model.evaluate, theta, wave)
         
         if observed_flux is not None:
             def v2_mcmc_setup():
-                return v1_mcmc.vfit(  # Using same vfit_mcmc interface
-                    lambda theta, wave: v2_model.evaluate(theta, wave),
+                return v1_mcmc.vfit(v2_model.evaluate,
                     theta, lb, ub,
                     wave, observed_flux, error,
                     no_of_Chain=50,
@@ -447,8 +444,8 @@ def benchmark_mcmc_serial_vs_parallel(profiler: PerformanceProfiler, mcmc_config
     print("=" * 60)
     
     # MCMC settings
-    n_steps = 300  # Reasonable for timing
-    n_walkers = 16
+    n_steps = 500  # Reasonable for timing
+    n_walkers = 50
     
     print(f"Running {n_steps} MCMC steps with {n_walkers} walkers...")
     print("Testing both serial (use_pool=False) and parallel (use_pool=True) modes")

@@ -87,11 +87,12 @@ fitter = mc.vfit(
     )
         
 # Run MCMC
-#fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+
+
 #plot corner     
 #fitter.plot_corner()
-
-fitter.fit_quick() 
+#fitter.fit_quick() 
 
 elapsed_time=time.time()-start_time        
 print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
@@ -100,5 +101,30 @@ print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
 
 
 #plot models
-mc.plot_model(v2_model,fitter,show_residuals=True)
+#mc.plot_model(v2_model,fitter,show_residuals=True)
 
+
+# New modules for better analysis and model plotting
+
+from rbvfit.core import fit_results as f
+# Save results
+results = f.FitResults(fitter, v2_model)
+#results.save('my_fit.h5')
+
+# Load and analyze
+#results = f.FitResults.load('my_fit.h5')
+results.print_fit_summary()
+#results.corner_plot()#save_path='corner.pdf')
+#results.convergence_diagnostics()
+
+# Visual chain inspection
+#results.chain_trace_plot()#save_path='trace_plots.pdf')
+
+# This is the main new feature - velocity space plots by ion!
+#velocity_plots = results.plot_velocity_fits(
+#    show_components=True,      # Show individual components
+#    show_rail_system=True     # Show component position markers
+#)
+
+# For single ion systems, also try velocity range control:
+results.plot_velocity_fits(velocity_range=(-600, 600))

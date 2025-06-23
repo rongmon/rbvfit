@@ -10,6 +10,7 @@ Phase II: Analysis (convergence diagnostics, correlation matrix, corner plots)
 
 from __future__ import annotations
 from typing import Dict, List, Tuple, Optional, Any, Union
+
 import numpy as np
 import h5py
 import json
@@ -19,6 +20,7 @@ from dataclasses import dataclass
 
 # Core dependencies
 import matplotlib.pyplot as plt
+
 from scipy.stats import chi2
 
 # Optional dependencies with fallbacks
@@ -1016,13 +1018,12 @@ class FitResults:
             figsize = (4 * n_cols, 3 * n_rows)
         
         fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
-        if n_params == 1:
-            axes = [axes]
-        elif n_rows == 1:
-            axes = [axes]
-        else:
+
+        # Normalize axes to a flat list
+        if isinstance(axes, np.ndarray):
             axes = axes.flatten()
-        
+        else:
+            axes = [axes]        
         # Plot each parameter
         for i in range(n_params):
             ax = axes[i]
@@ -1063,13 +1064,17 @@ class FitResults:
         # Overall title
         convergence = self.convergence_diagnostics(verbose=False)
         status = convergence['overall_status']
-        status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        #status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗","UNKNOWN": "?"}
+
+
         
         fig.suptitle(f'Chain Trace Plots - {status_symbol.get(status, "?")} {status} Convergence\n'
                     f'{self.sampler_name} sampler: {self.n_walkers} walkers × {self.n_steps} steps', 
                     fontsize=14, y=0.98)
         
-        plt.tight_layout()
+        fig.tight_layout(rect=[0, 0, 1, 0.93])  # Leave room at top for suptitle
+
         
         # Add interpretation guide
         fig.text(0.02, 0.02, 
@@ -1204,8 +1209,10 @@ class FitResults:
         status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗"}
         
         fig.suptitle(f'{status_symbol.get(status, "?")} MCMC Results - {status} Convergence\n'
-                    f'{self.sampler_name} sampler, {self.n_walkers} walkers, {self.n_steps} steps', 
-                    fontsize=14, y=0.98)
+                     f'{self.sampler_name} sampler, {self.n_walkers} walkers, {self.n_steps} steps', 
+                     fontsize=14, y=0.96)
+        
+        fig.tight_layout(rect=[0, 0, 1, 0.98])  # Leave room at top for suptitle
         
         if save_path:
             fig.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -1540,13 +1547,17 @@ class FitResults:
         # Overall figure title
         convergence = self.convergence_diagnostics(verbose=False)
         status = convergence['overall_status']
-        status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        #status_symbol = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗","UNKNOWN": "?"}
+
         
         fig.suptitle(f'{status_symbol.get(status, "?")} {ion_name} at z = {redshift:.6f}\n'
                     f'rbvfit 2.0: {ion_data["components"]} component(s), {status} convergence',
                     fontsize=14, y=0.98)
+        fig.tight_layout(rect=[0, 0, 1, 0.93])  # Leave room at top for suptitle
+
         
-        plt.tight_layout()
+        #plt.tight_layout()
         return fig
     
     def _extract_ion_parameters(self, ion_data: Dict, summary) -> Dict:

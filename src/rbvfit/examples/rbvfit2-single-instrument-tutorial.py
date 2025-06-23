@@ -187,14 +187,39 @@ print("ANALYZING FITTING RESULTS")
 print("=" * 60)
 
 # Display corner plot (parameter correlations and posteriors)
-print("Generating corner plot (parameter posterior distributions)...")
+#print("Generating corner plot (parameter posterior distributions)...")
 #fitter.plot_corner()
 
 
 # Extract key results
-print("\nExtracting results...")
-fig = mc.plot_model(model_A, fitter, 
-                outfile=False,           # or 'output.png' to save
-                show_residuals=True,     # Include residual plots
-                velocity_marks=True,     # Mark component velocities
-                verbose=True)            # Print parameter summary
+#print("\nExtracting results...")
+#fig = mc.plot_model(model_A, fitter, 
+#                outfile=False,           # or 'output.png' to save
+#                show_residuals=True,     # Include residual plots
+#                velocity_marks=True,     # Mark component velocities
+#                verbose=True)            # Print parameter summary
+
+
+from rbvfit.core import fit_results as f
+# Save results
+results = f.FitResults(fitter, model_A)
+#results.save('my_fit.h5')
+
+# Load and analyze
+#results = f.FitResults.load('my_fit.h5')
+results.print_fit_summary()
+print("Generating corner plot (parameter posterior distributions)...")
+results.corner_plot()#save_path='corner.pdf')
+results.convergence_diagnostics()
+
+# Visual chain inspection
+results.chain_trace_plot()#save_path='trace_plots.pdf')
+
+# This is the main new feature - velocity space plots by ion!
+velocity_plots = results.plot_velocity_fits(
+    show_components=True,      # Show individual components
+    show_rail_system=True     # Show component position markers
+)
+
+# For single ion systems, also try velocity range control:
+results.plot_velocity_fits(velocity_range=(-600, 600))

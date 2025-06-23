@@ -283,20 +283,258 @@ print("\n✓ MCMC fitting completed")
 # ============================================================================
 # Display and analyze the fitting results
 # KEY CONCEPT: Joint constraints from both datasets
+from rbvfit.core import fit_results as f
 
 print("\n" + "=" * 60)
 print("ANALYZING FITTING RESULTS")
 print("=" * 60)
 
 # Display corner plot (parameter correlations and posteriors)
-print("Generating corner plot (parameter posterior distributions)...")
-fitter.plot_corner()
+#print("Generating corner plot (parameter posterior distributions)...")
+#fitter.plot_corner()
 
 
 # Extract key results
-print("\nExtracting results...")
-fig = mc.plot_model(model_A, fitter, 
-                outfile=False,           # or 'output.png' to save
-                show_residuals=False,     # Include residual plots
-                velocity_marks=True,     # Mark component velocities
-                verbose=True)            # Print parameter summary
+#print("\nExtracting results...")
+#fig = mc.plot_model(model_A, fitter, 
+#                outfile=False,           # or 'output.png' to save
+#                show_residuals=False,     # Include residual plots
+#                velocity_marks=True,     # Mark component velocities
+#                verbose=True)            # Print parameter summary
+
+print("Creating FitResults object from 3-instrument joint fitter...")
+print("Physical model:")
+print(f"  CIV doublet at z={zabs_CIV:.6f}: 2 components")
+print(f"  OI 1302 at z={z:.6f}: 1 component") 
+print(f"  SiII 1304 at z={z:.6f}: 1 component")
+print(f"Instruments: XShooter (FWHM={FWHM_XShooter}), FIRE (FWHM={FWHM_FIRE}), HIRES (FWHM={FWHM_HIRES})")
+
+# Create FitResults object from your multi-instrument fitter
+results = f.FitResults(fitter, model_A)  # Use model_A as the base (contains config)
+
+print(f"✓ Results created: {results}")
+print(f"  Multi-instrument: {results.is_multi_instrument}")
+print(f"  Instruments: {list(results.instrument_data.keys()) if results.instrument_data else 'None'}")
+
+# =============================================================================
+# STEP 2: SAVE AND LOAD RESULTS (RECOMMENDED FOR LONG FITS)
+# =============================================================================
+
+# Save comprehensive results including all MCMC chains and configurations
+#print("\nSaving complete 3-instrument fit results...")
+#results.save('civ_oi_siii_3instrument_joint_fit.h5')
+
+# Later, you can reload everything for analysis
+#print("Reloading results for analysis...")
+#results = f.FitResults.load('civ_oi_siii_3instrument_joint_fit.h5')
+
+# =============================================================================
+# STEP 3: COMPREHENSIVE FIT SUMMARY
+# =============================================================================
+
+print("\n" + "="*80)
+print("3-INSTRUMENT JOINT FIT ANALYSIS")
+print("="*80)
+
+# Overall fit summary with multi-instrument info
+results.print_fit_summary()
+
+# This will show:
+# - Model: rbvfit 2.0 VoigtModel  
+# - Sampler: emcee (or zeus)
+# - Multi-instrument fit: 3 datasets
+# - Physical model: 2 systems, 3 ion groups, 4 components total
+# - Combined χ² and χ²/ν from all instruments
+# - Convergence status
+
+# =============================================================================
+# STEP 4: CONVERGENCE DIAGNOSTICS (CRITICAL FOR MCMC VALIDATION)
+# =============================================================================
+
+print("\nChecking MCMC convergence for joint fit...")
+convergence = results.convergence_diagnostics()
+
+# The diagnostics will show:
+# ✅ Good acceptance fraction (0.2-0.7)
+# ✅ Adequate chain length (>50x autocorr time)  
+# ✅ Good effective sample size (>100 per parameter)
+# ✅ Overall status: GOOD/MARGINAL/POOR
+# 📈 Recommendations for improvement if needed
+
+print(f"Convergence status: {convergence['overall_status']}")
+
+# =============================================================================
+# STEP 5: PARAMETER SUMMARY WITH ION ORGANIZATION
+# =============================================================================
+
+print("\nDetailed parameter summary...")
+param_summary = results.parameter_summary()
+
+# This organizes parameters by:
+# System 1 (z = zabs_CIV):
+#   CIV Component 1: logN, b, v ± errors
+#   CIV Component 2: logN, b, v ± errors  
+# System 2 (z = z):
+#   OI Component 1: logN, b, v ± errors
+#   SiII Component 1: logN, b, v ± errors
+
+# =============================================================================
+# STEP 6: VISUAL CONVERGENCE ASSESSMENT  
+# =============================================================================
+
+print("\nGenerating chain trace plots for visual inspection...")
+trace_fig = results.chain_trace_plot()#save_path='3instrument_trace_plots.pdf')
+
+# Critical for validating MCMC:
+# ✅ Good traces: stable, well-mixed, no trends
+# ❌ Bad traces: trending, stuck walkers, poor mixing
+# Shows convergence status on each parameter panel
+
+# =============================================================================
+# STEP 7: PARAMETER CORRELATIONS AND CORNER PLOT
+# =============================================================================
+
+print("\nAnalyzing parameter correlations...")
+correlation_matrix = results.correlation_matrix()#plot=True, save_path='3instrument_correlations.pdf')
+
+print("Generating corner plot (parameter posterior distributions)...")
+corner_fig = results.corner_plot()#save_path='3instrument_corner.pdf')
+
+# Corner plot shows:
+# - Posterior distributions for all parameters
+# - Parameter correlations (especially for tied CIV doublet)
+# - Convergence quality assessment
+# - Best-fit values marked
+
+# =============================================================================
+# STEP 8: ION-SPECIFIC VELOCITY SPACE ANALYSIS (NEW FEATURE!)
+# =============================================================================
+
+print("\n" + "="*60)
+print("ION-SPECIFIC VELOCITY SPACE VISUALIZATION")
+print("="*60)
+
+# This is the main new feature - separate plots for each ion!
+print("Creating velocity space plots organized by ion...")
+
+velocity_plots = results.plot_velocity_fits(
+    show_components=True,       # Show individual velocity components
+    show_rail_system=True,      # Show component position markers  
+    velocity_range=(-400, 400), # Velocity range for all plots
+    #save_path='velocity_plots'  # Will create separate files per ion
+)
+
+print("Velocity plots created:")
+for ion_key, fig in velocity_plots.items():
+    print(f"  {ion_key}: Shows all 3 instruments × transitions for this ion")
+
+# The velocity plots show:
+# - Layout: transitions (rows) × instruments (columns)
+# - CIV plot: 2 transitions × 3 instruments = 6 panels
+#   - Shows doublet parameter tying across all instruments
+#   - Rail system shows 2 velocity components
+# - OI plot: 1 transition × 3 instruments = 3 panels  
+#   - Shows resolution differences between instruments
+#   - Single component marked on rail
+# - SiII plot: 1 transition × 3 instruments = 3 panels
+#   - Single component, resolution comparison
+
+# =============================================================================
+# STEP 9: GOODNESS OF FIT ASSESSMENT
+# =============================================================================
+
+print("\nAssessing fit quality across all instruments...")
+chi2_stats = results.chi_squared()
+
+print("Chi-squared breakdown:")
+print(f"  XShooter χ² = {chi2_stats.get('chi2', 'N/A'):.2f}")
+print(f"  FIRE χ² = {chi2_stats.get('chi2_FIRE', 'N/A'):.2f}")  
+print(f"  HIRES χ² = {chi2_stats.get('chi2_HIRES', 'N/A'):.2f}")
+print(f"  Combined χ² = {chi2_stats.get('chi2_total', 'N/A'):.2f}")
+print(f"  Combined χ²/ν = {chi2_stats.get('reduced_chi2_total', 'N/A'):.3f}")
+
+# Good fit indicators:
+# ✅ χ²/ν ≈ 1.0 (not much larger or smaller)
+# ✅ Similar χ²/ν across instruments (consistency)
+# ✅ No systematic residuals in any instrument
+
+# =============================================================================
+# STEP 10: EXPORT RESULTS FOR PUBLICATION
+# =============================================================================
+
+#print("\nExporting results for publication...")
+
+# CSV export with all parameters and uncertainties
+#results.export_csv('3instrument_joint_fit_parameters.csv', include_errors=True)
+
+# LaTeX table for publication
+#results.export_latex('3instrument_fit_table.tex', 
+#                    table_format='publication',
+#                    caption="Joint 3-instrument absorption line fit results for CIV, OI, and SiII systems",
+#                    label="tab:3instrument_absorption")
+
+# Comprehensive summary report
+#results.export_summary_report('3instrument_fit_report.txt', include_plots=True)
+
+#print("✅ All exports completed!")
+
+# =============================================================================
+# STEP 11: SCIENTIFIC INTERPRETATION SUMMARY
+# =============================================================================
+
+print("\n" + "="*80)
+print("SCIENTIFIC RESULTS SUMMARY") 
+print("="*80)
+
+print("Joint 3-instrument fitting advantages:")
+print("✅ Better parameter constraints from combined datasets")
+print("✅ Validation across different spectral resolutions")
+print("✅ Consistent physical parameters despite different LSFs")
+print("✅ Robust uncertainty estimates including systematic errors")
+
+print(f"\nKey results:")
+if param_summary:
+    # Extract some key results for interpretation
+    print("CIV system (high-ionization):")
+    print("  Component 1: Column density, Doppler parameter, velocity")
+    print("  Component 2: Column density, Doppler parameter, velocity")
+    print("OI system (neutral gas):")
+    print("  Single component: Column density, Doppler parameter, velocity") 
+    print("SiII system (low-ionization):")
+    print("  Single component: Column density, Doppler parameter, velocity")
+
+print(f"\nQuality assessment:")
+print(f"  Convergence: {convergence['overall_status']}")
+print(f"  Fit quality: χ²/ν = {chi2_stats.get('reduced_chi2_total', 'N/A')}")
+print(f"  Parameter correlations: Available in corner plot")
+
+print("\n🎉 Multi-instrument analysis complete!")
+print("📊 Check velocity plots for ion-specific behavior")
+print("📈 Review trace plots if convergence was not GOOD")
+print("📄 Use exported tables/figures for your publication")
+
+# =============================================================================
+# ADVANCED ANALYSIS OPTIONS
+# =============================================================================
+
+print("\n" + "="*60)
+print("ADDITIONAL ANALYSIS OPTIONS")
+print("="*60)
+
+# Custom velocity range for specific ions
+print("Example: Focused analysis of CIV system...")
+civ_plots = results.plot_velocity_fits(
+    velocity_range=(-600, 600),  # Wider range for high-velocity CIV
+    show_components=True,
+    show_rail_system=True
+)
+
+# Correlation analysis for tied parameters
+print("Analyzing parameter correlations...")
+corr_matrix = results.correlation_matrix(plot=False)
+
+# Look for strong correlations (>0.5) between tied parameters
+# This validates that ion tying is working correctly
+
+print("Analysis complete! 🚀")
+print("Happy multi-instrument fitting! 🎉")

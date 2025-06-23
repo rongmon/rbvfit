@@ -47,8 +47,18 @@ vguess=[0.,0.]
 
 
 #Setting the upper and lower limits for the fit. You can also do it by hand if you prefer
-bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
-
+#bounds,lb,ub=mc.set_bounds(nguess,bguess,vguess)
+bounds,lb,ub = mc.set_bounds(
+    nguess, bguess, vguess,
+    # Custom lower bounds
+    Nlow=[12.0, 12.0],     # Broader N range
+    blow=[5.0, 5.0],       # Broader b range  
+    vlow=[-300.0, -300.0], # Broader v range
+    # Custom upper bounds
+    Nhi=[17.0, 17.0],      # Broader N range
+    bhi=[100.0, 100.0],    # Broader b range
+    vhi=[300.0, 300.0]     # Broader v range
+)
 
 #------------------------------------------------------
 
@@ -69,7 +79,7 @@ print("✓ V2 model created and compiled")
 
 # MCMC settings
 n_steps = 500
-n_walkers = 50
+n_walkers = 20
 
 print(f"\n{'='*50}")
 print(f"Running mcmc fitting multi core")
@@ -83,8 +93,24 @@ fitter = mc.vfit(
     v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
-    sampler='emcee'
-    )
+    sampler='emcee',
+    perturbation=1e-4  # Smaller perturbation for walker initialization
+)
+
+
+# Add this before runmcmc to debug:
+print(f"Model expects: {v2_model.param_manager.structure['total_parameters']} params")
+print(f"Theta provides: {len(theta)} params")
+print(f"Initial theta: {theta}")
+print(f"Bounds check: {np.all(theta >= lb)} and {np.all(theta <= ub)}")
+print(f"Initial likelihood: {fitter.lnprob(theta)}")
+
+# Try manual model evaluation
+try:
+    test_flux = v2_compiled.model_flux(theta, wave)
+    print(f"Model evaluation successful: {np.isfinite(test_flux).all()}")
+except Exception as e:
+    print(f"Model evaluation failed: {e}")
         
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
@@ -115,7 +141,7 @@ results = f.FitResults(fitter, v2_model)
 #results = f.FitResults.load('my_fit.h5')
 results.print_fit_summary()
 #results.corner_plot()#save_path='corner.pdf')
-#results.convergence_diagnostics()
+results.convergence_diagnostics()
 
 # Visual chain inspection
 #results.chain_trace_plot()#save_path='trace_plots.pdf')
@@ -127,4 +153,4 @@ results.print_fit_summary()
 #)
 
 # For single ion systems, also try velocity range control:
-results.plot_velocity_fits(velocity_range=(-600, 600))
+#results.plot_velocity_fits(velocity_range=(-600, 600))

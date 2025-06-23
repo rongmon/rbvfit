@@ -786,25 +786,77 @@ class FitResults:
         return None
     
     def _get_autocorr_time(self):
-        """Get autocorrelation time from sampler."""
-        try:
-            if hasattr(self.fitter.sampler, 'get_autocorr_time'):
-                return self.fitter.sampler.get_autocorr_time()
-        except:
-            pass
-        return None
+        if self.sampler_name.lower() == 'emcee':
+            # Use emcee autocorr method
+            return self.fitter.sampler.get_autocorr_time()
+        elif self.sampler_name.lower() == 'zeus':
+            # Zeus doesn't have autocorr - return None
+            return None
+
     
     def _get_gelman_rubin(self):
         """Get Gelman-Rubin R-hat statistic for zeus sampler."""
+        if self.sampler_name.lower() != 'zeus':
+            return None
+            
         try:
-            if self.sampler_name.lower() == 'zeus':
-                import zeus
-                chain = self.fitter.sampler.get_chain()
-                return zeus.diagnostics.gelman_rubin(chain)
-        except:
-            pass
-        return None
-    
+            # Check zeus version first
+            import zeus
+            #print(f"Debug: Zeus version: {zeus.__version__}")
+            
+            # Try the newer diagnostics module first
+            try:
+                r_hat = zeus.diagnostics.gelman_rubin(self.fitter.sampler.get_chain())
+                print(f"Using zeus.diagnostics - R-hat: {r_hat}")
+                return r_hat
+            except AttributeError:
+                print("zeus.diagnostics not available, implementing simple R-hat")
+                
+                # Implement simple R-hat calculation
+                chain = self.fitter.sampler.get_chain()  # Shape: (n_steps, n_walkers, n_params)
+                
+                if len(chain.shape) != 3:
+                    print(f"Unexpected chain shape: {chain.shape}")
+                    return None
+                
+                n_steps, n_walkers, n_params = chain.shape
+                
+                if n_steps < 100:  # Need sufficient samples
+                    print(f"Too few samples for R-hat: {n_steps}")
+                    return None
+                
+                # Simple R-hat calculation
+                r_hat_values = []
+                
+                for param_idx in range(n_params):
+                    param_chains = chain[:, :, param_idx]  # (n_steps, n_walkers)
+                    
+                    # Between-chain variance
+                    chain_means = np.mean(param_chains, axis=0)  # Mean for each walker
+                    grand_mean = np.mean(chain_means)
+                    B = n_steps * np.var(chain_means, ddof=1)
+                    
+                    # Within-chain variance  
+                    chain_variances = np.var(param_chains, axis=0, ddof=1)
+                    W = np.mean(chain_variances)
+                    
+                    # R-hat calculation
+                    var_plus = ((n_steps - 1) * W + B) / n_steps
+                    r_hat = np.sqrt(var_plus / W) if W > 0 else np.inf
+                    
+                    r_hat_values.append(r_hat)
+                
+                r_hat_array = np.array(r_hat_values)
+                print(f"Calculated R-hat values: {r_hat_array}")
+                
+                return r_hat_array
+                
+        except Exception as e:
+            print(f"R-hat calculation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+  
     def _estimate_effective_sample_size(self, samples):
         """Estimate effective sample size for each parameter."""
         try:
@@ -835,56 +887,94 @@ class FitResults:
         except Exception:
             return None
     
+
     def _assess_overall_convergence(self, diagnostics):
-        """Assess overall convergence status with conservative approach."""
-        issues = []
-        autocorr_failed = False
-        
-        # Check acceptance fraction
-        if diagnostics['acceptance_fraction'] is not None:
-            mean_accept = diagnostics['acceptance_fraction']['mean']
-            if mean_accept < 0.2 or mean_accept > 0.7:
-                issues.append("acceptance_fraction")
-        else:
-            issues.append("acceptance_fraction_unavailable")
-        
-        # Check autocorrelation time availability
-        if diagnostics['autocorr_time'] is None or diagnostics['autocorr_time']['mean_tau'] is None:
-            autocorr_failed = True
-            issues.append("autocorr_unavailable")
-        else:
-            # Check chain length ratio
-            if diagnostics.get('chain_length_ratio') is not None:
-                if diagnostics['chain_length_ratio'] < 50:
-                    issues.append("chain_length")
-        
-        # Check effective sample size
-        if diagnostics['effective_sample_size'] is not None:
-            min_eff = diagnostics['effective_sample_size']['min_n_eff']
-            if min_eff is not None and min_eff < 100:
-                issues.append("effective_sample_size")
-        
-        # Check Gelman-Rubin
-        if diagnostics['gelman_rubin'] is not None:
-            max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
-            if max_r_hat is not None and max_r_hat > 1.1:
-                issues.append("convergence")
-        
-        # Conservative assessment logic
-        if autocorr_failed and len([i for i in issues if i != "autocorr_unavailable"]) == 0:
-            # Only autocorr failed, other indicators good/unknown
-            return "MARGINAL"  # Conservative when missing key diagnostic
-        elif autocorr_failed and len(issues) > 2:
-            return "UNKNOWN"  # Too many unknowns for reliable assessment
-        elif len(issues) == 0:
-            return "GOOD"
-        elif len(issues) <= 2:
-            return "MARGINAL"
-        else:
-            return "POOR"
+       """Assess overall convergence status with sampler-aware approach."""
+       issues = []
+       
+       # Check acceptance fraction (common to all samplers)
+       if diagnostics['acceptance_fraction'] is not None:
+           mean_accept = diagnostics['acceptance_fraction']['mean']
+           if mean_accept < 0.2 or mean_accept > 0.7:
+               issues.append("acceptance_fraction")
+       else:
+           issues.append("acceptance_fraction_unavailable")
+       
+       # Sampler-specific convergence logic
+       if self.sampler_name.lower() == 'zeus':
+           # Zeus: prioritize Gelman-Rubin R-hat diagnostic
+           if diagnostics['gelman_rubin'] is not None:
+               max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+               if max_r_hat is not None:
+                   if max_r_hat > 1.2:
+                       issues.append("poor_convergence")
+                   elif max_r_hat > 1.1:
+                       issues.append("marginal_convergence")
+                   # R-hat <= 1.1 is good
+                   
+                   # Check effective sample size (secondary for zeus)
+                   if diagnostics['effective_sample_size'] is not None:
+                       min_eff = diagnostics['effective_sample_size']['min_n_eff']
+                       if min_eff is not None and min_eff < 50:  # Lower threshold for zeus
+                           issues.append("effective_sample_size")
+                   
+                   # Zeus assessment
+                   if "poor_convergence" in issues:
+                       return "POOR"
+                   elif "marginal_convergence" in issues or len(issues) >= 2:
+                       return "MARGINAL"
+                   elif len(issues) <= 1:  # Allow minor acceptance issues
+                       return "GOOD"
+                   else:
+                       return "MARGINAL"
+               else:
+                   return "UNKNOWN"  # R-hat calculation failed
+           else:
+               return "UNKNOWN"  # No R-hat available for zeus
+       
+       else:
+           # Emcee or unknown sampler: use autocorrelation-based logic
+           autocorr_failed = False
+           
+           # Check autocorrelation time availability
+           if diagnostics['autocorr_time'] is None or diagnostics['autocorr_time']['mean_tau'] is None:
+               autocorr_failed = True
+               issues.append("autocorr_unavailable")
+           else:
+               # Check chain length ratio
+               if diagnostics.get('chain_length_ratio') is not None:
+                   if diagnostics['chain_length_ratio'] < 50:
+                       issues.append("chain_length")
+           
+           # Check effective sample size
+           if diagnostics['effective_sample_size'] is not None:
+               min_eff = diagnostics['effective_sample_size']['min_n_eff']
+               if min_eff is not None and min_eff < 100:
+                   issues.append("effective_sample_size")
+           
+           # Check Gelman-Rubin (if available for emcee)
+           if diagnostics['gelman_rubin'] is not None:
+               max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+               if max_r_hat is not None and max_r_hat > 1.1:
+                   issues.append("convergence")
+           
+           # Conservative assessment logic for emcee
+           if autocorr_failed and len([i for i in issues if i != "autocorr_unavailable"]) == 0:
+               # Only autocorr failed, other indicators good/unknown
+               return "MARGINAL"  # Conservative when missing key diagnostic
+           elif autocorr_failed and len(issues) > 2:
+               return "UNKNOWN"  # Too many unknowns for reliable assessment
+           elif len(issues) == 0:
+               return "GOOD"
+           elif len(issues) <= 2:
+               return "MARGINAL"
+           else:
+               return "POOR"
     
+
+
     def _print_convergence_diagnostics(self, diagnostics):
-        """Print formatted convergence diagnostics with emojis."""
+        """Print formatted convergence diagnostics with sampler-aware recommendations."""
         print("\n" + "=" * 70)
         print("CONVERGENCE DIAGNOSTICS")
         print("=" * 70)
@@ -897,6 +987,7 @@ class FitResults:
             "UNKNOWN": "❓"
         }
         print(f"Overall Status: {status_symbols.get(status, '?')} {status}")
+        print(f"Sampler: {self.sampler_name.upper()}")
         
         print(f"\nDetailed Metrics:")
         print("-" * 50)
@@ -914,34 +1005,72 @@ class FitResults:
         else:
             print("Acceptance Fraction: ❓ Not available")
         
-        # Autocorrelation time
-        if diagnostics['autocorr_time'] is not None:
-            mean_tau = diagnostics['autocorr_time']['mean_tau']
-            if mean_tau is not None:
-                if 'chain_length_ratio' in diagnostics:
-                    ratio = diagnostics['chain_length_ratio']
-                    if ratio >= 50:
+        # Sampler-specific primary diagnostics
+        if self.sampler_name.lower() == 'zeus':
+            # Zeus: Show R-hat as primary diagnostic
+            if diagnostics['gelman_rubin'] is not None:
+                max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+                if max_r_hat is not None:
+                    if max_r_hat <= 1.1:
                         symbol = "✅"
-                    elif ratio >= 20:
+                    elif max_r_hat <= 1.2:
                         symbol = "⚠️"
                     else:
                         symbol = "❌"
-                    print(f"Mean Autocorr Time: {symbol} {mean_tau:.1f} steps")
-                    print(f"Chain Length Ratio: {symbol} {ratio:.1f}x autocorr time")
+                    print(f"Max R-hat (primary): {symbol} {max_r_hat:.3f}")
                 else:
-                    print(f"Mean Autocorr Time: ⚠️ {mean_tau:.1f} steps")
+                    print("R-hat: ❌ Could not calculate")
             else:
-                print("Autocorr Time: ❌ Could not calculate")
+                print("R-hat: ❓ Not available")
+            
+            # Note about autocorr for zeus users
+            print("Autocorr Time: ➖ Not available (zeus uses R-hat instead)")
+            
         else:
-            print("Autocorr Time: ❓ Not available")
+            # Emcee: Show autocorr as primary diagnostic
+            if diagnostics['autocorr_time'] is not None:
+                mean_tau = diagnostics['autocorr_time']['mean_tau']
+                if mean_tau is not None:
+                    if 'chain_length_ratio' in diagnostics:
+                        ratio = diagnostics['chain_length_ratio']
+                        if ratio >= 50:
+                            symbol = "✅"
+                        elif ratio >= 20:
+                            symbol = "⚠️"
+                        else:
+                            symbol = "❌"
+                        print(f"Mean Autocorr Time (primary): {symbol} {mean_tau:.1f} steps")
+                        print(f"Chain Length Ratio: {symbol} {ratio:.1f}x autocorr time")
+                    else:
+                        print(f"Mean Autocorr Time: ⚠️ {mean_tau:.1f} steps")
+                else:
+                    print("Autocorr Time: ❌ Could not calculate")
+            else:
+                print("Autocorr Time: ❓ Not available")
+            
+            # Show R-hat as secondary for emcee
+            if diagnostics['gelman_rubin'] is not None:
+                max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
+                if max_r_hat is not None:
+                    if max_r_hat <= 1.1:
+                        symbol = "✅"
+                    elif max_r_hat <= 1.2:
+                        symbol = "⚠️"
+                    else:
+                        symbol = "❌"
+                    print(f"Max R-hat (secondary): {symbol} {max_r_hat:.3f}")
+            else:
+                print("R-hat: ➖ Not calculated for emcee")
         
-        # Effective sample size
+        # Effective sample size (common to both)
         if diagnostics['effective_sample_size'] is not None:
             min_eff = diagnostics['effective_sample_size']['min_n_eff']
             if min_eff is not None:
-                if min_eff >= 100:
+                # Different thresholds for different samplers
+                threshold = 50 if self.sampler_name.lower() == 'zeus' else 100
+                if min_eff >= threshold:
                     symbol = "✅"
-                elif min_eff >= 50:
+                elif min_eff >= threshold/2:
                     symbol = "⚠️"
                 else:
                     symbol = "❌"
@@ -951,29 +1080,69 @@ class FitResults:
         else:
             print("Effective Sample Size: ❓ Not available")
         
-        # Gelman-Rubin
-        if diagnostics['gelman_rubin'] is not None:
-            max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
-            if max_r_hat is not None:
-                if max_r_hat <= 1.1:
-                    symbol = "✅"
-                elif max_r_hat <= 1.2:
-                    symbol = "⚠️"
-                else:
-                    symbol = "❌"
-                print(f"Max R-hat: {symbol} {max_r_hat:.3f}")
-            else:
-                print("Gelman-Rubin: ❌ Could not calculate")
-        elif self.sampler_name.lower() == 'zeus':
-            print("Gelman-Rubin: ❓ Not available (expected for zeus)")
+        # Sampler-specific recommendations
+        print(f"\nSampler-Specific Recommendations:")
+        print("-" * 50)
         
-        print(f"\nRecommendations:")
+        if self.sampler_name.lower() == 'zeus':
+            if status == "GOOD":
+                print("✅ Excellent! Zeus R-hat < 1.1 indicates good convergence")
+                print("💡 Consider thinning samples if storage is a concern")
+            elif status == "MARGINAL":
+                print("⚠️ Zeus R-hat slightly above 1.1 - borderline convergence")
+                print("🔧 To improve: Run 1.5-2x longer or try more walkers")
+                print("📊 Current results may be reliable but uncertainties could be underestimated")
+            elif status == "POOR":
+                print("❌ Zeus R-hat > 1.2 - chains have NOT converged")
+                print("🔧 Try: More walkers, longer chains, different initial conditions")
+                print("⚠️ Check perturbation parameter (try 1e-4 to 1e-3)")
+            else:
+                print("❓ Zeus convergence unclear - manual inspection needed")
+            
+            print("\n💡 Zeus Tips:")
+            print("   • R-hat < 1.1 = excellent convergence")
+            print("   • Zeus often needs fewer walkers than emcee")
+            print("   • Use smaller perturbation (1e-4) if initialization fails")
+            
+        else:  # emcee
+            if status == "GOOD":
+                print("✅ Excellent! Emcee autocorr analysis shows good convergence")
+                print("💡 Chain length > 50x autocorr time is ideal")
+            elif status == "MARGINAL":
+                print("⚠️ Emcee shows marginal convergence")
+                print("🔧 To improve: Run 2-3x longer chains")
+                print("📊 Check trace plots for mixing and stationarity")
+            elif status == "POOR":
+                print("❌ Emcee shows poor convergence")
+                print("🔧 Try: Longer chains, more walkers, better initialization")
+                print("⚠️ Check bounds - parameters may be hitting limits")
+            else:
+                print("❓ Emcee convergence unclear - examine trace plots")
+            
+            print("\n💡 Emcee Tips:")
+            print("   • Chain length should be > 50x autocorr time")
+            print("   • Acceptance fraction should be 0.2-0.7")
+            print("   • Use optimize=True for better starting positions")
+        
+        # General recommendations
+        print(f"\nGeneral Recommendations:")
         print("-" * 50)
         for i, rec in enumerate(diagnostics['recommendations'], 1):
             print(f"{i}. {rec}")
         
-        print("=" * 70)
-    
+        # Bottom line recommendation
+        print(f"\n{'🔥 BOTTOM LINE 🔥':^70}")
+        if status == "GOOD":
+            print("✅ Results are reliable - proceed with analysis")
+        elif status == "MARGINAL":
+            print("⚠️ Results likely reliable but consider longer chains for publication")
+        elif status == "POOR":
+            print("❌ DO NOT use these results - re-run with suggested improvements")
+        else:
+            print("❓ Convergence unclear - examine trace plots manually")
+        
+        print("=" * 70)    
+        
     def chain_trace_plot(self, save_path: Optional[str] = None, 
                         n_cols: int = 3, figsize: Optional[Tuple[float, float]] = None) -> plt.Figure:
         """

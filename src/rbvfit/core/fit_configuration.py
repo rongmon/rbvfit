@@ -381,7 +381,7 @@ class FitConfiguration:
             Detected ion name
         """
         if rb is None:
-            raise RuntimeError("Ion detection requires rbvfit v1 line database")
+            raise RuntimeError("Ion detection requires rbvfit line database")
             
         line_info = rb.rb_setline(wavelength, 'closest')
         return IonGroup._extract_ion_name(line_info['name'][0])

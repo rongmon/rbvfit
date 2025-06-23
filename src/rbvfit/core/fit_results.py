@@ -109,8 +109,8 @@ class FitResults:
     
     def _extract_mcmc_info(self):
         """Extract basic MCMC information from fitter."""
-        self.n_walkers = getattr(self.fitter, 'no_of_Chain', 50)
-        self.n_steps = getattr(self.fitter, 'no_of_steps', 1000)
+        self.n_walkers = getattr(self.fitter, 'no_of_Chain', 0)
+        self.n_steps = getattr(self.fitter, 'no_of_steps', 0)
         self.sampler_name = getattr(self.fitter, 'sampler_name', 'emcee')
         
         # Extract bounds

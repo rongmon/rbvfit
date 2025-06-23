@@ -1,0 +1,39 @@
+{
+  "title": "rbvfit: A Voigt profile fitting tool",
+  "version": "1.0.0",
+  "description": "A Python package for fitting Voigt profiles to absorption lines using MCMC sampling and interactive visualization tools.",
+  "creators": [
+    {
+      "name": "Bordoloi, Rongmon",
+      "affiliation": "North Carolina State University",
+      "orcid": "0000-0002-3120-7173"
+    },
+    {
+      "name": "Higginson, Jack",
+      "affiliation": "North Carolina State University"
+    },
+    {
+      "name": "Manoranjan, Senthuuran",
+      "affiliation": "North Carolina State University"
+    },
+    {
+      "name": "Ribaudo, Joseph",
+      "affiliation": "Providence College"
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "spectral fitting",
+    "Voigt profile",
+    "MCMC",
+    "astrophysics",
+    "absorption lines"
+  ],
+  "related_identifiers": [
+    {
+      "relation": "isSupplementTo",
+      "identifier": "https://github.com/rongmon/rbvfit"
+    }
+  ]
+}
+

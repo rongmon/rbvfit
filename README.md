@@ -46,7 +46,7 @@ python setup.py develop
 ```
 ### Dependencies
 
-- **Core**: numpy, scipy, matplotlib, emcee, corner
+- **Core**: numpy, scipy, matplotlib, emcee, corner, astropy (for convolution)
 - **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
 - **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
 

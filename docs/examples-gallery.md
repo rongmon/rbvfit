@@ -52,14 +52,8 @@ This gallery demonstrates the range of absorption line systems rbvfit2 can analy
 **Example**: [`example_voigt_fitter.py`](../src/rbvfit/examples/example_voigt_fitter.py)
 
 ### SiII + HI Absorption Fit
-
+![SiII+HI](images/example-fit.png)
 *Figure: Complete fitting workflow result*
-```
-Expected plot: Three-panel figure showing:
-Top: Data (black) vs model (red) with residuals
-Middle: Individual component contributions
-Bottom: Residuals with chi-squared statistics
-```
 
 **Use Case**: Standard single-system absorption line fitting
 
@@ -71,14 +65,8 @@ Bottom: Residuals with chi-squared statistics
 
 ### Parameter Corner Plot
 
+![SiII+HI](images/corner.png)
 *Figure: MCMC parameter correlations*
-```
-Expected plot: Corner plot matrix showing:
-- Parameter distributions (diagonal)
-- Parameter correlations (off-diagonal)  
-- Confidence contours (1σ, 2σ, 3σ)
-- Best-fit values marked
-```
 
 **Use Case**: Understanding parameter degeneracies and uncertainties
 
@@ -89,15 +77,8 @@ Expected plot: Corner plot matrix showing:
 **Example**: [`rbvfit2-single-instrument-tutorial.py`](../src/rbvfit/examples/rbvfit2-single-instrument-tutorial.py)
 
 ### 3-Component CIV System
-
+![CIV+3comp](images/example-multi-comp.png)
 *Figure: Complex velocity structure*
-```
-Expected plot: Multi-panel showing:
-- Overall fit with 3 velocity components
-- Individual component profiles
-- Velocity space representation
-- Component parameter table
-```
 
 **Use Case**: Resolving complex kinematic structure
 
@@ -109,14 +90,8 @@ Expected plot: Multi-panel showing:
 
 ### Convergence Diagnostics
 
+![CIV+3comp](images/trace_plots.png)
 *Figure: MCMC chain analysis*
-```
-Expected plot: Multi-panel chain traces showing:
-- Parameter evolution vs MCMC step
-- Burn-in period identification
-- Chain mixing assessment
-- Autocorrelation analysis
-```
 
 **Use Case**: Verifying MCMC convergence quality
 

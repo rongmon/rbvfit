@@ -194,11 +194,11 @@ print("=" * 60)
 
 # Extract key results
 #print("\nExtracting results...")
-#fig = mc.plot_model(model_A, fitter, 
-#                outfile=False,           # or 'output.png' to save
-#                show_residuals=True,     # Include residual plots
-#                velocity_marks=True,     # Mark component velocities
-#                verbose=True)            # Print parameter summary
+fig = mc.plot_model(model_A, fitter, 
+                outfile=None,           # or 'output.png' to save
+                show_residuals=True,     # Include residual plots
+                velocity_marks=True,     # Mark component velocities
+                verbose=True)            # Print parameter summary
 
 
 from rbvfit.core import fit_results as f
@@ -214,7 +214,7 @@ results.corner_plot()#save_path='corner.pdf')
 results.convergence_diagnostics()
 
 # Visual chain inspection
-results.chain_trace_plot()#save_path='trace_plots.pdf')
+results.chain_trace_plot(save_path='trace_plots.png')
 
 # This is the main new feature - velocity space plots by ion!
 velocity_plots = results.plot_velocity_fits(

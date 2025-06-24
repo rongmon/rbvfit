@@ -45,10 +45,7 @@ except ImportError as e:
 try:
     from rbvfit.core.fit_configuration import FitConfiguration
     from rbvfit.core.voigt_model import VoigtModel
-    from rbvfit.core.voigt_fitter import VoigtFitter, Dataset, MCMCSettings
-    from rbvfit.core.parameter_manager import ParameterManager
-    # Import v2's vfit_mcmc (should be same module but checking)
-    from rbvfit import vfit_mcmc as v2_mcmc
+    from rbvfit import vfit_mcmc as v2_mcmc  # Should be same module
     V2_AVAILABLE = True
     print("✓ rbvfit v2.0 core modules available")
 except ImportError as e:
@@ -366,7 +363,7 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     theta, lb, ub,
                     wave, observed_flux, error,
                     no_of_Chain=50,
-                    no_of_steps=5000  # Small for setup testing
+                    no_of_steps=500  # Small for setup testing
                 )
             
             v1_fitter, v1_timing = profiler.time_operation(
@@ -392,7 +389,7 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     theta, lb, ub,
                     wave, observed_flux, error,
                     no_of_Chain=50,
-                    no_of_steps=5000
+                    no_of_steps=500
                 )
             
             v2_fitter, v2_timing = profiler.time_operation(
@@ -419,7 +416,7 @@ def benchmark_mcmc_setup(profiler: PerformanceProfiler, v1_model, v2_model, v2_c
                     theta, lb, ub,
                     wave, observed_flux, error,
                     no_of_Chain=50,
-                    no_of_steps=1000
+                    no_of_steps=500
                 )
             
             v2_compiled_fitter, v2_compiled_timing = profiler.time_operation(

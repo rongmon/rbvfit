@@ -4,7 +4,7 @@
 
 **Bayesian Voigt Profile Fitting for Absorption Line Spectroscopy**
 
-`rbvfit` performs forward modeling of absorption line spectra using Bayesian Voigt profile fitting. Version 2.0 introduces multi-system support, automatic ion parameter tying, multi-instrument joint fitting, and interactive parameter estimation tools.
+`rbvfit` performs forward modeling of absorption line spectra using Bayesian Voigt profile fitting. Version 2.0 introduces multi-system support, automatic ion parameter tying, multi-instrument joint fitting, and interactive parameter estimation tools. Version 2.0 is optimized for fast processing and uses [*emcee*](https://emcee.readthedocs.io/) or [*zeus*](https://zeus-mcmc.readthedocs.io/) MCMC samplers.
 
 ![rbvfit Example](docs/images/rbvfit_example.png)  
 *Example: Multi-component MgII absorption line fit with `rbvfit`*
@@ -70,6 +70,12 @@ model = VoigtModel(config)
 theta = np.concatenate([nguess, bguess, vguess])
 fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
+
+# Extract best-fit parameters
+best_theta = fitter.best_theta  # Best-fit parameter array
+best_N = best_theta[0:len(nguess)]  # Column densities
+best_b = best_theta[len(nguess):2*len(nguess)]  # Doppler parameters  
+best_v = best_theta[2*len(nguess):3*len(nguess)]  # Velocities
 ```
 
 
@@ -135,7 +141,7 @@ See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed wo
 
 | Feature                  | v1.0               | v2.0                          |
 | ------------------------ | ------------------ | ----------------------------- |
-| Interactive Tools        | ✗ Basic matplotlib | ✅ GUI with widget support     |
+| Interactive Tools        | ✗ Basic            | ✅ GUI with widget support     |
 | Parameter Estimation     | ✗ Manual           | ✅ Visual + GUI guessing       |
 | Environment Support      | CLI only           | ✅ CLI + Jupyter               |
 | Multi-System Setup       | ✗ Manual config    | ✅ Ion-based auto setup        |
@@ -145,7 +151,8 @@ See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed wo
 | Results Analysis         | Basic output       | ✅ Diagnostics + plots         |
 | Data Persistence         | Manual             | ✅ HDF5 w/ metadata            |
 | Code Architecture        | Monolithic         | ✅ Modular                     |
-
+| Fitting Engine           | Standard           | ✅ Vectorized +optimized       |
+|FWHM Velocity Conversion  | ✗ Manual handling  |✅ Automatic w/ instrument database|
 
 ## 📁 Examples
 

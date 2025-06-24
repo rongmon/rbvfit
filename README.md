@@ -135,4 +135,6 @@ If you use rbvfit in your research, please cite:
 - **Version 1.0**: Written By: Rongmon Bordoloi. July 2019. Tested on: Python 3.7+
 - **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.8+
 
-**License**: MIT
+## ![License](https://img.shields.io/badge/license-MIT-green)
+
+This project is licensed under the [MIT License](LICENSE).

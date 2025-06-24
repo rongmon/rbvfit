@@ -52,6 +52,10 @@ def example_mgii_doublet():
         plt.text(wobs, 1.02, f'{wrest:.1f}', ha='center', fontsize=10)
     
     plt.ylim(0, 1.1)
+    
+    plt.savefig('mgii_doublet_basic.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("✓ Saved: mgii_doublet_basic.png")
+
     plt.show()
     
     return model, theta, wave, flux
@@ -100,6 +104,8 @@ def example_multi_ion():
     plt.axvline(2600.2 * (1+z), color='green', linestyle='--', alpha=0.5, label='FeII')
     
     plt.legend()
+    plt.savefig('multi_ion_comparison.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("✓ Saved: multi_ion_comparison.png")
     plt.show()
     
     return model, theta
@@ -136,6 +142,8 @@ def example_different_lsf():
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.ylim(0, 1.1)
+    plt.savefig('lsf_comparison.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("✓ Saved: lsf_comparison.png")    
     plt.show()
 
 
@@ -181,6 +189,8 @@ def example_ion_tying():
     
     plt.suptitle(f'Ion Tying: Both lines use same parameters (N={theta[0]:.1f}, b={theta[1]:.0f} km/s, v={theta[2]:.0f} km/s)')
     plt.tight_layout()
+    plt.savefig('ion_tying_demo.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("✓ Saved: ion_tying_demo.png")
     plt.show()
     
     print("Note: Both MgII transitions automatically share the same N, b, v parameters")
@@ -228,6 +238,8 @@ def example_multi_redshift():
     
     plt.legend()
     plt.ylim(-0.05, 1.1)
+    plt.savefig('multi_redshift_demo.png', dpi=300, bbox_inches='tight', facecolor='white')
+    print("✓ Saved: multi_redshift_demo.png")
     plt.show()
     
     return model
@@ -244,4 +256,4 @@ if __name__ == "__main__":
     example_ion_tying()
     example_multi_redshift()
     
-    print("\nAll examples completed!")
+    print("All examples completed successfully!")

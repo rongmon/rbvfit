@@ -19,7 +19,8 @@ cd rbvfit
 python setup.py develop
 
 # Basic usage
-from rbvfit.core import FitConfiguration, VoigtModel
+from rbvfit.core.fit_configuration import FitConfiguration
+from rbvfit.core.voigt_model import VoigtModel
 import rbvfit.vfit_mcmc as mc
 
 # Create configuration

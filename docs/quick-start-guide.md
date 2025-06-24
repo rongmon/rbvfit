@@ -78,9 +78,9 @@ v_guess = [-30.0, +20.0]   # Velocity offsets
 # Set parameter bounds
 bounds, lb, ub = mc.set_bounds(
     N_guess, b_guess, v_guess,
-    Nlow=[12.0, 12.0], Nhi=[16.0, 16.0],
-    blow=[5.0, 5.0], bhi=[80.0, 80.0], 
-    vlow=[-150.0, -150.0], vhi=[150.0, 150.0]
+    Nlow=[12.0, 12.0], Nhi=[16.0, 16.0], #optional custom bounds
+    blow=[5.0, 5.0], bhi=[80.0, 80.0], #optional custom bounds
+    vlow=[-150.0, -150.0], vhi=[150.0, 150.0]#optional custom bounds
 )
 
 # Combine into theta array
@@ -153,6 +153,11 @@ from rbvfit.core import fit_results as fr
 results = fr.FitResults(fitter, model)
 results.print_fit_summary()
 results.corner_plot()
+# Velocity space plots by ion!
+velocity_plots = results.plot_velocity_fits(
+    show_components=True,      # Show individual components
+    show_rail_system=True     # Show component position markers
+)
 ```
 
 ## Complete Working Example

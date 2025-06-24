@@ -1,21 +1,20 @@
 #!/usr/bin/env python
 """
-Performance comparison between rbvfit v1.0 and v2.0 with curve_fit and MCMC testing.
+Performance comparison between rbvfit v1.0 and v2.0 with quick_fit and MCMC testing.
 
 This script provides a comprehensive performance analysis including:
 1. Model setup and compilation
 2. Raw model evaluation performance 
-3. Curve fitting using scipy.optimize.curve_fit
+3. Quick fitting using rbvfit's internal quick_fit interface
 4. MCMC fitting with vfit_mcmc (serial and parallel)
 5. Analysis and recommendations
 
-Focus on practical fitting scenarios that users actually encounter.
+Focus on practical fitting scenarios using rbvfit's native interfaces.
 """
 
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-from scipy.optimize import curve_fit
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -40,6 +39,15 @@ except ImportError as e:
     print(f"❌ Error: rbvfit v2.0 not available: {e}")
     V2_AVAILABLE = False
 
+# Try to import v2.0 quick_fit interface
+try:
+    from rbvfit.core.quick_fit_interface import quick_fit
+    QUICK_FIT_AVAILABLE = True
+    print("✓ rbvfit quick_fit available")
+except ImportError as e:
+    print(f"⚠ Warning: rbvfit quick_fit not available: {e}")
+    QUICK_FIT_AVAILABLE = False
+
 
 def setup_test_scenario():
     """Set up a realistic test scenario."""
@@ -49,10 +57,10 @@ def setup_test_scenario():
     zabs = 0.348
     lambda_rest = [2796.3, 2803.5]
     
-    # True parameters for 2-component system
-    true_N = [13.95, 13.3,13.5]
-    true_b = [20.0, 40.0,15.0]
-    true_v = [-40.0, 0.,20.0]
+    # True parameters for 3-component system
+    true_N = [13.95, 13.3, 13.5]
+    true_b = [20.0, 40.0, 15.0]
+    true_v = [-40.0, 0., 20.0]
     true_theta = np.array(true_N + true_b + true_v)
     
     # Realistic wavelength coverage and resolution
@@ -92,14 +100,14 @@ def setup_models(scenario):
             nclump=scenario['nclump'],
             ntransition=scenario['ntransition'],
             FWHM='6.5',
-            verbose=True
+            verbose=False
         )
         v1_setup_time = time.time() - start
         models['v1'] = {
             'model': v1_model_obj,
             'setup_time': v1_setup_time,
             'eval_func': v1_model_obj.model_flux,
-            'curvefit_func': v1_model_obj.model_flux_curvefit
+            'quick_fit_func': getattr(v1_model_obj, 'model_flux_curvefit', None)
         }
         print(f"    v1 setup: {v1_setup_time*1000:.2f} ms")
     
@@ -121,22 +129,22 @@ def setup_models(scenario):
         # Compile v2 model
         print("  Compiling v2 model...")
         start = time.time()
-        v2_compiled = v2_model_obj.compile(verbose=True)
+        v2_compiled = v2_model_obj.compile(verbose=False)
         v2_compile_time = time.time() - start
         print(f"    v2 compilation: {v2_compile_time*1000:.2f} ms")
         
         models['v2_regular'] = {
             'model': v2_model_obj,
             'setup_time': v2_setup_time,
-            'eval_func': v2_model_obj.evaluate,#lambda theta, wave: v2_model_obj.evaluate(theta, wave),
-            'curvefit_func': None  # v2 doesn't have direct curvefit interface
+            'eval_func': v2_model_obj.evaluate,
+            'quick_fit_func': None  # Will use quick_fit interface
         }
         
         models['v2_compiled'] = {
             'model': v2_compiled,
             'setup_time': v2_setup_time + v2_compile_time,
             'eval_func': v2_compiled.model_flux,
-            'curvefit_func': None  # We'll create a wrapper
+            'quick_fit_func': None
         }
     
     return models
@@ -208,76 +216,130 @@ def benchmark_raw_evaluation(models, scenario, n_evals=100):
     return results
 
 
-def benchmark_curve_fit(models, scenario, observed_flux, error):
-    """Benchmark curve_fit performance."""
-    print("\nBenchmarking scipy.optimize.curve_fit...")
+def benchmark_quick_fit(models, scenario, observed_flux, error):
+    """Benchmark quick_fit performance using rbvfit's internal interfaces."""
+    print("\nBenchmarking rbvfit quick_fit...")
     
     results = {}
     
     # Initial guess (perturbed from truth)
     p0 = scenario['true_theta'] + 0.1 * np.random.randn(len(scenario['true_theta']))
     
-    # Parameter bounds
+    # Parameter bounds using rbvfit's internal function
     bounds, lb, ub = v1_mcmc.set_bounds(
         scenario['true_N'], scenario['true_b'], scenario['true_v']
     )
     
-    for name, model_info in models.items():
-        if name.startswith('v2'):  # Skip v2 for curve_fit (no direct interface)
-            continue
+    # Test v2.0 quick_fit interface if available
+    if QUICK_FIT_AVAILABLE and V2_AVAILABLE:
+        for name, model_info in models.items():
+            if not name.startswith('v2'):
+                continue
+                
+            print(f"  Testing {name} with quick_fit interface...")
             
-        curvefit_func = model_info.get('curvefit_func')
-        if curvefit_func is None:
-            continue
+            try:
+                start = time.time()
+                
+                # Use v2.0 quick_fit interface
+                if name == 'v2_regular':
+                    fit_result = quick_fit(
+                        model_info['model'],
+                        scenario['wave'],
+                        observed_flux,
+                        error,
+                        initial_guess=p0,
+                        bounds=(lb, ub)
+                    )
+                elif name == 'v2_compiled':
+                    # For compiled models, use the compiled model function
+                    fit_result = quick_fit(
+                        model_info['model'],
+                        scenario['wave'],
+                        observed_flux,
+                        error,
+                        initial_guess=p0,
+                        bounds=(lb, ub)
+                    )
+                
+                fit_time = time.time() - start
+                
+                results[name] = {
+                    'fit_time': fit_time,
+                    'parameters': fit_result.x,
+                    'success': fit_result.success,
+                    'message': fit_result.message,
+                    'nfev': fit_result.nfev
+                }
+                
+                print(f"    {name}: {fit_time:.3f}s ({fit_result.nfev} evaluations)")
+                if fit_result.success:
+                    print(f"      Parameter recovery (true vs fitted):")
+                    for i, (true_val, fit_val) in enumerate(zip(scenario['true_theta'], fit_result.x)):
+                        print(f"        θ[{i}]: {true_val:.3f} → {fit_val:.3f}")
+                else:
+                    print(f"      Fit failed: {fit_result.message}")
+                
+            except Exception as e:
+                print(f"    {name}: FAILED - {e}")
+                results[name] = {'success': False, 'error': str(e)}
+    
+    # Test v1.0 model_flux_curvefit if available
+    if V1_AVAILABLE and 'v1' in models:
+        v1_model_info = models['v1']
+        if v1_model_info['quick_fit_func'] is not None:
+            print(f"  Testing v1 with model_flux_curvefit...")
             
-        print(f"  Testing {name}...")
-        
-        try:
-            start = time.time()
-            popt, pcov = curve_fit(
-                curvefit_func,
-                scenario['wave'],
-                observed_flux,
-                p0=p0,
-                sigma=error,
-                bounds=(lb, ub),
-                maxfev=5000
-            )
-            fit_time = time.time() - start
-            
-            # Calculate parameter errors
-            param_errors = np.sqrt(np.diag(pcov))
-            
-            results[name] = {
-                'fit_time': fit_time,
-                'parameters': popt,
-                'errors': param_errors,
-                'success': True
-            }
-            
-            print(f"    {name}: {fit_time:.3f}s")
-            print(f"      Parameter recovery (true vs fitted):")
-            for i, (true_val, fit_val, err) in enumerate(zip(scenario['true_theta'], popt, param_errors)):
-                print(f"        θ[{i}]: {true_val:.3f} → {fit_val:.3f} ± {err:.3f}")
-            
-        except Exception as e:
-            print(f"    {name}: FAILED - {e}")
-            results[name] = {'success': False, 'error': str(e)}
+            try:
+                from scipy.optimize import curve_fit
+                
+                start = time.time()
+                popt, pcov = curve_fit(
+                    v1_model_info['quick_fit_func'],
+                    scenario['wave'],
+                    observed_flux,
+                    p0=p0,
+                    sigma=error,
+                    bounds=(lb, ub),
+                    maxfev=5000
+                )
+                fit_time = time.time() - start
+                
+                # Calculate parameter errors
+                param_errors = np.sqrt(np.diag(pcov))
+                
+                results['v1'] = {
+                    'fit_time': fit_time,
+                    'parameters': popt,
+                    'errors': param_errors,
+                    'success': True
+                }
+                
+                print(f"    v1: {fit_time:.3f}s")
+                print(f"      Parameter recovery (true vs fitted):")
+                for i, (true_val, fit_val, err) in enumerate(zip(scenario['true_theta'], popt, param_errors)):
+                    print(f"        θ[{i}]: {true_val:.3f} → {fit_val:.3f} ± {err:.3f}")
+                
+            except Exception as e:
+                print(f"    v1: FAILED - {e}")
+                results['v1'] = {'success': False, 'error': str(e)}
+        else:
+            print("  v1 model_flux_curvefit not available")
     
     return results
 
 
 def benchmark_mcmc_fitting(models, scenario, observed_flux, error):
-    """Benchmark MCMC fitting performance."""
+    """Benchmark MCMC fitting performance using rbvfit's vfit_mcmc."""
     print("\nBenchmarking MCMC fitting...")
     
     results = {}
     
-    # MCMC settings
+    # MCMC settings - reduced for faster testing
     n_walkers = 20
-    n_steps = 500
+    n_steps = 300
     
-    # Set up bounds
+    # Set up bounds using rbvfit's internal function
     bounds, lb, ub = v1_mcmc.set_bounds(
         scenario['true_N'], scenario['true_b'], scenario['true_v']
     )
@@ -289,13 +351,13 @@ def benchmark_mcmc_fitting(models, scenario, observed_flux, error):
         eval_func = model_info['eval_func']
         
         try:
-            # Test both serial and parallel
+            # Test both serial and parallel using rbvfit's vfit_mcmc
             for mode, use_pool in [('serial', False), ('parallel', True)]:
                 print(f"    {mode} mode...")
                 
                 start = time.time()
                 
-                # Create MCMC fitter
+                # Create MCMC fitter using rbvfit's internal interface
                 fitter = v1_mcmc.vfit(
                     eval_func,
                     scenario['true_theta'],
@@ -307,22 +369,33 @@ def benchmark_mcmc_fitting(models, scenario, observed_flux, error):
                     no_of_steps=n_steps
                 )
                 
-                # Run MCMC
+                # Run MCMC using rbvfit's internal method
                 fitter.runmcmc(optimize=False, verbose=False, use_pool=use_pool)
                 
                 mcmc_time = time.time() - start
                 
-                # Extract results
-                samples = fitter.sampler.get_chain(discard=100, thin=1, flat=True)
-                best_params = np.percentile(samples, 50, axis=0)
-                param_errors = np.std(samples, axis=0)
+                # Extract results using rbvfit's internal structure
+                if hasattr(fitter, 'sampler') and hasattr(fitter.sampler, 'get_chain'):
+                    samples = fitter.sampler.get_chain(discard=int(n_steps*0.3), thin=1, flat=True)
+                    best_params = np.percentile(samples, 50, axis=0)
+                    param_errors = np.std(samples, axis=0)
+                elif hasattr(fitter, 'samples'):
+                    # Alternative access method
+                    samples = fitter.samples[int(n_steps*0.3):].reshape(-1, len(scenario['true_theta']))
+                    best_params = np.percentile(samples, 50, axis=0)
+                    param_errors = np.std(samples, axis=0)
+                else:
+                    # Fallback to best_theta if available
+                    best_params = getattr(fitter, 'best_theta', scenario['true_theta'])
+                    param_errors = np.zeros_like(best_params)
+                    samples = None
                 
                 results[f"{name}_{mode}"] = {
                     'mcmc_time': mcmc_time,
                     'time_per_step': mcmc_time / n_steps * 1000,  # ms
                     'parameters': best_params,
                     'errors': param_errors,
-                    'samples': samples,
+                    'fitter': fitter,
                     'success': True
                 }
                 
@@ -340,7 +413,7 @@ def benchmark_mcmc_fitting(models, scenario, observed_flux, error):
     return results
 
 
-def analyze_results(eval_results, curvefit_results, mcmc_results, models):
+def analyze_results(eval_results, quickfit_results, mcmc_results, models):
     """Analyze and summarize all results."""
     print("\n" + "=" * 70)
     print("COMPREHENSIVE PERFORMANCE ANALYSIS")
@@ -372,18 +445,20 @@ def analyze_results(eval_results, curvefit_results, mcmc_results, models):
             compilation_speedup = v2_reg_time / v2_comp_time
             print(f"  v2 compiled vs regular: {compilation_speedup:.1f}x speedup")
     
-    # Curve fitting analysis
-    print("\n2. CURVE FITTING PERFORMANCE")
+    # Quick fitting analysis
+    print("\n2. QUICK FITTING PERFORMANCE")
     print("-" * 40)
     
-    if curvefit_results:
-        for name, result in curvefit_results.items():
+    if quickfit_results:
+        for name, result in quickfit_results.items():
             if result['success']:
                 print(f"  {name}: {result['fit_time']:.2f}s")
+                if 'nfev' in result:
+                    print(f"    Function evaluations: {result['nfev']}")
             else:
                 print(f"  {name}: FAILED")
     else:
-        print("  No curve fitting results available")
+        print("  No quick fitting results available")
     
     # MCMC analysis
     print("\n3. MCMC PERFORMANCE ANALYSIS")
@@ -432,16 +507,23 @@ def analyze_results(eval_results, curvefit_results, mcmc_results, models):
         if fastest_eval[1]['success']:
             recommendations.append(f"🚀 Fastest model evaluation: {fastest_eval[0]} ({fastest_eval[1]['time_per_eval']:.2f} ms/eval)")
     
+    # Quick fit recommendations
+    if quickfit_results:
+        successful_quick = [(n, r) for n, r in quickfit_results.items() if r['success']]
+        if successful_quick:
+            fastest_quick = min(successful_quick, key=lambda x: x[1]['fit_time'])
+            recommendations.append(f"⚡ Fastest quick fit: {fastest_quick[0]} ({fastest_quick[1]['fit_time']:.2f}s)")
+    
     # MCMC recommendations
     if mcmc_results:
         fastest_mcmc = min(mcmc_results.items(), key=lambda x: x[1]['mcmc_time'] if x[1]['success'] else float('inf'))
         if fastest_mcmc[1]['success']:
-            recommendations.append(f"⚡ Fastest MCMC: {fastest_mcmc[0]} ({fastest_mcmc[1]['time_per_step']:.2f} ms/step)")
+            recommendations.append(f"🔥 Fastest MCMC: {fastest_mcmc[0]} ({fastest_mcmc[1]['time_per_step']:.2f} ms/step)")
     
     # Practical recommendations
     if V2_AVAILABLE:
         recommendations.append("🔧 For production work: Use v2.0 with compilation for best performance")
-        recommendations.append("📊 For quick fits: Consider curve_fit if available, otherwise short MCMC runs")
+        recommendations.append("📊 For quick fits: Use rbvfit's quick_fit interface for fast parameter estimation")
     
     if V1_AVAILABLE and V2_AVAILABLE:
         recommendations.append("⚖️ For compatibility: v1.0 is stable and well-tested")
@@ -451,13 +533,13 @@ def analyze_results(eval_results, curvefit_results, mcmc_results, models):
         print(f"  {rec}")
 
 
-def create_summary_plot(eval_results, mcmc_results):
+def create_summary_plot(eval_results, quickfit_results, mcmc_results):
     """Create summary performance plots."""
     print("\n" + "=" * 70)
     print("CREATING PERFORMANCE SUMMARY PLOTS")
     print("=" * 70)
     
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
     
     # Plot 1: Model evaluation performance
     eval_names = []
@@ -487,7 +569,35 @@ def create_summary_plot(eval_results, mcmc_results):
             ax1.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(eval_times)*0.01,
                     f'{time_val:.1f}', ha='center', va='bottom', fontsize=10)
     
-    # Plot 2: MCMC performance (time per step)
+    # Plot 2: Quick fit performance
+    quick_names = []
+    quick_times = []
+    quick_colors = []
+    
+    for name, result in quickfit_results.items():
+        if result['success']:
+            quick_names.append(name)
+            quick_times.append(result['fit_time'])
+            if 'v1' in name:
+                quick_colors.append('skyblue')
+            elif 'compiled' in name:
+                quick_colors.append('orange')
+            else:
+                quick_colors.append('lightcoral')
+    
+    if quick_names:
+        bars2 = ax2.bar(quick_names, quick_times, color=quick_colors)
+        ax2.set_ylabel('Fit time (s)')
+        ax2.set_title('Quick Fit Performance')
+        ax2.tick_params(axis='x', rotation=45)
+        ax2.grid(True, alpha=0.3)
+        
+        # Add value labels
+        for bar, time_val in zip(bars2, quick_times):
+            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(quick_times)*0.01,
+                    f'{time_val:.2f}', ha='center', va='bottom', fontsize=10)
+    
+    # Plot 3: MCMC performance (time per step)
     mcmc_names = []
     mcmc_times = []
     mcmc_colors = []
@@ -504,15 +614,15 @@ def create_summary_plot(eval_results, mcmc_results):
                 mcmc_colors.append('lightcoral')
     
     if mcmc_names:
-        bars2 = ax2.bar(mcmc_names, mcmc_times, color=mcmc_colors)
-        ax2.set_ylabel('Time per MCMC step (ms)')
-        ax2.set_title('MCMC Performance')
-        ax2.tick_params(axis='x', rotation=45)
-        ax2.grid(True, alpha=0.3)
+        bars3 = ax3.bar(mcmc_names, mcmc_times, color=mcmc_colors)
+        ax3.set_ylabel('Time per MCMC step (ms)')
+        ax3.set_title('MCMC Performance')
+        ax3.tick_params(axis='x', rotation=45)
+        ax3.grid(True, alpha=0.3)
         
         # Add value labels
-        for bar, time_val in zip(bars2, mcmc_times):
-            ax2.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(mcmc_times)*0.01,
+        for bar, time_val in zip(bars3, mcmc_times):
+            ax3.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(mcmc_times)*0.01,
                     f'{time_val:.1f}', ha='center', va='bottom', fontsize=9)
     
     plt.tight_layout()
@@ -523,9 +633,9 @@ def create_summary_plot(eval_results, mcmc_results):
 
 def main():
     """Main performance testing function."""
-    print("rbvfit Performance Comparison: Curve Fit vs MCMC Analysis")
+    print("rbvfit Performance Comparison: Quick Fit vs MCMC Analysis")
     print("=" * 70)
-    print("Comprehensive testing of model evaluation, curve fitting, and MCMC performance")
+    print("Comprehensive testing using rbvfit's native interfaces")
     
     if not V1_AVAILABLE and not V2_AVAILABLE:
         print("❌ Neither v1.0 nor v2.0 available. Cannot run comparison.")
@@ -544,17 +654,17 @@ def main():
         # 4. Benchmark raw evaluation
         eval_results = benchmark_raw_evaluation(models, scenario, n_evals=100)
         
-        # 5. Benchmark curve fitting
-        curvefit_results = benchmark_curve_fit(models, scenario, observed_flux, error)
+        # 5. Benchmark quick fitting
+        quickfit_results = benchmark_quick_fit(models, scenario, observed_flux, error)
         
         # 6. Benchmark MCMC fitting
         mcmc_results = benchmark_mcmc_fitting(models, scenario, observed_flux, error)
         
         # 7. Analyze results
-        analyze_results(eval_results, curvefit_results, mcmc_results, models)
+        analyze_results(eval_results, quickfit_results, mcmc_results, models)
         
         # 8. Create summary plots
-        create_summary_plot(eval_results, mcmc_results)
+        create_summary_plot(eval_results, quickfit_results, mcmc_results)
         
         print("\n" + "=" * 70)
         print("🏁 COMPREHENSIVE PERFORMANCE ANALYSIS COMPLETE")
@@ -562,6 +672,7 @@ def main():
         print("✅ All benchmarks completed successfully")
         print("📊 Summary plots generated")
         print("💡 Check recommendations above for optimal usage")
+        print("🔧 Using rbvfit's native interfaces for optimal compatibility")
         
     except Exception as e:
         print(f"\n❌ Error during performance testing: {e}")

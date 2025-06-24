@@ -22,36 +22,6 @@
 | 📁 Examples            | [Jump to Examples](#-examples)           |
 
 ---
-
-## 🚀 Quick Start
-
-```bash
-# Installation  
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-python setup.py develop
-
-# Basic usage with interactive parameter guessing
-from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.core.voigt_model import VoigtModel
-from rbvfit import guess_profile_parameters_interactive as g
-import rbvfit.vfit_mcmc as mc
-
-# Interactive parameter estimation
-tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
-tab.input_b_guess()  # GUI for interactive parameter input
-
-# Create configuration and fit
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
-                  components=len(tab.nguess))
-
-model = VoigtModel(config)
-theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
-fitter = mc.vfit(model.compile(), theta, bounds, wave, flux, error)
-fitter.runmcmc()
-```
-
 ## Installation
 
 ### From source
@@ -67,12 +37,42 @@ git clone https://github.com/rongmon/rbvfit.git
 cd rbvfit
 pip install -e .
 ```
-
 ### Dependencies
 
 - **Core**: numpy, scipy, matplotlib, emcee, corner
 - **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
 - **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
+
+
+## 🚀 Quick Start
+
+
+# Basic usage
+```python
+import numpy as np
+from rbvfit.core.fit_configuration import FitConfiguration
+from rbvfit.core.voigt_model import VoigtModel
+import rbvfit.vfit_mcmc as mc
+
+# Set initial parameter guesses
+nguess = [14.2, 14.5]  # log10(column density) in cm^-2
+bguess = [40., 30.]    # Doppler parameter in km/s
+vguess = [0., 0.]      # Velocity offset in km/s
+
+# Setting the upper and lower limits for the fit
+bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+
+# Create configuration and fit
+config = FitConfiguration()
+config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(nguess))
+model = VoigtModel(config)
+theta = np.concatenate([nguess, bguess, vguess])
+fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
+fitter.runmcmc()
+```
+
+
 
 ## 📚 Documentation
 

@@ -35,7 +35,7 @@ cd rbvfit
 # Install dependencies and rbvfit
 pip install -r requirements.txt
 pip install -e .
-
+```
 ### Alternative Installation Methods
 
 **Legacy method**:

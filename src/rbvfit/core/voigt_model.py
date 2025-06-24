@@ -23,6 +23,33 @@ try:
 except ImportError:
     HAS_LINETOOLS = False
 
+def mean_fwhm_pixels(FWHM_vel_kms:float, wave_obs_grid:np.ndarray) -> float:
+    """
+    Convert FWHM from velocity units (km/s) to pixels.
+    
+    Parameters
+    ----------
+    FWHM_vel_kms : float
+        Full Width at Half Maximum in km/s
+    wave_obs_grid : np.ndarray
+        Observed wavelength grid in Angstroms
+        
+    Returns
+    -------
+    float
+        Mean FWHM in pixels
+    """
+    if np.any(wave_obs_grid <= 0):
+        raise ValueError("Wavelength grid must be strictly positive.")
+    if len(wave_obs_grid) < 2:
+        raise ValueError("Wavelength grid must have at least two points.")
+
+
+    c_kms = 299792.458  # Speed of light in km/s
+    delta_lambda = np.gradient(wave_obs_grid)
+    fwhm_lambda = wave_obs_grid * FWHM_vel_kms / c_kms
+    fwhm_pixels = fwhm_lambda / delta_lambda
+    return np.mean(fwhm_pixels)
 
 def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float, 
               wv: np.ndarray) -> np.ndarray:

@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 
 # V2 imports only
 from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.core.voigt_model import VoigtModel
+from rbvfit.core.voigt_model import VoigtModel,mean_fwhm_pixels
 from rbvfit import vfit_mcmc as mc
 
 from rbcodes.utils.rb_spectrum import rb_spectrum
@@ -24,6 +24,9 @@ zabs=0.0
 wave_full=sp.wavelength.value
 flux=sp.flux.value/sp.co.value
 error=sp.sig.value/sp.co.value
+
+
+
 
 
 qt=np.isnan(flux)
@@ -72,7 +75,13 @@ print("\n=== Setting up V2 Model ===")
 config = FitConfiguration()
 config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=1)
 config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
-v2_model = VoigtModel(config, FWHM='6.5')
+
+# Lets assume instrument FWHM is given in km/s
+FWHM_vel = 18.0      # km/s - example value
+# Convert to pixels using your observed wavelength grid
+FWHM = str(mean_fwhm_pixels(FWHM_vel, wave))
+
+v2_model = VoigtModel(config, FWHM=FWHM)
 v2_compiled = v2_model.compile()
 print("✓ V2 model created and compiled")
 
@@ -93,7 +102,7 @@ fitter = mc.vfit(
     v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
-    sampler='emcee',
+    sampler='zeus',
     perturbation=1e-4  # Smaller perturbation for walker initialization
 )
 
@@ -149,7 +158,7 @@ results.convergence_diagnostics()
 # This is the main new feature - velocity space plots by ion!
 velocity_plots = results.plot_velocity_fits(
     show_components=True,      # Show individual components
-    save_path='fitting_result.png',
+    #save_path='fitting_result.png',
     show_rail_system=True     # Show component position markers
 )
 

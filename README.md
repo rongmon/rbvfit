@@ -72,6 +72,7 @@ fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
 
 # Extract best-fit parameters
+fitter.plot_corner() #First create corner plot
 best_theta = fitter.best_theta  # Best-fit parameter array
 best_N = best_theta[0:len(nguess)]  # Column densities
 best_b = best_theta[len(nguess):2*len(nguess)]  # Doppler parameters  

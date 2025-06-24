@@ -5,10 +5,20 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403232.svg)](https://doi.org/10.5281/zenodo.10403232)
 
-This suite of code will do a forward modeling analysis of absorption line spectrum using Bayesian Voigt profile fitting. This version 2.0 features multi-system support, automatic ion parameter tying, and multi-instrument joint fitting capabilities.
+This suite of code will do a forward modeling analysis of absorption line spectrum using Bayesian Voigt profile fitting. This version 2.0 features multi-system support, automatic ion parameter tying, multi-instrument joint fitting capabilities, and enhanced interactive parameter estimation tools.
 
 ![rbvfit Example](docs/images/rbvfit_example.png)
 *Example: Multi-component MgII absorption line fit with rbvfit*
+
+## 📋 Quick Navigation
+
+| Section | Link |
+|---------|------|
+| **🚀 Quick Start** | [Jump to Quick Start](#-quick-start) |
+| **💾 Installation** | [Jump to Installation](#installation) |
+| **🎮 Interactive Mode** | [Jump to Interactive Mode](#-interactive-mode) |
+| **📚 Documentation** | [Jump to Documentation](#-documentation) |
+| **📁 Examples** | [Jump to Examples](#-examples) |
 
 ## 🚀 Quick Start
 
@@ -18,26 +28,55 @@ git clone https://github.com/rongmon/rbvfit.git
 cd rbvfit
 python setup.py develop
 
-# Basic usage
+# Basic usage with interactive parameter guessing
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
+from rbvfit import guess_profile_parameters_interactive as g
 import rbvfit.vfit_mcmc as mc
 
-# Create configuration
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+# Interactive parameter estimation
+tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
+tab.input_b_guess()  # GUI for interactive parameter input
 
-# Fit your data
+# Create configuration and fit
+config = FitConfiguration()
+config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(tab.nguess))
+
 model = VoigtModel(config)
-fitter = mc.vfit(model, theta_guess, bounds, wave, flux, error)
+theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
+fitter = mc.vfit(model.compile(), theta, bounds, wave, flux, error)
 fitter.runmcmc()
 ```
+
+## Installation
+
+### From source
+```bash
+git clone https://github.com/rongmon/rbvfit.git
+cd rbvfit
+python setup.py develop
+```
+
+**Alternative (modern pip)**:
+```bash
+git clone https://github.com/rongmon/rbvfit.git
+cd rbvfit
+pip install -e .
+```
+
+### Dependencies
+
+- **Core**: numpy, scipy, matplotlib, emcee, corner
+- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
+- **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
 
 ## 📚 Documentation
 
 | Guide | Description | Level |
 |-------|-------------|-------|
 | [Quick Start Guide](docs/quick-start-guide.md) | Get your first fit running in 5 minutes | Beginner |
+| [Interactive Mode Guide](docs/interactive-mode-guide.md) | **Interactive parameter estimation workflow** | **Beginner** |
 | [User Guide](docs/user-guide.md) | Comprehensive workflow and concepts | Intermediate |
 | [Tutorials](docs/tutorials.md) | Step-by-step examples with code | All levels |
 | [Fitting Methods](docs/fitting-methods.md) | Quick fit vs MCMC comparison | Advanced |
@@ -45,11 +84,48 @@ fitter.runmcmc()
 
 ## ✨ Key Features
 
+- **🎯 Interactive Parameter Estimation**: Visual GUI for identifying components and setting initial guesses
 - **Multi-System Support**: Fit multiple absorption systems simultaneously
 - **Automatic Ion Tying**: Parameters shared correctly for same ions at same redshift
 - **Multi-Instrument Fitting**: Joint analysis of data from different telescopes
 - **Fast & Robust**: Both quick scipy fitting and full Bayesian MCMC
 - **Rich Visualization**: Corner plots, velocity plots, convergence diagnostics
+- **Cross-Platform**: Works in Jupyter notebooks and command-line environments
+
+## 🎮 Interactive Mode
+
+rbvfit 2.0 features an enhanced interactive parameter guessing system that makes initial parameter estimation intuitive and efficient:
+
+### Visual Component Identification
+```python
+from rbvfit import guess_profile_parameters_interactive as g
+
+# Launch interactive GUI
+tab = g.gui_set_clump(wave_obs, flux, error, zabs=4.948, wrest=1548.5, xlim=[-600, 600])
+```
+
+**Interactive Controls:**
+- **Left click** or `a` key: Add velocity guess at absorption features
+- **Right click** or `r` key: Remove nearest velocity guess  
+- **`q` or `ESC`**: Finish velocity selection
+
+### Parameter Input Interface
+```python
+# Interactive parameter customization
+tab.input_b_guess()  # GUI prompts for column density and Doppler parameters
+
+# Extract parameters for fitting
+nguess = tab.nguess  # log10(column density) in cm^-2
+bguess = tab.bguess  # Doppler parameter in km/s
+vguess = tab.vguess  # Velocity offsets in km/s
+```
+
+**Environment Support:**
+- **Jupyter Notebooks**: Rich widget interface with inline plotting
+- **Command Line**: Cross-platform matplotlib interaction
+- **Remote Sessions**: Works with X11 forwarding and VNC
+
+See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed workflow and advanced features.
 
 ## Installation
 
@@ -70,12 +146,16 @@ pip install -e .
 ## Dependencies
 
 - **Core**: numpy, scipy, matplotlib, emcee, corner
+- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
 - **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
 
 ## What's New in Version 2.0
 
 | Feature | Version 1.0 | Version 2.0 |
 |---------|-------------|-------------|
+| **Interactive Tools** | Basic matplotlib interaction | **Enhanced GUI with widget support** |
+| **Parameter Estimation** | Manual guess specification | **Visual component identification** |
+| **Environment Support** | Command-line only | **Jupyter + command-line optimization** |
 | **Multi-system setup** | Manual configuration | Ion-specific automatic configuration |
 | **Parameter tying** | Single redshift only | Multi-redshift system support |
 | **Multi-instrument** | Limited (2 instruments) | Full N-instrument joint fitting |
@@ -84,6 +164,28 @@ pip install -e .
 | **Data persistence** | Manual save/load | HDF5 with complete metadata |
 | **Architecture** | Monolithic scripts | Modular core components |
 
+## Installation
+
+### From source
+```bash
+git clone https://github.com/rongmon/rbvfit.git
+cd rbvfit
+python setup.py develop
+```
+
+**Alternative (modern pip)**:
+```bash
+git clone https://github.com/rongmon/rbvfit.git
+cd rbvfit
+pip install -e .
+```
+
+## Dependencies
+
+- **Core**: numpy, scipy, matplotlib, emcee, corner
+- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
+- **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
+
 ## 📁 Examples
 
 Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
@@ -91,6 +193,7 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - `example_voigt_model.py` - Basic model creation
 - `example_voigt_fitter.py` - Single system fitting  
 - `rbvfit2-single-instrument-tutorial.py` - Complete single dataset workflow
+- `rbvfit2-single-instrument-interactive-tutorial.py` - **Interactive mode demonstration**
 - `rbvfit2-multi-instrument-tutorial.py` - Joint fitting multiple datasets
 
 ## Description
@@ -104,6 +207,9 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **fit_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
 - **quick_fit_interface.py**: Fast scipy.optimize-based fitting interface
 
+**Interactive Tools**:
+- **guess_profile_parameters_interactive.py**: **Enhanced interactive parameter estimation with GUI support**
+
 **Fitting Engine**:
 - **vfit_mcmc.py**: MCMC fitter supporting emcee and zeus samplers for Bayesian parameter estimation
 
@@ -114,6 +220,7 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **rb_interactive_vpfit.py**: Interactive Voigt profile fitter with least squares and MCMC options
 
 **Key Version 2.0 Improvements**:
+- **🎯 Enhanced Interactive Tools**: Visual component identification with cross-platform GUI support
 - **Ion-specific model setup**: Clean configuration system with automatic ion detection and parameter organization
 - **Enhanced multi-instrument support**: Full N-instrument joint fitting (v1.0 limited to 2 instruments)  
 - **Multi-redshift parameter tying**: Automatic parameter sharing for same ions across different redshift systems
@@ -121,6 +228,49 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **Advanced results analysis**: Comprehensive fit diagnostics, convergence analysis, and publication-quality visualization
 - **HDF5 persistence**: Complete save/load functionality for complex fitting results
 - **Modular architecture**: Clean separation between models, fitting, and analysis components
+
+## 🎯 Typical Workflow
+
+### 1. Interactive Parameter Estimation
+```python
+from rbvfit import guess_profile_parameters_interactive as g
+
+# Visual component identification
+tab = g.gui_set_clump(wave, flux, error, zabs, wrest=1548.5)
+tab.input_b_guess()  # Interactive parameter input
+```
+
+### 2. Model Configuration
+```python
+from rbvfit.core.fit_configuration import FitConfiguration
+from rbvfit.core.voigt_model import VoigtModel
+
+config = FitConfiguration()
+config.add_system(z=zabs, ion='CIV', transitions=[1548.2, 1550.3], 
+                  components=len(tab.nguess))
+model = VoigtModel(config)
+```
+
+### 3. MCMC Fitting
+```python
+import rbvfit.vfit_mcmc as mc
+
+theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
+bounds, lb, ub = mc.set_bounds(tab.nguess, tab.bguess, tab.vguess)
+
+fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
+fitter.runmcmc()
+```
+
+### 4. Results Analysis
+```python
+from rbvfit.core import fit_results as f
+
+results = f.FitResults(fitter, model)
+results.print_fit_summary()
+results.corner_plot()
+results.plot_velocity_fits()
+```
 
 ## Citation
 
@@ -131,6 +281,7 @@ If you use rbvfit in your research, please cite:
 ## Support
 
 - **Issues**: [GitHub Issues](https://github.com/rongmon/rbvfit/issues)
+- **Interactive Mode Help**: See [Interactive Mode Guide](docs/interactive-mode-guide.md)
 
 **Note**: 
 - **Version 1.0**: Written By: Rongmon Bordoloi. July 2019. Tested on: Python 3.7+

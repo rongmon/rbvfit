@@ -9,6 +9,16 @@ from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel,mean_fwhm_pixels
 from rbvfit import vfit_mcmc as mc
 
+# Try to import zeus sampler
+try:
+    import zeus
+    HAS_ZEUS = True
+except ImportError:
+    HAS_ZEUS = False
+    zeus = None
+
+
+
 from rbcodes.utils.rb_spectrum import rb_spectrum
 from pkg_resources import resource_filename
 
@@ -96,13 +106,20 @@ print(f"{'='*50}")
     
 start_time = time.time()
 success = False
+
+#if ZEUS is installed try that, otherwise use emcee
+
+if HAS_ZEUS:
+    sampler='zeus'
+else:
+    sampler='emcee'
     
 # Create fitter
 fitter = mc.vfit(
     v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
-    sampler='zeus',
+    sampler=sampler,
     perturbation=1e-4  # Smaller perturbation for walker initialization
 )
 
@@ -127,6 +144,7 @@ fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
 
 #plot corner     
 #fitter.plot_corner()
+#fitter.best_theta # These are the best fit parameters
 #fitter.fit_quick() 
 
 elapsed_time=time.time()-start_time        

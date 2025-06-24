@@ -1,24 +1,27 @@
 # rbvfit
-======
-
-**Bayesian Voigt Profile Fitting for Absorption Line Spectroscopy**
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403232.svg)](https://doi.org/10.5281/zenodo.10403232)
 
-This suite of code will do a forward modeling analysis of absorption line spectrum using Bayesian Voigt profile fitting. This version 2.0 features multi-system support, automatic ion parameter tying, multi-instrument joint fitting capabilities, and enhanced interactive parameter estimation tools.
+**Bayesian Voigt Profile Fitting for Absorption Line Spectroscopy**
 
-![rbvfit Example](docs/images/rbvfit_example.png)
-*Example: Multi-component MgII absorption line fit with rbvfit*
+`rbvfit` performs forward modeling of absorption line spectra using Bayesian Voigt profile fitting. Version 2.0 introduces multi-system support, automatic ion parameter tying, multi-instrument joint fitting, and interactive parameter estimation tools.
+
+![rbvfit Example](docs/images/rbvfit_example.png)  
+*Example: Multi-component MgII absorption line fit with `rbvfit`*
+
+---
 
 ## 📋 Quick Navigation
 
-| Section | Link |
-|---------|------|
-| **🚀 Quick Start** | [Jump to Quick Start](#-quick-start) |
-| **💾 Installation** | [Jump to Installation](#installation) |
-| **🎮 Interactive Mode** | [Jump to Interactive Mode](#-interactive-mode) |
-| **📚 Documentation** | [Jump to Documentation](#-documentation) |
-| **📁 Examples** | [Jump to Examples](#-examples) |
+| Section                | Link                                      |
+|------------------------|-------------------------------------------|
+| 🚀 Quick Start         | [Jump to Quick Start](#-quick-start)     |
+| 💾 Installation        | [Jump to Installation](#installation)    |
+| 🎮 Interactive Mode    | [Jump to Interactive Mode](#-interactive-mode) |
+| 📚 Documentation       | [Jump to Documentation](#-documentation) |
+| 📁 Examples            | [Jump to Examples](#-examples)           |
+
+---
 
 ## 🚀 Quick Start
 
@@ -127,64 +130,22 @@ vguess = tab.vguess  # Velocity offsets in km/s
 
 See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed workflow and advanced features.
 
-## Installation
-
-### From source
-```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-python setup.py develop
-```
-
-**Alternative (modern pip)**:
-```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-pip install -e .
-```
-
-## Dependencies
-
-- **Core**: numpy, scipy, matplotlib, emcee, corner
-- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
-- **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
 
 ## What's New in Version 2.0
 
-| Feature | Version 1.0 | Version 2.0 |
-|---------|-------------|-------------|
-| **Interactive Tools** | Basic matplotlib interaction | **Enhanced GUI with widget support** |
-| **Parameter Estimation** | Manual guess specification | **Visual component identification** |
-| **Environment Support** | Command-line only | **Jupyter + command-line optimization** |
-| **Multi-system setup** | Manual configuration | Ion-specific automatic configuration |
-| **Parameter tying** | Single redshift only | Multi-redshift system support |
-| **Multi-instrument** | Limited (2 instruments) | Full N-instrument joint fitting |
-| **Fitting algorithms** | emcee only | emcee + zeus + scipy curve_fit |
-| **Results analysis** | Basic parameter output | Advanced diagnostics + visualization |
-| **Data persistence** | Manual save/load | HDF5 with complete metadata |
-| **Architecture** | Monolithic scripts | Modular core components |
+| Feature                  | v1.0               | v2.0                          |
+| ------------------------ | ------------------ | ----------------------------- |
+| Interactive Tools        | ✗ Basic matplotlib | ✅ GUI with widget support     |
+| Parameter Estimation     | ✗ Manual           | ✅ Visual + GUI guessing       |
+| Environment Support      | CLI only           | ✅ CLI + Jupyter               |
+| Multi-System Setup       | ✗ Manual config    | ✅ Ion-based auto setup        |
+| Parameter Tying          | Single redshift    | ✅ Multi-redshift              |
+| Multi-Instrument Fitting | 2 instruments max  | ✅ Full joint N-instrument fit |
+| Fitting Methods          | emcee only         | ✅ emcee + zeus + curve\_fit   |
+| Results Analysis         | Basic output       | ✅ Diagnostics + plots         |
+| Data Persistence         | Manual             | ✅ HDF5 w/ metadata            |
+| Code Architecture        | Monolithic         | ✅ Modular                     |
 
-## Installation
-
-### From source
-```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-python setup.py develop
-```
-
-**Alternative (modern pip)**:
-```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-pip install -e .
-```
-
-## Dependencies
-
-- **Core**: numpy, scipy, matplotlib, emcee, corner
-- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
-- **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
 
 ## 📁 Examples
 

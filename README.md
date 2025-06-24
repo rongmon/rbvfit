@@ -31,18 +31,12 @@ conda create -n rbvfit python=3.9
 conda activate rbvfit
 
 # Install dependencies and rbvfit
-pip install -r requirements.txt
-pip install -e .
-```
-
-### Alternative Installation Methods
-
-**From source (pip only)**:
-```bash
 git clone https://github.com/rongmon/rbvfit.git
 cd rbvfit
 pip install -e .
 ```
+
+### Alternative Installation Methods
 
 **Legacy method**:
 ```bash

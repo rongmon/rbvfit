@@ -19,7 +19,8 @@ print(f"rbvfit version: {rbvfit.__version__}")
 
 ```python
 import numpy as np
-from rbvfit.core import FitConfiguration, VoigtModel
+from rbvfit.core.fit_configuration import FitConfiguration
+from rbvfit.core.voigt_model import VoigtModel
 import rbvfit.vfit_mcmc as mc
 ```
 
@@ -97,7 +98,7 @@ fitter = mc.vfit(
     lb, ub, wave, flux_obs, error
 )
 
-# Quick fit (fast, good for initial estimates)
+# Quick fit (fast, good for initial estimates-- NOT MCMC)
 print("Running quick fit...")
 fitter.fit_quick()
 print("✓ Quick fit completed!")
@@ -187,7 +188,7 @@ fitter = mc.vfit(compiled_model.model_flux, theta_guess, lb, ub, wave, flux_obs,
 fitter.fit_quick()
 
 # View results
-mc.plot_quick_fit(model, fitter, show_residuals=True)
+mc.plot_model(model, fitter, show_residuals=True)
 print(f"Recovery: {np.abs(fitter.theta_best - true_params)}")
 ```
 

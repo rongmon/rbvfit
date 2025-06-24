@@ -8,5 +8,5 @@ corner>=2.1.0
 # Optional dependencies (install as needed)
 # ipywidgets>=7.6.0        # For Jupyter interactive tools
 # linetools>=0.3.0         # For HST/COS LSF support
-# zeus-mcmc>=2.3.0         # Alternative high-performance MCMC sampler
-# h5py>=2.10.0            # For HDF5 results persistence
+zeus-mcmc>=2.3.0         # Alternative high-performance MCMC sampler
+h5py>=2.10.0            # For HDF5 results persistence

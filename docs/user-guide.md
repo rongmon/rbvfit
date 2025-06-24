@@ -41,7 +41,7 @@ from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 
 #Analysis module import
-from rbvfit.core import fit_results as f
+from rbvfit.core import fit_results as fr
 ```
 
 ```python
@@ -99,7 +99,7 @@ fitter.runmcmc()  # or fitter.fit_quick()
 
 # 6. Analyze
 
-results = FitResults(fitter, model)
+results = fr.FitResults(fitter, model)
 results.print_fit_summary()
 ```
 

@@ -24,18 +24,31 @@
 ---
 ## Installation
 
-### From source
+### Recommended Installation (conda)
 ```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-python setup.py develop
+# Create new conda environment
+conda create -n rbvfit python=3.9
+conda activate rbvfit
+
+# Install dependencies and rbvfit
+pip install -r requirements.txt
+pip install -e .
 ```
 
-**Alternative (modern pip)**:
+### Alternative Installation Methods
+
+**From source (pip only)**:
 ```bash
 git clone https://github.com/rongmon/rbvfit.git
 cd rbvfit
 pip install -e .
+```
+
+**Legacy method**:
+```bash
+git clone https://github.com/rongmon/rbvfit.git
+cd rbvfit
+python setup.py develop
 ```
 ### Dependencies
 
@@ -72,7 +85,6 @@ fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
 
 # Extract best-fit parameters
-fitter.plot_corner() #First create corner plot
 best_theta = fitter.best_theta  # Best-fit parameter array
 best_N = best_theta[0:len(nguess)]  # Column densities
 best_b = best_theta[len(nguess):2*len(nguess)]  # Doppler parameters  

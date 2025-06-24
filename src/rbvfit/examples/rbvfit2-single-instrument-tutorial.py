@@ -163,7 +163,8 @@ fitter = mc.vfit(
     wave_obs, flux, error,        # Primary dataset (XShooter data)
     no_of_Chain=50,
     no_of_steps=500,
-    perturbation=1e-4
+    perturbation=1e-4,
+    sampler='zeus'
     )
 
 

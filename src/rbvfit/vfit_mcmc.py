@@ -33,7 +33,7 @@ except (AttributeError, RuntimeError):
 
 class vfit(object):
     def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, 
-                 no_of_Chain=50, no_of_steps=1000, perturbation=1e-6,
+                 no_of_Chain=50, no_of_steps=1000, perturbation=1e-4,
                  skip_initial_state_check=False, sampler='emcee',
                  # New multi-instrument interface
                  multi_instrument=False, instrument_data=None,

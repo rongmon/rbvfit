@@ -238,6 +238,7 @@ config = FitConfiguration()
 config.add_system(z=zabs, ion='CIV', transitions=[1548.2, 1550.3], 
                   components=len(tab.nguess))
 model = VoigtModel(config)
+model_compiled=model.compile()
 ```
 
 ### 3. MCMC Fitting
@@ -247,7 +248,7 @@ import rbvfit.vfit_mcmc as mc
 theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
 bounds, lb, ub = mc.set_bounds(tab.nguess, tab.bguess, tab.vguess)
 
-fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
+fitter = mc.vfit(model_compiled.model_flux, theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
 ```
 

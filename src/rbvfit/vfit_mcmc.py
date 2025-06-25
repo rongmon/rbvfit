@@ -19,10 +19,19 @@ except ImportError:
     HAS_ZEUS = False
     zeus = None
 
+
+# Detect OS to set multiprocessing context
+if sys.platform.startswith('win'):
+    # Windows requires 'spawn' context
+    MP_CONTEXT = 'spawn'
+elif sys.platform.startswith('darwin') or sys.platform.startswith('linux'):
+    # Use 'fork' for efficiency in Unix-like systems
+    MP_CONTEXT = 'fork'
+    
+
 # Set up optimized multiprocessing context
 try:
-    OptimizedPool = mp.get_context('fork').Pool
-    MP_CONTEXT = 'fork'
+    OptimizedPool = mp.get_context(MP_CONTEXT).Pool
 except (AttributeError, RuntimeError):
     # Fallback to default if fork is not available
     OptimizedPool = mp.Pool

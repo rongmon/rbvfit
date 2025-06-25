@@ -89,14 +89,39 @@ theta = np.concatenate([nguess, bguess, vguess])
 fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
 
-#quick corner plot
-fitter.plot_corner()
+#quick results
+from rbvfit.core import fit_results as fr
+# Analyze results using FitResults (recommended approach)
+results = fr.FitResults(fitter, model)
+results.print_fit_summary()  # Quick overview
 
-# Extract best-fit parameters
-best_theta = fitter.best_theta  # Best-fit parameter array
-best_N = best_theta[0:len(nguess)]  # Column densities
-best_b = best_theta[len(nguess):2*len(nguess)]  # Doppler parameters  
-best_v = best_theta[2*len(nguess):3*len(nguess)]  # Velocities
+
+# Get organized parameter summary
+param_summary = results.parameter_summary()
+
+# Access all percentiles
+percentiles_16th = param_summary.percentiles['16th']  # 16th percentile values
+percentiles_50th = param_summary.percentiles['50th']  # 50th percentile (median/best_fit)
+percentiles_84th = param_summary.percentiles['84th']  # 84th percentile values
+
+# Calculate asymmetric errors
+lower_errors = param_summary.best_fit - percentiles_16th  # Lower error bars
+upper_errors = percentiles_84th - param_summary.best_fit  # Upper error bars
+
+print(f"\nBest-fit parameters with asymmetric errors:")
+for name, value, lower_err, upper_err in zip(param_summary.names, 
+                                           param_summary.best_fit,
+                                           lower_errors, 
+                                           upper_errors):
+    print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
+
+# Or show the actual percentile values
+print(f"\nParameter percentiles:")
+for name, p16, p50, p84 in zip(param_summary.names,
+                              percentiles_16th,
+                              percentiles_50th, 
+                              percentiles_84th):
+    print(f"  {name}: {p16:.3f} ({p50:.3f}) {p84:.3f}")
 ```
 
 

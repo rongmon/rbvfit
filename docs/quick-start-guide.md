@@ -136,7 +136,12 @@ for name, value, lower_err, upper_err in zip(param_summary.names,
                                            lower_errors, 
                                            upper_errors):
     print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
+```
 
+### 5. Results visualization
+
+
+```python
 #Corner plots
 results.corner_plot()
 

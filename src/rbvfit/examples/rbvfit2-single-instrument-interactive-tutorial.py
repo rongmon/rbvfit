@@ -18,7 +18,9 @@ from rbcodes.GUIs.rb_spec import load_rb_spec_object
 # Global settings
 verbose=True
 
-# Set up matplotlib for interactive use
+# Set up matplotlib for interactive use - CRITICAL FIX
+import matplotlib
+matplotlib.use('Qt5Agg')  # Use Qt backend for proper interactivity
 plt.ion()  # Turn on interactive mode
 
 # ============================================================================
@@ -69,11 +71,40 @@ print("\n" + "=" * 60)
 print("INTERACTIVE PARAMETER ESTIMATION")
 print("=" * 60)
 
-# Set up interactive GUI for component identification and parameter guessing
-tab = g.gui_set_clump(wave_obs, flux, error, zabs_CIV, wrest=1548.5, xlim=[-600,600])
+print("Setting up interactive GUI...")
+print("INSTRUCTIONS:")
+print("1. A spectrum plot will appear")
+print("2. Click on absorption features to mark velocity components")
+print("3. Close the plot window when done")
+print("4. You'll be prompted to enter b-parameters")
 
-# Interactive input of parameters - GUI will appear for user input
-tab.input_b_guess()
+# Set up interactive GUI for component identification and parameter guessing
+try:
+    tab = g.gui_set_clump(wave_obs, flux, error, zabs_CIV, wrest=1548.5, xlim=[-600,600])
+    
+    # CRITICAL FIX: Force the plot to show and wait for user interaction
+    plt.draw()
+    plt.pause(0.1)  # Small pause to ensure plot renders
+    
+    print("\n>>> CLICK ON ABSORPTION FEATURES IN THE PLOT <<<")
+    print(">>> Close the plot window when finished clicking <<<")
+    
+    # Wait for the user to interact with the plot
+    input("Press Enter after you've clicked on features and closed the plot window...")
+    
+    # Interactive input of parameters - GUI will appear for user input
+    print("\nNow you'll be prompted to enter b-parameters...")
+    tab.input_b_guess()
+    
+except Exception as e:
+    print(f"Error in interactive session: {e}")
+    print("Using default parameters instead...")
+    # Fallback parameters if interactive fails
+    tab = type('obj', (object,), {
+        'nguess': np.array([13.5]),
+        'bguess': np.array([20.0]), 
+        'vguess': np.array([0.0])
+    })()
 
 # Extract parameter guesses from interactive session
 nguess = tab.nguess  # log10(column density in cm^-2) 
@@ -81,21 +112,27 @@ bguess = tab.bguess  # Doppler parameter in km/s - thermal + turbulent broadenin
 vguess = tab.vguess  # Velocity offset in km/s - relative to systemic redshift
 
 print("Initial parameter guesses from interactive session:")
-print(f"  N (log column density): {nguess[0]:.1f} [log cm^-2]")
-print(f"  b (Doppler parameter):  {bguess[0]:.1f} km/s")
-print(f"  v (velocity offset):    {vguess[0]:.1f} km/s")
+for i in range(len(nguess)):
+    print(f"  Component {i+1}:")
+    print(f"    N (log column density): {nguess[i]:.1f} [log cm^-2]")
+    print(f"    b (Doppler parameter):  {bguess[i]:.1f} km/s")
+    print(f"    v (velocity offset):    {vguess[i]:.1f} km/s")
 
 # Create theta array for MCMC (concatenated parameter vector)
 theta = np.concatenate([nguess, bguess, vguess])
 print(f"\nTheta array structure: {theta}")
-print("  theta[0] = N, theta[1] = b, theta[2] = v")
+print(f"  theta[0:{len(nguess)}] = N values")
+print(f"  theta[{len(nguess)}:{len(nguess)+len(bguess)}] = b values") 
+print(f"  theta[{len(nguess)+len(bguess)}:] = v values")
 
 # Set parameter bounds using rbvfit's bound-setting utility
 bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
 print(f"\nParameter bounds:")
-print(f"  N: [{lb[0]:.1f}, {ub[0]:.1f}] [log cm^-2]")
-print(f"  b: [{lb[1]:.1f}, {ub[1]:.1f}] km/s") 
-print(f"  v: [{lb[2]:.1f}, {ub[2]:.1f}] km/s")
+for i in range(len(nguess)):
+    print(f"  Component {i+1}:")
+    print(f"    N: [{lb[i]:.1f}, {ub[i]:.1f}] [log cm^-2]")
+    print(f"    b: [{lb[i+len(nguess)]:.1f}, {ub[i+len(nguess)]:.1f}] km/s")
+    print(f"    v: [{lb[i+len(nguess)+len(bguess)]:.1f}, {ub[i+len(nguess)+len(bguess)]:.1f}] km/s")
 
 print("\n✓ Parameter estimation complete")
 
@@ -112,6 +149,12 @@ print("=" * 60)
 config = FitConfiguration()
 config.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=len(nguess))
 
+print(f"Physical system configured:")
+print(f"  Ion: CIV")
+print(f"  Redshift: z = {zabs_CIV:.4f}")
+print(f"  Transitions: [1548.2, 1550.3] Å")
+print(f"  Components: {len(nguess)}")
+
 print("\n✓ Physical system configured")
 
 # ============================================================================
@@ -124,6 +167,8 @@ print("=" * 60)
 
 # Define instrumental resolutions (Full Width at Half Maximum in pixels)
 FWHM_XShooter = '2.2' # XShooter
+
+print(f"Instrumental resolution: FWHM = {FWHM_XShooter} pixels")
 
 # Create instrument-specific models
 model = VoigtModel(config, FWHM=FWHM_XShooter)  
@@ -146,68 +191,122 @@ print("\n✓ Single-instrument model compiled")
 # ============================================================================
 
 print("\n" + "=" * 60)
-print("RUNNING JOINT MCMC FITTING")
+print("RUNNING MCMC FITTING")
 print("=" * 60)
 
-print("Setting up mcmc fitter...")
+print("Setting up MCMC fitter...")
 
-# Create vfit_mcmc object with multi-instrument support
+# Create vfit_mcmc object 
 fitter = mc.vfit(
-    compiled.model_flux,           # Primary model function (XShooter)
-    theta, lb, ub,            # Parameters and bounds
-    wave_obs, flux, error,        # Primary dataset (XShooter data)
-    no_of_Chain=50,
-    no_of_steps=500,
-    perturbation=1e-4,
-    sampler='zeus'
-    )
+    compiled.model_flux,           # Model function
+    theta, lb, ub,                 # Parameters and bounds
+    wave_obs, flux, error,         # Dataset
+    no_of_Chain=50,               # Number of walkers
+    no_of_steps=500,              # Number of steps
+    perturbation=1e-4,            # Walker initialization perturbation
+    sampler='zeus'                # Sampler choice
+)
 
 print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
 
 # Run MCMC with optimization
-fitter.runmcmc(optimize=True)  # optimize=True finds better starting point
-
-print("\n✓ MCMC fitting completed")
+try:
+    fitter.runmcmc(optimize=True)  # optimize=True finds better starting point
+    print("\n✓ MCMC fitting completed successfully")
+except Exception as e:
+    print(f"\n✗ MCMC fitting failed: {e}")
+    print("You may need to adjust initial parameters or bounds")
+    sys.exit(1)
 
 # ============================================================================
 # PART 7: RESULTS ANALYSIS
 # ============================================================================
 # Display and analyze the fitting results
-# KEY CONCEPT: Joint constraints from both datasets
 
 print("\n" + "=" * 60)
 print("ANALYZING FITTING RESULTS")
 print("=" * 60)
 
-from rbvfit.core import fit_results as f
-# Save results
-results = f.FitResults(fitter, model)
-#results.save('my_fit.h5')
+try:
+    from rbvfit.core import fit_results as f
+    
+    # Create results object
+    results = f.FitResults(fitter, model)
+    
+    # Print summary
+    print("Fit summary:")
+    results.print_fit_summary()
+    
+    # Generate plots with proper display handling
+    print("\nGenerating diagnostic plots...")
+    
+    # Corner plot
+    print("1. Corner plot (parameter posterior distributions)...")
+    fig_corner = results.corner_plot()
+    if fig_corner:
+        plt.figure(fig_corner.number)
+        plt.draw()
+        plt.pause(0.1)
+    
+    # Convergence diagnostics
+    print("2. Convergence diagnostics...")
+    conv_results = results.convergence_diagnostics()
+    
+    # Chain trace plot
+    print("3. Chain trace plots...")
+    fig_trace = results.chain_trace_plot()
+    if fig_trace:
+        plt.figure(fig_trace.number)
+        plt.draw()
+        plt.pause(0.1)
+    
+    # Velocity space plots
+    print("4. Velocity space fit plots...")
+    velocity_plots = results.plot_velocity_fits(
+        show_components=True,      # Show individual components
+        show_rail_system=True     # Show component position markers
+    )
+    
+    if velocity_plots:
+        plt.figure(velocity_plots.number)
+        plt.draw()
+        plt.pause(0.1)
+    
+    print("\n✓ All plots generated successfully")
+    
+    # Optional: Save results
+    save_results = input("\nSave results to file? (y/n): ").lower().strip()
+    if save_results in ['y', 'yes']:
+        filename = input("Enter filename (or press Enter for 'fit_results.h5'): ").strip()
+        if not filename:
+            filename = 'fit_results.h5'
+        results.save(filename)
+        print(f"Results saved to {filename}")
 
-# Load and analyze
-#results = f.FitResults.load('my_fit.h5')
-results.print_fit_summary()
+except Exception as e:
+    print(f"Error in results analysis: {e}")
+    print("Basic fit completed, but results analysis failed")
 
-print("Generating corner plot (parameter posterior distributions)...")
-results.corner_plot()#save_path='corner.pdf')
-plt.show(block=False)  # Non-blocking show
+# ============================================================================
+# FINAL DISPLAY
+# ============================================================================
 
-results.convergence_diagnostics()
-plt.show(block=False)  # Non-blocking show
+print("\n" + "=" * 60)
+print("FITTING COMPLETE")
+print("=" * 60)
+print("All plots should now be displayed.")
+print("Close plot windows manually when done examining results.")
 
-# Visual chain inspection
-results.chain_trace_plot()#save_path='trace_plots.pdf')
-plt.show(block=False)  # Non-blocking show
+# Keep all plots open - THIS IS THE KEY FIX
+print("\nKeeping script alive to maintain plot windows...")
+print("Press Ctrl+C to exit when done examining plots.")
 
-# This is the main new feature - velocity space plots by ion!
-velocity_plots = results.plot_velocity_fits(
-    show_components=True,      # Show individual components
-    show_rail_system=True     # Show component position markers
-)
-
-# Keep all plots open and script running
-plt.show(block=True)  # Final blocking call to keep everything open
-
-# For single ion systems, also try velocity range control:
-#results.plot_velocity_fits(velocity_range=(-600, 600))
+try:
+    # Keep the script running to maintain plot windows
+    while True:
+        plt.pause(1.0)  # Check every second
+except KeyboardInterrupt:
+    print("\nExiting...")
+    plt.close('all')  # Clean up all figures
+    sys.exit(0)

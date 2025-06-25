@@ -95,9 +95,67 @@ print(f"True values:   {true_params}")
 # Create fitter
 fitter = mc.vfit(
     compiled_model.model_flux, theta_guess, 
-    lb, ub, wave, flux_obs, error
+    lb, ub, wave, flux_obs, error,sampler='emcee'
 )
 
+
+# Set MCMC parameters
+fitter.no_of_Chain = 20    # Number of walkers
+fitter.no_of_steps = 500   # Number of MCMC steps
+
+# Run MCMC
+fitter.runmcmc(optimize=True, verbose=True)
+
+```
+
+### 5. View Results
+
+```python
+
+# Enhanced results analysis
+from rbvfit.core import fit_results as fr
+results = fr.FitResults(fitter, model)
+#Print best fit parameters
+results.print_fit_summary()
+
+# Get organized parameter summary
+param_summary = results.parameter_summary()
+best_fit=param_summary.best_fit
+# Access all percentiles
+percentiles_16th = param_summary.percentiles['16th']  # 16th percentile values
+percentiles_50th = param_summary.percentiles['50th']  # 50th percentile (median/best_fit)
+percentiles_84th = param_summary.percentiles['84th']  # 84th percentile values
+
+# Calculate asymmetric errors
+lower_errors = param_summary.best_fit - percentiles_16th  # Lower error bars
+upper_errors = percentiles_84th - param_summary.best_fit  # Upper error bars
+
+print(f"\nBest-fit parameters with asymmetric errors:")
+for name, value, lower_err, upper_err in zip(param_summary.names, 
+                                           param_summary.best_fit,
+                                           lower_errors, 
+                                           upper_errors):
+    print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
+
+#Corner plots
+results.corner_plot()
+
+# Velocity space plots by ion!
+velocity_plots = results.plot_velocity_fits(
+    show_components=True,      # Show individual components
+    show_rail_system=True     # Show component position markers
+)
+```
+
+
+
+
+
+### Option B: Quick Fitting (seconds)
+Perfect for initial parameter estimation and simple systems:
+
+```python
+# uses scipy.optimize.curve_fit
 # Quick fit (fast, good for initial estimates-- NOT MCMC)
 print("Running quick fit...")
 fitter.fit_quick()
@@ -107,11 +165,8 @@ print("✓ Quick fit completed!")
 best_params = fitter.theta_best
 print(f"Best-fit parameters: {best_params}")
 print(f"Parameter recovery: {np.abs(best_params - true_params)}")
-```
 
-### 5. View Results
 
-```python
 # Plot the fit
 mc.plot_quick_fit(model, fitter, show_residuals=True)
 
@@ -126,39 +181,6 @@ for i, name in enumerate(param_names):
     print(f"{name:>6}: True={true_val:6.1f}, Fit={fit_val:6.1f}, Diff={diff:+6.1f}")
 ```
 
-## Quick vs Full MCMC (3 minutes)
-
-### Option A: Quick Fitting (seconds)
-Perfect for initial parameter estimation and simple systems:
-
-```python
-# Already shown above - uses scipy.optimize.curve_fit
-fitter.fit_quick()
-print(f"Quick fit uncertainties: {fitter.theta_best_error}")
-```
-
-### Option B: Full Bayesian MCMC (minutes)
-For robust uncertainties and complex systems:
-
-```python
-# Set MCMC parameters
-fitter.no_of_Chain = 20    # Number of walkers
-fitter.no_of_steps = 500   # Number of MCMC steps
-
-# Run MCMC
-fitter.runmcmc(optimize=True, verbose=True)
-
-# Enhanced results analysis
-from rbvfit.core import fit_results as fr
-results = fr.FitResults(fitter, model)
-results.print_fit_summary()
-results.corner_plot()
-# Velocity space plots by ion!
-velocity_plots = results.plot_velocity_fits(
-    show_components=True,      # Show individual components
-    show_rail_system=True     # Show component position markers
-)
-```
 
 ## Complete Working Example
 
@@ -190,9 +212,9 @@ bounds, lb, ub = mc.set_bounds(N_guess, b_guess, v_guess)
 theta_guess = np.concatenate([N_guess, b_guess, v_guess])
 
 fitter = mc.vfit(compiled_model.model_flux, theta_guess, lb, ub, wave, flux_obs, error)
-fitter.fit_quick()
 
-# View results
+fitter.runmcmc(optimize=True, verbose=True)
+# View results alternative plotting method
 mc.plot_model(model, fitter, show_residuals=True)
 print(f"Recovery: {np.abs(fitter.theta_best - true_params)}")
 ```

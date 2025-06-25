@@ -117,6 +117,41 @@ fitter.runmcmc(optimize=True, verbose=True)
 from rbvfit.core import fit_results as f
 results = f.FitResults(fitter, model)
 results.print_fit_summary()
+
+#6. Extract best fit and plot it
+param_summary = results.parameter_summary()
+
+#Best fit model parameters
+best_fit=param_summary.best_fit
+
+# Access all percentiles
+percentiles_16th = param_summary.percentiles['16th']  # 16th percentile values
+percentiles_50th = param_summary.percentiles['50th']  # 50th percentile (median/best_fit)
+percentiles_84th = param_summary.percentiles['84th']  # 84th percentile values
+
+# Calculate asymmetric errors
+lower_errors = param_summary.best_fit - percentiles_16th  # Lower error bars
+upper_errors = percentiles_84th - param_summary.best_fit  # Upper error bars
+
+print(f"\nBest-fit parameters with asymmetric errors:")
+for name, value, lower_err, upper_err in zip(param_summary.names, 
+                                           param_summary.best_fit,
+                                           lower_errors, 
+                                           upper_errors):
+    print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
+
+#Create best fit model flux
+
+best_fit_flux=compiled.model_flux(best_fit,wave)
+
+import matplotlib.pyplot as plt
+
+plt.plot(wave,flux,label='Data')
+plt.plot(wave,best_fit_flux,label='best_fit')
+
+plt.show()
+
+
 ```
 
 ### Expected Output

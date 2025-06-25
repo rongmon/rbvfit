@@ -1,10 +1,21 @@
 # rbvfit
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403232.svg)](https://doi.org/10.5281/zenodo.10403232)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403231.svg)](https://doi.org/10.5281/zenodo.10403231)
+
+> **Version 2.0**  
+> Major release with multi-component support, interactive tools, and optimized performance.  
 
 **Bayesian Voigt Profile Fitting for Absorption Line Spectroscopy**
 
-`rbvfit` performs forward modeling of absorption line spectra using Bayesian Voigt profile fitting. Version 2.0 introduces multi-system support, automatic ion parameter tying, multi-instrument joint fitting, and interactive parameter estimation tools. Version 2.0 is optimized for fast processing and uses [*emcee*](https://emcee.readthedocs.io/) or [*zeus*](https://zeus-mcmc.readthedocs.io/) MCMC samplers.
+`rbvfit` performs forward modeling of absorption line spectra using Bayesian Voigt profile fitting.  
+Version 2.0 introduces:
+- Multi-system and multi-ion fitting
+- Automatic parameter tying
+- Joint fitting across instruments
+- Interactive parameter exploration
+- Support for [*emcee*](https://emcee.readthedocs.io/) and [*zeus*](https://zeus-mcmc.readthedocs.io/) samplers
+
+
 
 ![rbvfit Example](docs/images/rbvfit_example.png)  
 *Example: Multi-component MgII absorption line fit with `rbvfit`*
@@ -77,6 +88,9 @@ model = VoigtModel(config)
 theta = np.concatenate([nguess, bguess, vguess])
 fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
 fitter.runmcmc()
+
+#quick corner plot
+fitter.plot_corner()
 
 # Extract best-fit parameters
 best_theta = fitter.best_theta  # Best-fit parameter array
@@ -251,7 +265,7 @@ results.plot_velocity_fits()
 
 If you use rbvfit in your research, please cite:
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403232.svg)](https://doi.org/10.5281/zenodo.10403232)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403231.svg)](https://doi.org/10.5281/zenodo.10403231)
 
 ## Support
 

@@ -313,10 +313,19 @@ class FitConfiguration:
     >>> structure = config.get_parameter_structure()
     """
     
-    def __init__(self):
+    def __init__(self, FWHM=None, grating=None, life_position=None, cen_wave=None):
         """Initialize empty configuration."""
         self.systems: List[AbsorptionSystem] = []
         self._validated: bool = False
+        self.instrumental_params = {}
+        if FWHM is not None:
+            self.instrumental_params['FWHM'] = FWHM
+        if grating is not None:
+            self.instrumental_params['grating'] = grating
+        if life_position is not None:
+            self.instrumental_params['life_position'] = life_position
+        if cen_wave is not None:
+            self.instrumental_params['cen_wave'] = cen_wave
         
     def add_system(self, z: float, ion: str = 'auto', transitions: List[float] = None, 
                    components: int = 1, merge: bool = False, validate_ion: bool = True) -> None:

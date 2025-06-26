@@ -80,18 +80,18 @@ theta=np.concatenate((nguess,bguess,vguess))
 
 
 print("\n=== Setting up V2 Model ===")
-    
-# Create V2 model
-config = FitConfiguration()
-config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=1)
-config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
-
 # Lets assume instrument FWHM is given in km/s
 FWHM_vel = 18.0      # km/s - example value
 # Convert to pixels using your observed wavelength grid
 FWHM = str(mean_fwhm_pixels(FWHM_vel, wave))
+    
+# Create V2 model
+config = FitConfiguration(FWHM=FWHM)
+config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=1)
+config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
 
-v2_model = VoigtModel(config, FWHM=FWHM)
+
+v2_model = VoigtModel(config)
 v2_compiled = v2_model.compile()
 print("✓ V2 model created and compiled")
 

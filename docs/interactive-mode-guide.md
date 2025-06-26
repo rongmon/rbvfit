@@ -113,15 +113,16 @@ tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
 # 3. Interactive parameter estimation
 tab.input_b_guess()
 
-# 4. Use parameters in fitting
-config = FitConfiguration()
+# 4. Use parameters in fitting with FWHM configuration
+config = FitConfiguration(FWHM='2.5')  # FWHM defined at configuration stage
 config.add_system(z=zabs, ion='MgII', transitions=[2796.3, 2803.5], 
                   components=len(tab.nguess))
 
+# 5. Create model (FWHM automatically extracted from configuration)
 model = VoigtModel(config)
 theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
 
-# 5. Run MCMC
+# 6. Run MCMC
 fitter = mc.vfit(model.compile(), theta, bounds, wave, flux, error)
 fitter.runmcmc()
 ```
@@ -139,8 +140,8 @@ tab1.input_b_guess()
 tab2 = g.gui_set_clump(wave, flux, error, zabs=0.524, wrest=1031.9)
 tab2.input_b_guess()
 
-# Configure multi-system model
-config = FitConfiguration()
+# Configure multi-system model with FWHM
+config = FitConfiguration(FWHM='2.2')  # Define resolution at setup
 config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
                   components=len(tab1.nguess))
 config.add_system(z=0.524, ion='OVI', transitions=[1031.9, 1037.6], 
@@ -212,6 +213,29 @@ bounds, lb, ub = mc.set_bounds(tab.nguess, tab.bguess, tab.vguess,
                                nlow=[12.0]*len(tab.nguess),    # Custom N lower bounds
                                nhigh=[18.0]*len(tab.nguess),   # Custom N upper bounds
                                blow=[10.0]*len(tab.bguess))    # Custom b lower bounds
+```
+
+### FWHM Handling with Interactive Mode
+
+```python
+# Interactive mode with FWHM configuration
+tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
+tab.input_b_guess()
+
+# FWHM configuration approaches:
+
+# 1. FWHM in pixels (direct)
+config = FitConfiguration(FWHM='2.5')  # Pixels
+
+# 2. Convert from km/s to pixels if needed
+from rbvfit.core.voigt_model import mean_fwhm_pixels
+FWHM_vel = 15.0  # km/s
+FWHM_pixels = mean_fwhm_pixels(FWHM_vel, wave)
+config = FitConfiguration(FWHM=str(FWHM_pixels))
+
+# 3. Configure with parameters from interactive mode
+config.add_system(z=zabs, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(tab.nguess))
 ```
 
 ## 📋 Best Practices

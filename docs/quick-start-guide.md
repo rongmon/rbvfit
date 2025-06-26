@@ -30,8 +30,8 @@ import rbvfit.vfit_mcmc as mc
 # Create synthetic MgII absorption data using rbvfit
 print("Creating synthetic absorption spectrum...")
 
-# Set up the physical system
-config = FitConfiguration()
+# Set up the physical system with instrumental resolution
+config = FitConfiguration(FWHM='2.5')  # Define FWHM at configuration stage
 config.add_system(
     z=0.348,                          # Redshift
     ion='MgII',                       # Ion species  
@@ -39,8 +39,8 @@ config.add_system(
     components=2                       # Number of velocity components
 )
 
-# Create model with instrumental resolution
-model = VoigtModel(config, FWHM='2.5')
+# Create model (FWHM automatically extracted from configuration)
+model = VoigtModel(config)
 compiled_model = model.compile()
 
 # Define wavelength grid (observed frame)
@@ -108,196 +108,207 @@ fitter.runmcmc(optimize=True, verbose=True)
 
 ```
 
-### 5. View Results
+### 5. Analyze Results
 
 ```python
-
-# Enhanced results analysis
+# Create results object
 from rbvfit.core import fit_results as fr
 results = fr.FitResults(fitter, model)
-#Print best fit parameters
+
+# Print parameter summary
 results.print_fit_summary()
 
-# Get organized parameter summary
-param_summary = results.parameter_summary()
-best_fit=param_summary.best_fit
-# Access all percentiles
-percentiles_16th = param_summary.percentiles['16th']  # 16th percentile values
-percentiles_50th = param_summary.percentiles['50th']  # 50th percentile (median/best_fit)
-percentiles_84th = param_summary.percentiles['84th']  # 84th percentile values
-
-# Calculate asymmetric errors
-lower_errors = param_summary.best_fit - percentiles_16th  # Lower error bars
-upper_errors = percentiles_84th - param_summary.best_fit  # Upper error bars
-
-print(f"\nBest-fit parameters with asymmetric errors:")
-for name, value, lower_err, upper_err in zip(param_summary.names, 
-                                           param_summary.best_fit,
-                                           lower_errors, 
-                                           upper_errors):
-    print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
-```
-
-### 5. Results visualization
-
-
-```python
-#Corner plots
-results.corner_plot()
-
-# Velocity space plots by ion!
-velocity_plots = results.plot_velocity_fits(
-    show_components=True,      # Show individual components
-    show_rail_system=True     # Show component position markers
-)
-```
-
-
-
-
-
-### Option B: Quick Fitting (seconds)
-Perfect for initial parameter estimation and simple systems:
-
-```python
-# uses scipy.optimize.curve_fit
-# Quick fit (fast, good for initial estimates-- NOT MCMC)
-print("Running quick fit...")
-fitter.fit_quick()
-print("✓ Quick fit completed!")
-
-# Get results
-best_params = fitter.theta_best
-print(f"Best-fit parameters: {best_params}")
-print(f"Parameter recovery: {np.abs(best_params - true_params)}")
-
+# Quick visualization
+import matplotlib.pyplot as plt
 
 # Plot the fit
-mc.plot_quick_fit(model, fitter, show_residuals=True)
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), 
+                               gridspec_kw={'height_ratios': [3, 1]})
 
-# Print parameter comparison
-print("\nParameter Recovery Analysis:")
-print("=" * 50)
-param_names = ['logN1', 'logN2', 'b1', 'b2', 'v1', 'v2']
+# Best-fit model
+best_params = results.parameter_summary().best_fit
+flux_best = compiled_model.model_flux(best_params, wave)
+
+# Main plot
+ax1.plot(wave, flux_obs, 'k-', alpha=0.7, label='Synthetic Data')
+ax1.plot(wave, flux_best, 'r-', linewidth=2, label='Best Fit')
+ax1.fill_between(wave, flux_obs-error, flux_obs+error, alpha=0.3, color='gray')
+ax1.set_ylabel('Normalized Flux')
+ax1.legend()
+ax1.set_title('rbvfit2 Quick Start: MgII Doublet Fit')
+
+# Residuals
+residuals = flux_obs - flux_best
+ax2.plot(wave, residuals, 'k-', alpha=0.7)
+ax2.axhline(0, color='r', linestyle='--', alpha=0.5)
+ax2.set_xlabel('Wavelength (Å)')
+ax2.set_ylabel('Residuals')
+
+plt.tight_layout()
+plt.show()
+
+print("✓ Quick Start completed successfully!")
+print("✓ Check the plot to see your first rbvfit2 absorption line fit")
+```
+
+## Understanding the Results
+
+The quick start fit should recover parameters close to the true values:
+
+```python
+# Compare fitted vs true parameters
+param_names = ['N1', 'N2', 'b1', 'b2', 'v1', 'v2']
+print("\nParameter Recovery:")
+print("Parameter | True Value | Fitted Value | Difference")
+print("-" * 50)
 for i, name in enumerate(param_names):
     true_val = true_params[i]
     fit_val = best_params[i]
     diff = fit_val - true_val
-    print(f"{name:>6}: True={true_val:6.1f}, Fit={fit_val:6.1f}, Diff={diff:+6.1f}")
-```
-
-
-## Complete Working Example
-
-Here's a complete script you can copy and run:
-
-```python
-import numpy as np
-from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.core.voigt_model import VoigtModel
-import rbvfit.vfit_mcmc as mc
-
-# Create synthetic data
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-model = VoigtModel(config, FWHM='2.5')
-compiled_model = model.compile()
-
-wave = np.linspace(3760, 3800, 1500)
-true_params = np.array([14.2, 13.8, 20.0, 35.0, -40.0, +25.0])
-flux_clean = compiled_model.model_flux(true_params, wave)
-
-np.random.seed(42)
-error = np.full_like(wave, 0.015)
-flux_obs = flux_clean + np.random.normal(0, error)
-
-# Fit the data
-N_guess, b_guess, v_guess = [14.0, 13.5], [25.0, 30.0], [-30.0, +20.0]
-bounds, lb, ub = mc.set_bounds(N_guess, b_guess, v_guess)
-theta_guess = np.concatenate([N_guess, b_guess, v_guess])
-
-fitter = mc.vfit(compiled_model.model_flux, theta_guess, lb, ub, wave, flux_obs, error)
-
-fitter.runmcmc(optimize=True, verbose=True)
-# View results alternative plotting method
-mc.plot_model(model, fitter, show_residuals=True)
-print(f"Recovery: {np.abs(fitter.theta_best - true_params)}")
-```
-
-### Single Ion System
-```python
-config = FitConfiguration()
-config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-```
-
-### Multiple Ions at Same Redshift
-```python
-config = FitConfiguration()
-config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-config.add_system(z=0.5, ion='FeII', transitions=[2374.5, 2382.8], components=2)
-# Parameters automatically tied for same redshift!
-```
-
-### Multi-Component System
-```python
-config = FitConfiguration()
-config.add_system(z=0.3, ion='CIV', transitions=[1548.2, 1550.3], components=3)
-# Fits 3 velocity components: [N1,N2,N3, b1,b2,b3, v1,v2,v3]
-```
-
-## Quick Troubleshooting
-
-### Fit Not Converging?
-```python
-# 1. Check initial parameters are reasonable
-print(f"Initial likelihood: {fitter.lnprob(theta_guess)}")
-
-# 2. Adjust bounds
-bounds, lb, ub = mc.set_bounds(
-    N_guess, b_guess, v_guess,
-    Nlow=[11.0, 11.0], Nhi=[17.0, 17.0],  # Wider bounds
-    blow=[1.0, 1.0], bhi=[200.0, 200.0],
-    vlow=[-500.0, -500.0], vhi=[500.0, 500.0]
-)
-
-# 3. Try quick fit first
-fitter.fit_quick()
-theta_guess = fitter.theta_best  # Use quick fit as starting point
-```
-
-### Model Evaluation Errors?
-```python
-# Check your wavelength range covers the transitions
-z = 0.348
-for wrest in [2796.3, 2803.5]:
-    wobs = wrest * (1 + z)
-    print(f"Transition at {wobs:.1f} Å")
-    
-# Ensure this falls within your wavelength array
-print(f"Data range: {wave.min():.1f} - {wave.max():.1f} Å")
-
-# Test model evaluation
-try:
-    test_flux = compiled_model.model_flux(theta_guess, wave)
-    print(f"✓ Model evaluation successful: {np.isfinite(test_flux).all()}")
-except Exception as e:
-    print(f"✗ Model evaluation failed: {e}")
+    print(f"{name:8s} | {true_val:9.2f} | {fit_val:11.2f} | {diff:9.2f}")
 ```
 
 ## Next Steps
 
-🎯 **Ready for more?** Check out:
+Now that you have rbvfit2 working, explore these topics:
 
-- [Complete User Guide](user-guide.md) - Detailed concepts and workflow
-- [Tutorials](tutorials.md) - Step-by-step examples with real data
-- [Examples Gallery](examples-gallery.md) - Visual showcase of capabilities
+### 🔬 **Real Data Analysis**
+```python
+# Load your own spectrum
+wave, flux, error = load_your_spectrum()  # Replace with your data loading
 
-## Working Examples
+# Configure for your absorption system
+config = FitConfiguration(FWHM='3.0')  # Adjust FWHM for your instrument
+config.add_system(z=your_redshift, ion='YourIon', 
+                  transitions=[rest_wavelengths], components=N_components)
+```
 
-All code snippets above are based on working examples in:
-- [`../src/rbvfit/examples/example_voigt_model.py`](../src/rbvfit/examples/example_voigt_model.py)
-- [`../src/rbvfit/examples/example_voigt_fitter.py`](../src/rbvfit/examples/example_voigt_fitter.py)
+### 🎮 **Interactive Parameter Estimation**
+```python
+# Visual component identification (highly recommended!)
+from rbvfit import guess_profile_parameters_interactive as g
+
+tab = g.gui_set_clump(wave, flux, error, z_abs, wrest=1548.5)
+tab.input_b_guess()  # Interactive parameter input
+
+# Extract automatically estimated parameters
+N_guess = tab.nguess
+b_guess = tab.bguess  
+v_guess = tab.vguess
+```
+
+### 🔭 **Multi-Instrument Fitting**
+```python
+# Joint fitting of data from multiple telescopes
+config_A = FitConfiguration(FWHM='2.2')  # XShooter
+config_A.add_system(z=z_abs, ion='OI', transitions=[1302.17], components=1)
+
+config_B = FitConfiguration(FWHM='4.0')  # FIRE  
+config_B.add_system(z=z_abs, ion='OI', transitions=[1302.17], components=1)
+
+# Models automatically use correct FWHM from configurations
+model_A = VoigtModel(config_A)
+model_B = VoigtModel(config_B)
+```
+
+### 📊 **Advanced Analysis**
+```python
+# Comprehensive results analysis
+results.corner_plot(save_path='corner_plot.pdf')
+results.plot_velocity_fits(save_path='velocity_plot.pdf')
+results.convergence_diagnostics()
+
+# Save results for later
+results.save('my_first_fit.h5')
+```
+
+## Common Patterns
+
+### Single Ion, Multiple Components
+```python
+# Multiple velocity components of same ion
+config = FitConfiguration(FWHM='2.5')
+config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], components=3)
+# Fits: [N1, N2, N3, b1, b2, b3, v1, v2, v3]
+```
+
+### Multiple Ions, Same Redshift  
+```python
+# Different ions at same redshift (shared kinematics)
+config = FitConfiguration(FWHM='3.0')
+config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
+# Shared velocity structure between ions
+```
+
+### Multiple Redshift Systems
+```python
+# Independent systems at different redshifts
+config = FitConfiguration(FWHM='2.8')
+config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=1)
+config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2) 
+# Independent velocity structures
+```
+
+## Troubleshooting Quick Start
+
+### Issue: Poor Fit Quality
+```python
+# Try these solutions:
+fitter.no_of_steps = 1000     # More MCMC steps
+fitter.no_of_Chain = 50       # More walkers
+
+# Better initial guess with interactive tools
+from rbvfit import guess_profile_parameters_interactive as g
+tab = g.gui_set_clump(wave, flux, error, z_abs, wrest=2796.3)
+```
+
+### Issue: Slow Performance
+```python
+# Quick fit first for initial parameters
+quick_result = fitter.fit_quick()
+theta_better = quick_result.x
+
+# Then run MCMC with better starting point
+fitter.theta = theta_better
+fitter.runmcmc()
+```
+
+### Issue: Parameter Bounds
+```python
+# Check if parameters hit bounds
+if np.any(best_params <= lb) or np.any(best_params >= ub):
+    print("Warning: Parameters at bounds - consider expanding ranges")
+    
+# Expand bounds if needed
+bounds, lb, ub = mc.set_bounds(
+    N_guess, b_guess, v_guess,
+    Nlow=[10.0, 10.0], Nhi=[18.0, 18.0],  # Wider N range
+    blow=[3.0, 3.0], bhi=[100.0, 100.0],  # Wider b range
+    vlow=[-300.0, -300.0], vhi=[300.0, 300.0]  # Wider v range
+)
+```
+
+## Performance Expectations
+
+**Quick Start Performance (typical laptop):**
+- Data generation: < 1 second
+- MCMC fitting (500 steps, 20 walkers): 10-30 seconds  
+- Results analysis: < 5 seconds
+- **Total time**: Under 1 minute
+
+**Scaling Guidelines:**
+- More components: ~linear scaling
+- More MCMC steps: linear scaling  
+- Multi-instrument: ~2-3x single instrument
+- Complex systems (5+ components): 5-15 minutes
 
 ---
 
-[← Back to Main Documentation](../README.md) | [Next: User Guide →](user-guide.md)
+**🎉 Congratulations!** You've successfully run your first rbvfit2 absorption line fit. 
+
+**Next recommended steps:**
+1. Try the [Interactive Tutorial](tutorials.md#3-single-instrument-analysis) 
+2. Explore [Multi-Instrument Fitting](tutorials.md#4-multi-instrument-fitting)
+3. Read the [User Guide](user-guide.md) for comprehensive documentation
+4. Check out [Examples Gallery](examples-gallery.md) for more use cases

@@ -28,7 +28,7 @@ rbvfit separates **physical** absorption properties from **instrumental** effect
 - **v**: Velocity offset [km/s] - relative to systemic redshift
 
 **Instrumental Parameters:**
-- **FWHM**: Spectral resolution [pixels or km/s]
+- **FWHM**: Spectral resolution [pixels or km/s] - defined at configuration stage
 - **LSF**: Line spread function shape (Gaussian default)
 
 ### Automatic Ion Parameter Tying
@@ -45,9 +45,8 @@ from rbvfit.core import fit_results as fr
 ```
 
 ```python
-
-# This configuration automatically ties MgII parameters
-config = FitConfiguration()
+# This configuration automatically ties MgII parameters and sets FWHM
+config = FitConfiguration(FWHM='2.5')
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 
 # Result: Fits [N1, N2, b1, b2, v1, v2] shared between both transitions
@@ -59,8 +58,8 @@ config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 Handle complex contamination naturally:
 
 ```python
-# Foreground MgII + background CIV
-config = FitConfiguration()
+# Foreground MgII + background CIV with instrument-specific FWHM
+config = FitConfiguration(FWHM='2.2')
 config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 
@@ -81,12 +80,12 @@ config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 # 1. Load and prepare data
 wave, flux, error = load_your_spectrum()
 
-# 2. Configure physical systems
-config = FitConfiguration()
+# 2. Configure physical systems with instrumental setup
+config = FitConfiguration(FWHM='2.0')
 config.add_system(z=redshift, ion='Ion', transitions=[...], components=N)
 
-# 3. Create model with instrumental setup
-model = VoigtModel(config, FWHM='2.0')
+# 3. Create model (FWHM automatically extracted from config)
+model = VoigtModel(config)
 compiled = model.compile()
 
 # 4. Set up parameters and bounds
@@ -97,241 +96,238 @@ bounds = mc.set_bounds(N_guess, b_guess, v_guess)
 fitter = mc.vfit(compiled.model_flux, theta_guess, bounds, wave, flux, error)
 fitter.runmcmc()  # or fitter.fit_quick()
 
-# 6. Analyze
-
+# 6. Analyze results
 results = fr.FitResults(fitter, model)
 results.print_fit_summary()
 ```
 
 ## Data Preparation
 
-### Required Data Format
+### Loading Spectra
 
 ```python
-wave = np.array([...])   # Observed wavelength [Angstroms]
-flux = np.array([...])   # Normalized flux (continuum = 1.0)
-error = np.array([...])  # 1-sigma error on flux
+import numpy as np
+from astropy.io import fits
+
+# Example: FITS file loading
+with fits.open('spectrum.fits') as hdul:
+    wave = hdul[1].data['WAVELENGTH']
+    flux = hdul[1].data['FLUX']
+    error = hdul[1].data['ERROR']
 ```
 
-### Data Quality Checks
+### Data Quality Control
 
 ```python
-# Handle NaN values
-mask = np.isnan(flux) | np.isnan(error)
-flux[mask] = 0.0
-error[mask] = 0.0
+# Handle bad pixels
+mask = np.isnan(flux) | np.isnan(error) | (error <= 0)
+flux[mask] = 1.0      # Set to continuum
+error[mask] = 1e10    # Large error = ignore
 
-# Select wavelength range around transitions
-z_abs = 0.348
-wrest = 2796.3  # MgII
-wobs = wrest * (1 + z_abs)
-margin = 50  # Angstroms
-
-mask = (wave > wobs - margin) & (wave < wobs + margin)
-wave = wave[mask]
-flux = flux[mask]
-error = error[mask]
+# Wavelength selection
+z_abs = 0.5
+rest_range = (1540, 1560)  # CIV region
+obs_range = np.array(rest_range) * (1 + z_abs)
+mask = (wave >= obs_range[0]) & (wave <= obs_range[1])
+wave, flux, error = wave[mask], flux[mask], error[mask]
 ```
 
-### Continuum Normalization
+### Normalization
 
 ```python
-# Ensure continuum is normalized to 1.0
-# Methods:
-# 1. Manual: flux = flux / continuum_estimate
-# 2. Using rbcodes (if available):
-from rbcodes.utils.rb_spectrum import rb_spectrum
-sp = rb_spectrum.from_file('spectrum.fits')
-flux_norm = sp.flux.value / sp.co.value  # Normalized flux
-error_norm = sp.sig.value / sp.co.value  # Normalized error
+# Continuum normalization (if needed)
+# rbvfit expects normalized flux (continuum = 1.0)
+
+# Simple polynomial continuum
+from numpy.polynomial import Polynomial
+p = Polynomial.fit(wave, flux, deg=2)
+flux_norm = flux / p(wave)
+error_norm = error / p(wave)
 ```
 
 ## System Configuration
 
-### FitConfiguration Class
-
-The heart of rbvfit - defines what you're fitting:
+### Basic Ion System
 
 ```python
-config = FitConfiguration()
-
-# Add each absorption system
+# Single ion system with FWHM configuration
+config = FitConfiguration(FWHM='3.0')  # Define resolution at configuration
 config.add_system(
-    z=0.348,                          # Redshift
-    ion='MgII',                       # Ion name
-    transitions=[2796.3, 2803.5],     # Rest wavelengths
-    components=2                       # Velocity components
+    z=0.348,                         # Absorption redshift
+    ion='MgII',                      # Ion species
+    transitions=[2796.3, 2803.5],   # Rest wavelengths [Å]
+    components=2                     # Number of velocity components
 )
 ```
 
-### Common Ion Systems
+### Multi-Ion Systems
 
 ```python
-# MgII doublet
+# Multiple ions at same redshift
+config = FitConfiguration(FWHM='4.5')
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-
-# CIV doublet  
-config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=1)
-
-# FeII multiplet
-config.add_system(z=0.8, ion='FeII', transitions=[2374.5, 2382.8, 2586.7], components=3)
-
-# Lyman alpha
-config.add_system(z=2.1, ion='HI', transitions=[1215.67], components=1)
+config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
+# Note: Same z means shared kinematics (v1, v2) between MgII and FeII
 ```
 
-### Multi-System Examples
+### Multi-Redshift Systems
 
-**Foreground + Background**:
 ```python
-config = FitConfiguration()
-config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
+# Foreground and background systems
+config = FitConfiguration(FWHM='2.8')
+config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=1)
+config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2)
+# Independent velocity structure for each redshift
 ```
 
-**Multiple Ions at Same Redshift**:
+### Advanced Configuration Options
+
 ```python
-config = FitConfiguration()
-config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-config.add_system(z=0.5, ion='FeII', transitions=[2374.5, 2382.8], components=2)
-# Ion parameters automatically tied for same z!
+# Custom line selection and validation
+config = FitConfiguration(FWHM='6.0')
+config.add_system(
+    z=0.8, 
+    ion='SiII', 
+    transitions=[1190.4, 1193.3, 1260.4],  # Multiple transitions
+    components=3,
+    validate_ion=True  # Verify transitions belong to declared ion
+)
 ```
 
 ## Model Creation
 
-### VoigtModel Class
-
-Converts configuration into fittable model:
+### Basic Model
 
 ```python
-# Basic model
-model = VoigtModel(config)
+from rbvfit.core.voigt_model import VoigtModel
 
-# With instrumental resolution
-model = VoigtModel(config, FWHM='2.0')  # 2.0 pixels FWHM
+# Create model (FWHM automatically extracted from configuration)
+config = FitConfiguration(FWHM='2.5')
+config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], components=2)
 
-# Compilation for fitting
-compiled = model.compile(verbose=True)
-model_function = compiled.model_flux  # Ready for fitting
+model = VoigtModel(config)  # No FWHM parameter needed
+compiled = model.compile()
 ```
 
-### Instrumental Resolution
+### Parameter Structure
+
+Understanding the parameter vector `theta`:
 
 ```python
-# Different ways to specify FWHM:
-VoigtModel(config, FWHM='2.0')        # Pixels
-VoigtModel(config, FWHM='15.0')       # km/s (if > 10)
-VoigtModel(config, FWHM=2.0)          # Direct float
+# For 2-component CIV system: theta = [N1, N2, b1, b2, v1, v2]
+# N: log10(column density in cm^-2)
+# b: Doppler parameter in km/s  
+# v: Velocity offset in km/s
+
+theta_example = [13.5, 13.2, 15.0, 25.0, -150.0, 20.0]
 ```
 
-### Model Information
+### Multi-System Parameter Structure
 
 ```python
-# Check model structure
-print(model.get_info())
+# Example: 2-comp MgII + 1-comp CIV
+config = FitConfiguration(FWHM='3.0')
+config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 
-# Parameter structure
-structure = model.param_manager.structure
-print(f"Total parameters: {structure['total_parameters']}")
-print(f"Parameter names: {structure['parameter_names']}")
+# theta = [N_Mg1, N_Mg2, N_CIV, b_Mg1, b_Mg2, b_CIV, v_Mg1, v_Mg2, v_CIV]
+#         |------ N ------|  |------ b ------|  |------ v ------|
+```
+
+### Model Evaluation
+
+```python
+# Generate synthetic spectrum
+wave = np.linspace(3700, 3820, 10000)
+theta = [13.5, 13.2, 15.0, 25.0, -150.0, 20.0]
+flux_model = compiled.model_flux(theta, wave)
+
+# Plot comparison
+import matplotlib.pyplot as plt
+plt.plot(wave, flux_model, 'r-', label='Model')
+plt.plot(wave, flux_obs, 'k-', alpha=0.7, label='Data')
+plt.legend()
 ```
 
 ## Parameter Setup
 
-### Parameter Organization
-
-For each velocity component, rbvfit fits three parameters:
-- **N**: log₁₀(column density / cm⁻²)
-- **b**: Doppler parameter (km/s)  
-- **v**: Velocity offset (km/s)
-
-### Parameter Arrays
+### Initial Guesses
 
 ```python
-# For 2-component MgII system:
-N_guess = [13.5, 13.2]     # log column densities
-b_guess = [25.0, 15.0]     # Doppler parameters  
-v_guess = [-50.0, 20.0]    # Velocities
+# Based on visual inspection or previous fits
+N_guess = [13.5, 13.2]    # log column densities
+b_guess = [15.0, 25.0]    # Doppler parameters [km/s]
+v_guess = [-150.0, 20.0]  # Velocity offsets [km/s]
 
-# Combine into theta array
-theta = np.concatenate([N_guess, b_guess, v_guess])
-# Result: [13.5, 13.2, 25.0, 15.0, -50.0, 20.0]
+# Combine into theta vector
+theta_guess = np.concatenate([N_guess, b_guess, v_guess])
 ```
 
-### Setting Bounds
+### Parameter Bounds
 
 ```python
-# Automatic bounds
+import rbvfit.vfit_mcmc as mc
+
+# Automatic bounds with defaults
 bounds, lb, ub = mc.set_bounds(N_guess, b_guess, v_guess)
 
 # Custom bounds
 bounds, lb, ub = mc.set_bounds(
     N_guess, b_guess, v_guess,
-    Nlow=[12.0, 12.0],     # Custom N lower bounds
-    Nhi=[16.0, 16.0],      # Custom N upper bounds
-    blow=[5.0, 5.0],       # Custom b lower bounds
-    bhi=[100.0, 100.0],    # Custom b upper bounds
-    vlow=[-300.0, -300.0], # Custom v lower bounds
-    vhi=[300.0, 300.0]     # Custom v upper bounds
+    Nlow=[12.0, 12.0], Nhi=[16.0, 16.0],      # Column density range
+    blow=[5.0, 5.0], bhi=[80.0, 80.0],        # Doppler parameter range  
+    vlow=[-200.0, -200.0], vhi=[200.0, 200.0] # Velocity range
 )
 ```
 
-### Physical Interpretation
+### Interactive Parameter Estimation
 
 ```python
-# Column density (N)
-N = 13.5  # log cm^-2
-print(f"Column density: 10^{N:.1f} = {10**N:.1e} cm^-2")
+# Visual parameter guessing (recommended for complex systems)
+from rbvfit import guess_profile_parameters_interactive as g
 
-# Doppler parameter (b)
-b = 25.0  # km/s
-T_thermal = (b**2 * 24.3) / 2  # For MgII (approximate)
-print(f"Thermal temperature: ~{T_thermal:.0f} K")
+# Interactive component identification
+tab = g.gui_set_clump(wave, flux, error, z_abs, wrest=1548.5)
+tab.input_b_guess()  # GUI parameter input
 
-# Velocity (v)
-v = -50.0  # km/s (negative = blueshift)
-print(f"Velocity offset: {v} km/s")
+# Extract parameters
+N_guess = tab.nguess
+b_guess = tab.bguess
+v_guess = tab.vguess
 ```
 
 ## Fitting Methods
 
 ### Quick Fitting (scipy.optimize)
 
-Fast parameter estimation using curve_fit:
+Fast approximate fitting using least-squares optimization:
 
 ```python
-# Quick fit
-fitter.fit_quick(verbose=True)
+# Quick fit for initial exploration
+fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
+result = fitter.fit_quick()
 
-# Results immediately available
-best_params = fitter.theta_best
-param_errors = fitter.theta_best_error
-
-# Quick visualization
-mc.plot_quick_fit(model, fitter, show_residuals=True)
+print(f"Best-fit parameters: {result.x}")
+print(f"Reduced chi-squared: {result.fun / (len(wave) - len(theta_guess))}")
 ```
 
 **When to use**: Initial parameter estimation, simple systems, quick checks
 
 ### MCMC Fitting (emcee/zeus)
 
-Full Bayesian analysis with robust uncertainties:
+Robust Bayesian parameter estimation with full uncertainty quantification:
 
 ```python
-# Configure MCMC
-fitter.no_of_Chain = 20     # Number of walkers
-fitter.no_of_steps = 1000   # Number of steps
+# Set up MCMC
+fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
+fitter.no_of_Chain = 50     # Number of walkers
+fitter.no_of_steps = 1000   # Number of MCMC steps
 fitter.sampler = 'emcee'    # or 'zeus'
 
 # Run MCMC
-fitter.runmcmc(
-    optimize=True,    # Pre-optimize starting positions
-    verbose=True,     # Print progress
-    use_pool=True     # Multiprocessing
-)
+fitter.runmcmc(optimize=True, verbose=True)
 
-# Enhanced analysis
-from rbvfit.core import fit_results as fr
+# Create results object
 results = fr.FitResults(fitter, model)
 ```
 
@@ -402,80 +398,117 @@ Joint fitting of data from multiple telescopes:
 # - rbvfit2-multi-instrument-tutorial.py
 # - rbvfit2-multi-instrument-tutorial2.py
 
-# Basic concept:
-config_A = FitConfiguration()  # Same physical system
-config_B = FitConfiguration()  # Different instrumental setup
+# Basic concept: Each instrument gets its own configuration with FWHM
+config_A = FitConfiguration(FWHM='2.2')  # XShooter configuration
+config_A.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
 
-model_A = VoigtModel(config_A, FWHM='2.2')  # XShooter
-model_B = VoigtModel(config_B, FWHM='4.0')  # FIRE
+config_B = FitConfiguration(FWHM='4.0')  # FIRE configuration
+config_B.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
 
-# Joint fitting combines datasets with shared physics
-```
+# Create models (FWHM extracted from configurations)
+model_A = VoigtModel(config_A)  # Uses FWHM='2.2'
+model_B = VoigtModel(config_B)  # Uses FWHM='4.0'
 
-### Performance Optimization
-
-```python
-# For large parameter spaces:
-fitter.sampler = 'zeus'        # Often faster than emcee
-fitter.use_pool = True         # Multiprocessing
-fitter.perturbation = 1e-4     # Tighter walker initialization
-
-# For quick exploration:
-fitter.fit_quick()             # Get good starting point
-theta_guess = fitter.theta_best
-# Then use for MCMC
+# Multi-instrument compilation with automatic FWHM handling
+instrument_configs = {
+    'XShooter': config_A,
+    'FIRE': config_B
+}
+compiled = model_A.compile(instrument_configs=instrument_configs)
 ```
 
 ### Custom Line Lists
 
 ```python
-# Add custom transitions
-config.add_system(
-    z=0.5, 
-    ion='CustomIon',
-    transitions=[1234.5, 1567.8],  # Your wavelengths
-    components=2
-)
+# Using rb_setline for line identification
+from rbvfit import rb_setline as rb
+
+# Find line information
+line_info = rb.rb_setline(1548.2, 'closest')
+print(f"Line: {line_info['name'][0]}")
+print(f"Exact wavelength: {line_info['wave'][0]:.3f} Å")
+print(f"f-value: {line_info['fval'][0]:.3e}")
 ```
+
+### Performance Optimization
+
+```python
+# Vectorized evaluation for large datasets
+wave_grid = np.linspace(1200, 1600, 50000)  # High-resolution grid
+flux_model = compiled.model_flux(theta, wave_grid)
+
+# Parallel MCMC (automatic on multi-core systems)
+fitter.no_of_Chain = 100  # More walkers for better sampling
+```
+
+### Systematic Effects
+
+```python
+# Velocity zero-point corrections
+v_systemic = -50.0  # km/s correction
+v_guess_corrected = [v - v_systemic for v in v_guess]
+
+# Wavelength calibration uncertainties
+wave_shift = 0.1  # Å
+wave_corrected = wave + wave_shift
+```
+
+### Complex Systems
+
+```python
+# Multiple redshift systems with contamination
+config = FitConfiguration(FWHM='2.5')
+
+# Primary absorption system
+config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=3)
+config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=3)
+
+# Intervening system
+config.add_system(z=0.8, ion='CIV', transitions=[1548.2, 1550.3], components=1)
+
+# Background quasar system  
+config.add_system(z=2.1, ion='LyA', transitions=[1215.7], components=2)
+```
+
+---
 
 ## Troubleshooting
 
 ### Common Issues
 
-**Model evaluation fails**:
-```python
-# Check wavelength coverage
-z = 0.348
-wrest = 2796.3
-wobs = wrest * (1 + z)
-print(f"Transition at {wobs:.1f} Å")
-print(f"Data range: {wave.min():.1f} - {wave.max():.1f} Å")
-```
+**Poor Convergence**:
+- Increase MCMC steps: `fitter.no_of_steps = 2000`
+- Better initial guess: Use interactive parameter estimation
+- Check parameter bounds: Ensure physically reasonable ranges
 
-**Poor convergence**:
-```python
-# Check initial likelihood
-print(f"Initial likelihood: {fitter.lnprob(theta_guess)}")
+**Model-Data Mismatch**:
+- Verify wavelength calibration
+- Check continuum normalization
+- Consider additional velocity components
+- Review instrumental resolution (FWHM)
 
-# Try wider bounds
-# Use quick fit as starting point
-```
+**Parameter Degeneracies**:
+- Check corner plots for correlations
+- Simplify model (fewer components)
+- Add constraints from other transitions
+- Use multi-instrument data
 
-**Parameter values unreasonable**:
-```python
-# Check parameter interpretation
-N, b, v = theta_guess[0], theta_guess[n_comp], theta_guess[2*n_comp]
-print(f"N = {N:.1f} (log cm^-2), b = {b:.1f} km/s, v = {v:.1f} km/s")
-```
+### Performance Tips
+
+- Start with quick fits before MCMC
+- Use interactive tools for complex systems
+- Save intermediate results frequently
+- Monitor convergence diagnostics
 
 ---
 
-## Next Steps
+## Best Practices
 
-- [Tutorials](tutorials.md) - Detailed worked examples
-- [Fitting Methods](fitting-methods.md) - Deep dive into algorithms  
-- [Examples Gallery](examples-gallery.md) - Visual showcase
+1. **Always start simple**: Single component, then add complexity
+2. **Use interactive tools**: Visual parameter estimation saves time
+3. **Validate with synthetics**: Test fitting procedure on known parameters
+4. **Check convergence**: Monitor MCMC diagnostics
+5. **Save everything**: Use HDF5 persistence for reproducibility
+6. **Document assumptions**: Record modeling choices and limitations
 
----
-
-[← Back to Main Documentation](../README.md) | [Next: Tutorials →](tutorials.md)
+For more examples and advanced techniques, see the [Tutorials](tutorials.md) and [Examples Gallery](examples-gallery.md).

@@ -72,116 +72,37 @@ from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 import rbvfit.vfit_mcmc as mc
 
+# Set up configuration with FWHM at the start
+config = FitConfiguration(FWHM='2.5')  # Define resolution at configuration stage (pixels)
+config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+
+# Note: If you have FWHM in km/s, convert to pixels:
+# from rbvfit.core.voigt_model import mean_fwhm_pixels
+# FWHM_pixels = mean_fwhm_pixels(FWHM_vel_kms, wave_obs_grid)
+# config = FitConfiguration(FWHM=str(FWHM_pixels))
+
+# Create model (FWHM automatically extracted from configuration)
+model = VoigtModel(config)
+compiled = model.compile()
+
 # Set initial parameter guesses
 nguess = [14.2, 14.5]  # log10(column density) in cm^-2
 bguess = [40., 30.]    # Doppler parameter in km/s
 vguess = [0., 0.]      # Velocity offset in km/s
 
-# Setting the upper and lower limits for the fit
+# Set parameter bounds
 bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+theta_guess = np.concatenate([nguess, bguess, vguess])
 
-# Create configuration and fit
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
-                  components=len(nguess))
-model = VoigtModel(config)
-theta = np.concatenate([nguess, bguess, vguess])
-fitter = mc.vfit(model.compile(), theta, lb, ub, wave, flux, error)
+# Fit with MCMC
+fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
 fitter.runmcmc()
 
-#quick results
+# Analyze results
 from rbvfit.core import fit_results as fr
-# Analyze results using FitResults (recommended approach)
 results = fr.FitResults(fitter, model)
-results.print_fit_summary()  # Quick overview
-
-
-# Get organized parameter summary
-param_summary = results.parameter_summary()
-
-# Access all percentiles
-percentiles_16th = param_summary.percentiles['16th']  # 16th percentile values
-percentiles_50th = param_summary.percentiles['50th']  # 50th percentile (median/best_fit)
-percentiles_84th = param_summary.percentiles['84th']  # 84th percentile values
-
-# Calculate asymmetric errors
-lower_errors = param_summary.best_fit - percentiles_16th  # Lower error bars
-upper_errors = percentiles_84th - param_summary.best_fit  # Upper error bars
-
-print(f"\nBest-fit parameters with asymmetric errors:")
-for name, value, lower_err, upper_err in zip(param_summary.names, 
-                                           param_summary.best_fit,
-                                           lower_errors, 
-                                           upper_errors):
-    print(f"  {name}: {value:.3f} +{upper_err:.3f} -{lower_err:.3f}")
-
-# Or show the actual percentile values
-print(f"\nParameter percentiles:")
-for name, p16, p50, p84 in zip(param_summary.names,
-                              percentiles_16th,
-                              percentiles_50th, 
-                              percentiles_84th):
-    print(f"  {name}: {p16:.3f} ({p50:.3f}) {p84:.3f}")
+results.print_fit_summary()
 ```
-
-
-
-## 📚 Documentation
-
-| Guide | Description | Level |
-|-------|-------------|-------|
-| [Quick Start Guide](docs/quick-start-guide.md) | Get your first fit running in 5 minutes | Beginner |
-| [Interactive Mode Guide](docs/interactive-mode-guide.md) | **Interactive parameter estimation workflow** | **Beginner** |
-| [User Guide](docs/user-guide.md) | Comprehensive workflow and concepts | Intermediate |
-| [Tutorials](docs/tutorials.md) | Step-by-step examples with code | All levels |
-| [Fitting Methods](docs/fitting-methods.md) | Quick fit vs MCMC comparison | Advanced |
-| [Examples Gallery](docs/examples-gallery.md) | Visual showcase of capabilities | All levels |
-
-## ✨ Key Features
-
-- **🎯 Interactive Parameter Estimation**: Visual GUI for identifying components and setting initial guesses
-- **Multi-System Support**: Fit multiple absorption systems simultaneously
-- **Automatic Ion Tying**: Parameters shared correctly for same ions at same redshift
-- **Multi-Instrument Fitting**: Joint analysis of data from different telescopes
-- **Fast & Robust**: Both quick scipy fitting and full Bayesian MCMC
-- **Rich Visualization**: Corner plots, velocity plots, convergence diagnostics
-- **Cross-Platform**: Works in Jupyter notebooks and command-line environments
-
-## 🎮 Interactive Mode
-
-rbvfit 2.0 features an enhanced interactive parameter guessing system that makes initial parameter estimation intuitive and efficient:
-
-### Visual Component Identification
-```python
-from rbvfit import guess_profile_parameters_interactive as g
-
-# Launch interactive GUI
-tab = g.gui_set_clump(wave_obs, flux, error, zabs=4.948, wrest=1548.5, xlim=[-600, 600])
-```
-
-**Interactive Controls:**
-- **Left click** or `a` key: Add velocity guess at absorption features
-- **Right click** or `r` key: Remove nearest velocity guess  
-- **`q` or `ESC`**: Finish velocity selection
-
-### Parameter Input Interface
-```python
-# Interactive parameter customization
-tab.input_b_guess()  # GUI prompts for column density and Doppler parameters
-
-# Extract parameters for fitting
-nguess = tab.nguess  # log10(column density) in cm^-2
-bguess = tab.bguess  # Doppler parameter in km/s
-vguess = tab.vguess  # Velocity offsets in km/s
-```
-
-**Environment Support:**
-- **Jupyter Notebooks**: Rich widget interface with inline plotting
-- **Command Line**: Cross-platform matplotlib interaction
-- **Remote Sessions**: Works with X11 forwarding and VNC
-
-See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed workflow and advanced features.
-
 
 ## What's New in Version 2.0
 
@@ -189,7 +110,6 @@ See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed wo
 | ------------------------ | ------------------ | ----------------------------- |
 | Interactive Tools        | ✗ Basic            | ✅ GUI with widget support     |
 | Parameter Estimation     | ✗ Manual           | ✅ Visual + GUI guessing       |
-| Environment Support      | CLI only           | ✅ CLI + Jupyter               |
 | Multi-System Setup       | ✗ Manual config    | ✅ Ion-based auto setup        |
 | Parameter Tying          | Single redshift    | ✅ Multi-redshift              |
 | Multi-Instrument Fitting | 2 instruments max  | ✅ Full joint N-instrument fit |
@@ -198,7 +118,7 @@ See the [Interactive Mode Guide](docs/interactive-mode-guide.md) for detailed wo
 | Data Persistence         | Manual             | ✅ HDF5 w/ metadata            |
 | Code Architecture        | Monolithic         | ✅ Modular                     |
 | Fitting Engine           | Standard           | ✅ Vectorized +optimized       |
-|FWHM Velocity Conversion  | ✗ Manual handling  |✅ Automatic w/ instrument database|
+|FWHM Configuration        | ✗ Manual handling  |✅ Automatic at setup stage    |
 
 ## 📁 Examples
 
@@ -216,7 +136,7 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 
 **Core Architecture (`rbvfit/core/`)**:
 - **voigt_model.py**: Main model class for creating and evaluating Voigt profiles with automatic ion parameter tying
-- **fit_configuration.py**: Configuration system for defining multi-system absorption setups
+- **fit_configuration.py**: Configuration system for defining multi-system absorption setups with FWHM integration
 - **parameter_manager.py**: Handles parameter mapping between configurations and fitting arrays
 - **fit_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
 - **quick_fit_interface.py**: Fast scipy.optimize-based fitting interface
@@ -227,10 +147,12 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 **Fitting Engine**:
 - **vfit_mcmc.py**: MCMC fitter supporting emcee and zeus samplers for Bayesian parameter estimation
 
+**Utility Modules**:
+- **rb_setline.py**: Line properties reader using approximate rest wavelength guess (active in v2.0)
+
 **Legacy Modules (Version 1.0 - still available)**:
-- **model.py**: Original top-level code for complex multi-component/multi-species Voigt profiles
+- **rb_model.py**: Original top-level code for complex multi-component/multi-species Voigt profiles
 - **rb_vfit.py**: General code to create individual Voigt profiles
-- **rb_setline.py**: Line properties reader using approximate rest wavelength guess
 - **rb_interactive_vpfit.py**: Interactive Voigt profile fitter with least squares and MCMC options
 
 **Key Version 2.0 Improvements**:
@@ -242,6 +164,7 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **Advanced results analysis**: Comprehensive fit diagnostics, convergence analysis, and publication-quality visualization
 - **HDF5 persistence**: Complete save/load functionality for complex fitting results
 - **Modular architecture**: Clean separation between models, fitting, and analysis components
+- **Streamlined FWHM configuration**: FWHM defined at configuration stage for better multi-instrument handling
 
 ## 🎯 Typical Workflow
 
@@ -259,11 +182,14 @@ tab.input_b_guess()  # Interactive parameter input
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 
-config = FitConfiguration()
+# Configure with FWHM at setup stage
+config = FitConfiguration(FWHM='2.5')
 config.add_system(z=zabs, ion='CIV', transitions=[1548.2, 1550.3], 
                   components=len(tab.nguess))
+
+# Create model (FWHM automatically extracted from configuration)
 model = VoigtModel(config)
-model_compiled=model.compile()
+model_compiled = model.compile()
 ```
 
 ### 3. MCMC Fitting
@@ -286,6 +212,81 @@ results.print_fit_summary()
 results.corner_plot()
 results.plot_velocity_fits()
 ```
+
+## 🎮 Interactive Mode
+
+rbvfit provides powerful interactive tools for visual parameter estimation:
+
+### Jupyter Notebook Interface
+```python
+# Perfect for exploratory analysis
+from rbvfit import guess_profile_parameters_interactive as g
+
+tab = g.gui_set_clump(wave, flux, error, z_abs, wrest=1548.5)
+# Interactive widgets appear automatically in notebook
+```
+
+### Command Line Interface  
+```python
+# Cross-platform GUI support
+tab = g.gui_set_clump(wave, flux, error, z_abs, wrest=1548.5)
+tab.input_b_guess()  # Launches native GUI
+```
+
+### Key Interactive Features
+- **Visual Component Identification**: Click to identify absorption components
+- **Real-time Parameter Adjustment**: See model updates as you modify parameters
+- **Multiple Ion Support**: Handle complex multi-ion systems interactively
+- **Automatic Parameter Export**: Seamlessly transition to MCMC fitting
+
+### Interactive Workflow Example
+```python
+# Step 1: Load your data
+wave, flux, error = load_your_spectrum()
+
+# Step 2: Interactive parameter estimation
+from rbvfit import guess_profile_parameters_interactive as g
+tab = g.gui_set_clump(wave, flux, error, z_abs=0.5, wrest=1548.5)
+
+# Step 3: Refine parameters visually
+tab.input_b_guess()  # Use GUI to adjust N, b, v values
+
+# Step 4: Extract parameters for fitting
+config = FitConfiguration(FWHM='2.5')
+config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], 
+                  components=len(tab.nguess))
+
+# Step 5: Run MCMC with interactive estimates as starting point
+theta_guess = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
+# ... continue with MCMC fitting
+```
+
+**Interactive Mode is especially powerful for**:
+- Complex multi-component systems
+- Blended absorption features
+- Parameter degeneracy exploration
+- Teaching and learning absorption line analysis
+
+## 📚 Documentation
+
+Comprehensive documentation available in [`docs/`](docs/):
+
+- **[Quick Start Guide](docs/quick-start-guide.md)** - Get running in 5 minutes
+- **[User Guide](docs/user-guide.md)** - Complete feature overview
+- **[Tutorials](docs/tutorials.md)** - Step-by-step examples
+- **[Examples Gallery](docs/examples-gallery.md)** - Curated use cases
+- **[API Reference](docs/api-reference.md)** - Detailed function documentation
+- **[Interactive Mode Guide](docs/interactive-mode-guide.md)** - GUI tools walkthrough
+
+### Quick Documentation Links
+
+| Topic | Link | Description |
+|-------|------|-------------|
+| First Steps | [Quick Start](docs/quick-start-guide.md) | 5-minute introduction |
+| Complete Guide | [User Guide](docs/user-guide.md) | Comprehensive documentation |
+| Learning Path | [Tutorials](docs/tutorials.md) | Progressive examples |
+| Use Cases | [Examples](docs/examples-gallery.md) | Real-world applications |
+| Interactive Tools | [Interactive Guide](docs/interactive-mode-guide.md) | GUI documentation |
 
 ## Citation
 

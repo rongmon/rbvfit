@@ -151,26 +151,28 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     return tau_all
 
 
-def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelength: np.ndarray,
-                                     line_filter: Optional[np.ndarray] = None) -> np.ndarray:
+def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelength: np.ndarray, 
+                                    line_filter=None, instrument: str = None) -> np.ndarray:
     """
-    Evaluate compiled model with optional line filtering and vectorization.
+    Global function to evaluate compiled Voigt model with optional line filtering.
     
     Parameters
     ----------
     data_container : CompiledModelData
-        Container with pre-computed model data
+        Container with all model data
     theta : np.ndarray
         Parameter array
     wavelength : np.ndarray
-        Wavelength array
+        Wavelength array for evaluation
     line_filter : np.ndarray, optional
-        Boolean array indicating which lines to include
+        Boolean array to select subset of lines
+    instrument : str, optional
+        Instrument name for multi-instrument mode
         
     Returns
     -------
     np.ndarray
-        Model flux
+        Model flux array
     """
     atomic_lambda0 = data_container.atomic_lambda0
     atomic_gamma = data_container.atomic_gamma
@@ -179,7 +181,6 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
     N_indices = data_container.N_indices
     b_indices = data_container.b_indices
     v_indices = data_container.v_indices
-    kernel = data_container.kernel
     n_lines = data_container.n_lines
 
     # Apply line filter if provided
@@ -220,20 +221,41 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
     # Convert to flux
     flux = np.exp(-tau_total)
 
-    # Apply convolution if kernel is provided
+    # NEW: Select correct kernel based on instrument
+    if data_container.is_multi_instrument and instrument is not None:
+        # Multi-instrument mode - use instrument-specific kernel
+        kernel = data_container.instrument_kernels.get(instrument) if data_container.instrument_kernels else None
+    else:
+        # Single instrument mode - use the main kernel
+        kernel = data_container.kernel
+
+    # Apply convolution if kernel exists
     if kernel is not None:
         flux = astropy_convolve(flux, kernel, boundary="extend")
 
-
     return flux
 
-
-def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
+def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray, instrument: str = None) -> np.ndarray:
     """
     Global function to evaluate compiled Voigt model. This function is picklable.
+    
+    Parameters
+    ----------
+    data_container : CompiledModelData
+        Container with all model data
+    theta : np.ndarray
+        Parameter array
+    wavelength : np.ndarray
+        Wavelength array for evaluation
+    instrument : str, optional
+        Instrument name for multi-instrument mode. If None, uses single instrument kernel.
+        
+    Returns
+    -------
+    np.ndarray
+        Model flux array
     """
-    return _evaluate_compiled_model_filtered(data_container, theta, wavelength, line_filter=None)
-
+    return _evaluate_compiled_model_filtered(data_container, theta, wavelength, line_filter=None, instrument=instrument)
 
 @dataclass
 class CompiledModelData:
@@ -250,7 +272,8 @@ class CompiledModelData:
     kernel: Optional[Any]
     n_lines: int
     total_components: int
-    # Multi-instrument support
+    # Multi-instrument support - ALL these need defaults since they come after non-default fields
+    instrument_kernels: Optional[Dict[str, Any]] = None  # NEW: For multi-instrument
     is_multi_instrument: bool = False
     instrument_param_indices: Optional[Dict[str, np.ndarray]] = None
     instrument_line_filters: Optional[Dict[str, np.ndarray]] = None
@@ -369,8 +392,8 @@ class VoigtModel:
     """
     
     def __init__(self, config: FitConfiguration, FWHM: Union[str, float] = '6.5',
-                 grating: str = 'G130M', life_position: str = '1', 
-                 cen_wave: str = '1300A'):
+             grating: str = 'G130M', life_position: str = '1', 
+             cen_wave: str = '1300A'):
         """
         Initialize the Voigt model.
         
@@ -392,10 +415,10 @@ class VoigtModel:
         self.param_manager = ParameterManager(config)
         
         # Store LSF parameters
-        self.FWHM = FWHM
-        self.grating = grating
-        self.life_position = life_position
-        self.cen_wave = cen_wave
+        self.FWHM = config.instrumental_params.get('FWHM', FWHM)
+        self.grating = config.instrumental_params.get('grating', grating)
+        self.life_position = config.instrumental_params.get('life_position', life_position)
+        self.cen_wave = config.instrumental_params.get('cen_wave', cen_wave)
         
         # Set up convolution kernel
         self._setup_kernel()
@@ -598,6 +621,7 @@ class VoigtModel:
             sigma = fwhm_pixels / 2.355
             self.kernel = Gaussian1DKernel(stddev=sigma)
 
+
     def compile(self, instrument_configs: Optional[Dict[str, FitConfiguration]] = None,
                verbose: bool = False) -> CompiledVoigtModel:
         """
@@ -635,6 +659,38 @@ class VoigtModel:
             # Validate all configs have compatible parameter structure  
             self._validate_instrument_configs(instrument_configs, master_config)
             
+            # NEW: Extract instrumental parameters and create kernels for each instrument
+            instrument_kernels = {}
+            for name, config in instrument_configs.items():
+                # Get FWHM from config, fallback to default
+                fwhm = config.instrumental_params.get('FWHM', '6.5')
+                grating = config.instrumental_params.get('grating', 'G130M')
+                life_position = config.instrumental_params.get('life_position', '1')
+                cen_wave = config.instrumental_params.get('cen_wave', '1300A')
+                
+                # Create kernel for this instrument
+                if fwhm == 'COS':
+                    if not HAS_LINETOOLS:
+                        raise ImportError("COS LSF requires linetools package")
+                    instr_config = dict(
+                        name='COS',
+                        grating=grating,
+                        life_position=life_position,
+                        cen_wave=cen_wave
+                    )
+                    coslsf = LSF(instr_config)
+                    _, data = coslsf.load_COS_data()
+                    instrument_kernels[name] = CustomKernel(data[cen_wave].data)
+                elif fwhm is None:
+                    instrument_kernels[name] = None  # No convolution
+                else:
+                    fwhm_pixels = float(fwhm)
+                    sigma = fwhm_pixels / 2.355
+                    instrument_kernels[name] = Gaussian1DKernel(stddev=sigma)
+                
+                if verbose:
+                    print(f"  {name}: FWHM={fwhm}")
+            
             # Pre-compute parameter mappings and line filters
             param_indices = self._compute_instrument_mappings(instrument_configs, master_config)
             line_filters = self._compute_instrument_line_filters(instrument_configs, master_config)
@@ -663,6 +719,7 @@ class VoigtModel:
             param_indices = None
             line_filters = None
             master_config_info = None
+            instrument_kernels = None  # NEW: Single instrument uses self.kernel
         
         # Create data container with all necessary information
         data_container = CompiledModelData(
@@ -673,7 +730,8 @@ class VoigtModel:
             N_indices=self.N_indices.copy(),
             b_indices=self.b_indices.copy(),
             v_indices=self.v_indices.copy(),
-            kernel=copy.deepcopy(self.kernel),
+            kernel=copy.deepcopy(self.kernel),  # For single instrument
+            instrument_kernels=instrument_kernels,  # NEW: For multi-instrument
             n_lines=self.n_lines,
             total_components=self.total_components,
             is_multi_instrument=is_multi_instrument,
@@ -693,7 +751,7 @@ class VoigtModel:
             else:
                 print(f"✓ Single instrument model compiled successfully")
         
-        return compiled_model
+        return compiled_model    
     
     def evaluate(self, theta: np.ndarray, wavelength: np.ndarray, 
                  return_components: bool = False, return_unconvolved: bool = False,

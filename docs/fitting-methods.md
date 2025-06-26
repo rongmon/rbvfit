@@ -1,464 +1,304 @@
-# Fitting Methods
-
+# Interactive Parameter Guessing Guide
 [← Back to Main Documentation](../README.md)
 
-Deep dive into rbvfit's fitting algorithms: quick scipy optimization vs full Bayesian MCMC.
+The interactive parameter guessing tool in rbvfit provides an intuitive way to identify absorption line components and set initial parameter estimates for MCMC fitting. This guide covers both the workflow and technical details.
 
-## Overview
+## 🎯 Overview
 
-rbvfit provides two complementary fitting approaches:
+Interactive mode allows you to:
+- **Visually identify** absorption components by clicking on velocity features
+- **Set initial guesses** for column density (N), Doppler parameter (b), and velocity (v)
+- **Customize parameters** interactively before starting the fit
+- **Work seamlessly** in both Jupyter notebooks and command-line environments
 
-| Method | Algorithm | Speed | Use Case |
-|--------|-----------|-------|----------|
-| **Quick Fit** | scipy.optimize.curve_fit | Seconds | Initial estimates, simple systems |
-| **MCMC Fit** | emcee/zeus samplers | Minutes-Hours | Robust uncertainties, complex systems |
-
-## Quick Fitting
-
-### Algorithm: scipy.optimize.curve_fit
-
-Fast parameter estimation using Levenberg-Marquardt algorithm:
+## 🚀 Quick Start
 
 ```python
-# Quick fit usage
-fitter.fit_quick(verbose=True)
+from rbvfit import guess_profile_parameters_interactive as g
 
-# Results immediately available
-best_params = fitter.theta_best
-param_errors = fitter.theta_best_error
+# Set up interactive GUI
+tab = g.gui_set_clump(wave_obs, flux, error, zabs, wrest=1548.5, xlim=[-600, 600])
+
+# Interactive parameter input (GUI will appear)
+tab.input_b_guess()
+
+# Extract parameters for fitting
+nguess = tab.nguess  # Column density guesses
+bguess = tab.bguess  # Doppler parameter guesses  
+vguess = tab.vguess  # Velocity guesses
 ```
 
-### Under the Hood
+## 🖱️ Interactive Controls
+
+### Velocity Selection Mode
+
+When the GUI opens, you'll see a plot of your spectrum in velocity space. Use these controls:
+
+| Action | Method | Description |
+|--------|--------|-------------|
+| **Add velocity guess** | Left click or `a` key | Click on absorption features to mark component centers |
+| **Remove velocity guess** | Right click or `r` key | Remove the nearest velocity marker |
+| **Finish selection** | `q` key or `ESC` | Complete velocity selection and move to parameter input |
+
+### Parameter Input Mode
+
+After velocity selection, you'll be prompted to enter:
+
+- **Column density (N)**: log₁₀ values in cm⁻² (typical range: 12-20)
+- **Doppler parameter (b)**: Values in km/s (typical range: 10-100)
+- **Velocity offsets**: Fine-tune the velocity guesses if needed
+
+## 🔧 Technical Details
+
+### Class Structure
+
+The interactive tool is built around the `gui_set_clump` class:
 
 ```python
-from scipy.optimize import curve_fit
-
-# rbvfit wrapper for curve_fit
-def curve_fit_wrapper(xdata, *params):
-    theta = np.array(params)
-    return model_func(theta, xdata)
-
-# Actual fitting call
-popt, pcov = curve_fit(
-    curve_fit_wrapper,
-    wave,                    # x-data (wavelength)
-    flux,                    # y-data (observed flux)
-    p0=theta_guess,          # initial parameters
-    sigma=error,             # error weights
-    bounds=(lb, ub),         # parameter bounds
-    maxfev=5000              # max function evaluations
-)
-```
-
-### Advantages
-- **Fast**: Seconds even for complex systems
-- **Robust**: Well-tested scipy implementation
-- **Bounded**: Respects parameter bounds
-- **Weighted**: Uses error arrays properly
-
-### Limitations
-- **Local minima**: Can get stuck in local optima
-- **Gaussian assumptions**: Errors assumed Gaussian
-- **No correlations**: Doesn't sample full posterior
-- **Linear approximation**: Uncertainties from linear approximation
-
-### When to Use Quick Fit
-
-✅ **Good for**:
-- Initial parameter estimation
-- Simple 1-2 component systems
-- Parameter exploration
-- Checking model setup
-- Starting point for MCMC
-
-❌ **Avoid for**:
-- Final publication results
-- Complex multi-component systems
-- Non-Gaussian parameter spaces
-- Parameter correlation analysis
-
-### Quick Fit Example
-
-```python
-import numpy as np
-from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.core.voigt_model import VoigtModel
-import rbvfit.vfit_mcmc as mc
-
-# Setup (data, config, model)
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=1)
-model = VoigtModel(config, FWHM='2.0')
-compiled = model.compile()
-
-# Quick fit
-fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
-fitter.fit_quick(verbose=True)
-
-# Immediate results
-print(f"Best-fit: {fitter.theta_best}")
-print(f"Errors: {fitter.theta_best_error}")
-
-# Quick visualization
-mc.plot_quick_fit(model, fitter, show_residuals=True)
-```
-
-## MCMC Fitting
-
-### Algorithms: emcee & zeus
-
-Full Bayesian parameter estimation using ensemble samplers:
-
-```python
-# MCMC setup
-fitter.no_of_Chain = 20      # Number of walkers
-fitter.no_of_steps = 1000    # Number of steps
-fitter.sampler = 'emcee'     # or 'zeus'
-
-# Run MCMC
-fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
-```
-
-### Sampler Comparison
-
-**emcee (default)**:
-- Affine-invariant ensemble sampler
-- Robust and well-tested
-- Good for moderate dimensions (< 50 parameters)
-- Slower scaling with parameter number
-
-**zeus**:
-- Slice sampling in ensemble
-- Better for high-dimensional spaces (> 20 parameters)
-- Often faster convergence
-- Newer algorithm, less battle-tested
-
-```python
-# Sampler selection
-fitter.sampler = 'emcee'  # Conservative choice
-fitter.sampler = 'zeus'   # High-dimensional systems
-```
-
-### MCMC Configuration
-
-**Walker Setup**:
-```python
-# Rule of thumb: 2-3x number of parameters
-n_params = len(theta_guess)
-fitter.no_of_Chain = max(20, 2 * n_params)
-
-# Walker initialization
-fitter.perturbation = 1e-4  # Small random perturbations around guess
-```
-
-**Step Configuration**:
-```python
-# Convergence typically needs:
-fitter.no_of_steps = max(500, 50 * n_params)  # Minimum steps
-
-# For production runs:
-fitter.no_of_steps = 2000   # More robust
-```
-
-**Optimization**:
-```python
-fitter.runmcmc(
-    optimize=True,    # Pre-optimize starting positions (recommended)
-    verbose=True,     # Print progress
-    use_pool=True     # Multiprocessing (faster)
-)
-```
-
-### Likelihood Function
-
-rbvfit uses chi-squared likelihood:
-
-```python
-def log_likelihood(theta, wave, flux, error, model_func):
-    """Log likelihood for absorption line fitting."""
-    model_flux = model_func(theta, wave)
+class gui_set_clump:
+    """
+    Interactive GUI for setting initial velocity guesses for absorption line fitting.
     
-    # Chi-squared
-    chi2 = np.sum(((flux - model_flux) / error)**2)
-    
-    # Log likelihood (assuming Gaussian errors)
-    log_like = -0.5 * chi2
-    
-    return log_like
+    Attributes
+    ----------
+    vel : np.ndarray
+        Velocity array in km/s
+    flux : np.ndarray
+        Normalized flux array
+    vel_guess : List[float]
+        List of velocity guesses from user clicks
+    nguess, bguess, vguess : np.ndarray
+        Final parameter arrays after input_b_guess()
+    """
 ```
 
-### Prior Function
+### Environment Compatibility
 
-Uniform priors within bounds:
+The tool automatically adapts to your environment:
+
+**Jupyter Notebooks:**
+- Uses `ipywidgets` for enhanced interactivity
+- Inline plotting with widget displays
+- Rich HTML output for click feedback
+
+**Command Line:**
+- Uses `matplotlib` interactive backend
+- Console output for feedback
+- Cross-platform compatibility
+
+### Default Parameter Values
+
+The tool sets intelligent defaults based on transition type:
 
 ```python
-def log_prior(theta, bounds_lower, bounds_upper):
-    """Uniform priors within parameter bounds."""
-    if np.all((theta >= bounds_lower) & (theta <= bounds_upper)):
-        return 0.0  # log(1) = 0 for uniform prior
-    else:
-        return -np.inf  # Zero probability outside bounds
+def _set_default_b_values(self):
+    """Set default b-parameter values based on ionization state."""
+    if self.wrest > 1200:  # Low ionization (e.g., MgII, FeII)
+        self.default_b = 20.0
+    else:  # High ionization (e.g., OVI, NIII)  
+        self.default_b = 30.0
 ```
 
-### MCMC Example
+## 📊 Workflow Integration
+
+### Basic Workflow
 
 ```python
-# Full MCMC workflow
-config = FitConfiguration()
-config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
-model = VoigtModel(config, FWHM='2.0')
-compiled = model.compile()
+# 1. Load your data
+wave, flux, error = load_spectrum('your_data.json')
 
-# MCMC setup
-theta_guess = [13.5, 13.2, 25.0, 15.0, -50.0, 20.0]  # 2 components
-bounds, lb, ub = mc.set_bounds(N_guess, b_guess, v_guess)
+# 2. Set up interactive mode
+tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
 
-fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
-fitter.no_of_Chain = 24  # 2x parameters
-fitter.no_of_steps = 1000
-fitter.sampler = 'emcee'
+# 3. Interactive parameter estimation
+tab.input_b_guess()
 
-# Run with optimization
-fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+# 4. Use parameters in fitting with FWHM configuration
+config = FitConfiguration(FWHM='2.5')  # FWHM defined at configuration stage
+config.add_system(z=zabs, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(tab.nguess))
 
-# Enhanced analysis
-from rbvfit.core import fit_results as fr
-results = fr.FitResults(fitter, model)
-results.print_fit_summary()
-results.corner_plot()
-results.convergence_diagnostics()
+# 5. Create model (FWHM automatically extracted from configuration)
+model = VoigtModel(config)
+theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
+
+# 6. Run MCMC
+fitter = mc.vfit(model.compile(), theta, bounds, wave, flux, error)
+fitter.runmcmc()
 ```
 
-## Method Comparison
+### Multi-System Setup
 
-### Performance Comparison
+For complex multi-system fits:
 
-**Speed Test Example**:
 ```python
-import time
+# System 1: MgII at z=0.348
+tab1 = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
+tab1.input_b_guess()
 
-# Quick fit timing
-start = time.time()
-fitter.fit_quick()
-quick_time = time.time() - start
-print(f"Quick fit: {quick_time:.1f} seconds")
+# System 2: OVI at z=0.524  
+tab2 = g.gui_set_clump(wave, flux, error, zabs=0.524, wrest=1031.9)
+tab2.input_b_guess()
 
-# MCMC timing  
-start = time.time()
-fitter.runmcmc(optimize=True)
-mcmc_time = time.time() - start
-print(f"MCMC fit: {mcmc_time:.1f} seconds")
-
-print(f"Speedup: {mcmc_time/quick_time:.0f}x faster for quick fit")
+# Configure multi-system model with FWHM
+config = FitConfiguration(FWHM='2.2')  # Define resolution at setup
+config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(tab1.nguess))
+config.add_system(z=0.524, ion='OVI', transitions=[1031.9, 1037.6], 
+                  components=len(tab2.nguess))
 ```
 
-### Uncertainty Comparison
+## 🛠️ Advanced Features
 
-**Parameter Uncertainties**:
+### Custom Velocity Ranges
+
 ```python
-# Quick fit uncertainties (from covariance matrix)
-quick_errors = fitter.theta_best_error
-
-# MCMC uncertainties (from posterior samples)
-mcmc_samples = results.get_samples()
-mcmc_errors = np.std(mcmc_samples, axis=0)
-
-# Comparison
-for i, (quick_err, mcmc_err) in enumerate(zip(quick_errors, mcmc_errors)):
-    ratio = mcmc_err / quick_err
-    print(f"Parameter {i}: Quick={quick_err:.3f}, MCMC={mcmc_err:.3f}, Ratio={ratio:.2f}")
+# Focus on specific velocity range
+tab = g.gui_set_clump(wave, flux, error, zabs, wrest=1548.5, 
+                      xlim=[-200, 200])  # Narrow range
 ```
 
-### Result Quality
+### Parameter Validation
 
-| Aspect | Quick Fit | MCMC |
-|---------|-----------|------|
-| Parameter values | Good if converged | Robust |
-| Uncertainties | Approximate | True posterior |
-| Correlations | Covariance only | Full posterior |
-| Outlier handling | Sensitive | Robust |
-| Multi-modal | Single mode | All modes |
-| Systematic errors | Not captured | Better handling |
+The tool includes built-in validation:
 
-## Best Practices
-
-### Workflow Strategy
-
-**Recommended Workflow**:
 ```python
-# 1. Start with quick fit
-fitter.fit_quick()
-print(f"Quick fit chi2: {np.sum(((flux - model(fitter.theta_best, wave))/error)**2)}")
+def validate_parameters(self):
+    """Validate that parameters are physically reasonable."""
+    if any(n < 10 or n > 22 for n in self.nguess):
+        warnings.warn("Column densities outside typical range [10, 22]")
+    if any(b < 5 or b > 200 for b in self.bguess):
+        warnings.warn("Doppler parameters outside typical range [5, 200] km/s")
+```
 
-# 2. Check if reasonable
-if np.all(np.isfinite(fitter.theta_best_error)):
-    print("Quick fit successful, using as MCMC starting point")
-    theta_guess = fitter.theta_best
-else:
-    print("Quick fit failed, using manual guess")
-    # Keep original theta_guess
+### Error Handling
 
-# 3. Run MCMC with optimized starting point
-fitter.theta = theta_guess  # Update starting point
-fitter.runmcmc(optimize=True, verbose=True)
+Common issues and solutions:
+
+**Plot not appearing:**
+```python
+# Ensure interactive backend
+import matplotlib
+matplotlib.use('TkAgg')  # or 'Qt5Agg'
+plt.ion()
+```
+
+**Widget issues in Jupyter:**
+```python
+# Install widget extensions
+!pip install ipywidgets
+!jupyter nbextension enable --py widgetsnbextension
+```
+
+## 🎨 Customization
+
+### Plot Styling
+
+```python
+# Customize the interactive plot
+tab = g.gui_set_clump(wave, flux, error, zabs, wrest=1548.5)
+tab.ax.set_ylim([0, 1.2])  # Adjust y-limits
+tab.ax.grid(True, alpha=0.3)  # Add grid
+tab.fig.set_size_inches(12, 6)  # Resize plot
 ```
 
 ### Parameter Bounds
 
-**Physical Bounds**:
 ```python
-# Column density bounds (log cm^-2)
-N_bounds = (11.0, 17.0)  # Reasonable for most ions
+# Set custom parameter bounds after interactive input
+tab.input_b_guess()
 
-# Doppler parameter bounds (km/s)  
-b_bounds = (1.0, 200.0)  # Thermal to highly turbulent
-
-# Velocity bounds (km/s)
-v_bounds = (-1000.0, 1000.0)  # Wide but reasonable
+# Custom bounds for specific use case
+bounds, lb, ub = mc.set_bounds(tab.nguess, tab.bguess, tab.vguess,
+                               nlow=[12.0]*len(tab.nguess),    # Custom N lower bounds
+                               nhigh=[18.0]*len(tab.nguess),   # Custom N upper bounds
+                               blow=[10.0]*len(tab.bguess))    # Custom b lower bounds
 ```
 
-**Adaptive Bounds**:
-```python
-# Use quick fit to set MCMC bounds
-fitter.fit_quick()
-best = fitter.theta_best
-errors = fitter.theta_best_error
+### FWHM Handling with Interactive Mode
 
-# Expand bounds around quick fit result
-n_sigma = 5  # 5-sigma bounds
-new_lb = np.maximum(lb, best - n_sigma * errors)
-new_ub = np.minimum(ub, best + n_sigma * errors)
+```python
+# Interactive mode with FWHM configuration
+tab = g.gui_set_clump(wave, flux, error, zabs=0.348, wrest=2796.3)
+tab.input_b_guess()
+
+# FWHM configuration approaches:
+
+# 1. FWHM in pixels (direct)
+config = FitConfiguration(FWHM='2.5')  # Pixels
+
+# 2. Convert from km/s to pixels if needed
+from rbvfit.core.voigt_model import mean_fwhm_pixels
+FWHM_vel = 15.0  # km/s
+FWHM_pixels = mean_fwhm_pixels(FWHM_vel, wave)
+config = FitConfiguration(FWHM=str(FWHM_pixels))
+
+# 3. Configure with parameters from interactive mode
+config.add_system(z=zabs, ion='MgII', transitions=[2796.3, 2803.5], 
+                  components=len(tab.nguess))
 ```
 
-### Convergence Assessment
+## 📋 Best Practices
 
-**Diagnostic Tools**:
+### 1. Start Conservative
+- Begin with fewer components than you think you need
+- Add complexity gradually based on fit quality
+
+### 2. Physical Reasoning
+- Column densities: 12-16 (typical), 16-20 (strong), >20 (saturated)
+- Doppler parameters: 10-30 km/s (thermal), 30-100 km/s (turbulent)
+- Velocities: Based on kinematic structure expectations
+
+### 3. Iterative Refinement
 ```python
-# Convergence diagnostics
-conv = results.convergence_diagnostics()
-print(f"Overall status: {conv['overall_status']}")
+# Initial fit
+fitter.runmcmc(no_of_steps=100)  # Quick test
 
-# Manual checks
-samples = results.get_samples()
-autocorr_time = results.autocorr_time()
-effective_samples = results.effective_sample_size()
-
-print(f"Autocorrelation time: {autocorr_time}")
-print(f"Effective samples: {effective_samples}")
+# Check results, then refine
+if convergence_poor:
+    # Adjust initial guesses and rerun
+    tab.input_b_guess()  # Re-enter parameters
+    fitter = mc.vfit(model, new_theta, bounds, wave, flux, error)
+    fitter.runmcmc(no_of_steps=1000)  # Full fit
 ```
 
-**Convergence Criteria**:
-- Gelman-Rubin R̂ < 1.1 for all parameters
-- Effective sample size > 100 per parameter  
-- Autocorrelation time < n_steps/50
-- Visual inspection of chain traces
+### 4. Validation
+- Compare results with literature values
+- Check for unphysical parameter values
+- Verify component significance with model comparison
 
-### Multi-Instrument Considerations
-
-**Computational Scaling**:
-```python
-# Multi-instrument increases computation
-# - More data points to evaluate
-# - Joint likelihood calculation
-# - Careful sampler tuning needed
-
-# Recommendations for multi-instrument:
-fitter.sampler = 'zeus'        # Often better scaling
-fitter.no_of_Chain = 30        # More walkers
-fitter.use_pool = True         # Essential for speed
-```
-
-## Troubleshooting
+## 🔍 Troubleshooting
 
 ### Common Issues
 
-**Quick Fit Fails**:
-```python
-# Check for NaN/infinite values
-if np.any(~np.isfinite(fitter.theta_best_error)):
-    print("Quick fit uncertainties contain NaN/inf")
-    # Possible causes:
-    # - Poor initial guess
-    # - Model evaluation fails
-    # - Singular covariance matrix
-```
+**No GUI appears:**
+- Check matplotlib backend: `matplotlib.get_backend()`
+- Try different backend: `matplotlib.use('TkAgg')`
+- Ensure X11 forwarding if using SSH
 
-**MCMC Not Converging**:
-```python
-# Increase steps
-fitter.no_of_steps = 2000
+**Clicks not registering:**
+- Ensure plot window has focus
+- Try keyboard shortcuts (`a` to add, `r` to remove)
+- Check for widget conflicts in Jupyter
 
-# Tighter initialization
-fitter.perturbation = 1e-5
+**Parameters seem unreasonable:**
+- Review physical expectations for your system
+- Check units (velocities in km/s, N in log cm⁻²)
+- Validate against literature measurements
 
-# More walkers
-fitter.no_of_Chain = 40
-
-# Better starting point
-fitter.fit_quick()  # Get good starting point first
-```
-
-**Poor Parameter Constraints**:
-```python
-# Check data quality
-chi2_reduced = np.sum(((flux - model_flux)/error)**2) / (len(flux) - len(theta))
-print(f"Reduced chi2: {chi2_reduced:.2f}")
-
-# Check parameter degeneracies
-results.corner_plot()  # Look for correlations
-```
-
----
-
-## Advanced Topics
-
-### Custom Samplers
+### Debug Mode
 
 ```python
-# Direct emcee usage (advanced)
-import emcee
-
-sampler = emcee.EnsembleSampler(
-    nwalkers=fitter.no_of_Chain,
-    ndim=len(theta_guess), 
-    log_prob_fn=fitter.lnprob
-)
-
-# Custom sampling
-state = sampler.run_mcmc(initial_state, nsteps=1000)
+# Enable verbose output
+tab = g.gui_set_clump(wave, flux, error, zabs, wrest=1548.5, verbose=True)
 ```
 
-### Parallel Computing
+## 🌟 Tips for Success
 
-```python
-# Multiprocessing setup
-from multiprocessing import Pool
+1. **Prepare your data**: Ensure flux is normalized and error arrays are realistic
+2. **Know your system**: Have approximate expectations for redshift and line strengths  
+3. **Start simple**: Begin with single-component fits before adding complexity
+4. **Iterate**: Use interactive mode to refine guesses based on initial fit results
+5. **Validate**: Always compare final results with physical expectations
 
-# Use all available cores
-fitter.use_pool = True
-
-# Or specify number of processes
-with Pool(processes=4) as pool:
-    fitter.pool = pool
-    fitter.runmcmc()
-```
-
-### Model Selection
-
-```python
-# Compare different models using information criteria
-results_1comp = fit_1_component_model()
-results_2comp = fit_2_component_model()
-
-# Calculate AIC/BIC
-aic_1 = results_1comp.aic()
-aic_2 = results_2comp.aic()
-
-print(f"1-component AIC: {aic_1:.1f}")
-print(f"2-component AIC: {aic_2:.1f}")
-print(f"Preferred: {'2-component' if aic_2 < aic_1 else '1-component'}")
-```
-
----
-
-[← Back to Main Documentation](../README.md) | [Next: Examples Gallery →](examples-gallery.md)
+The interactive parameter guessing tool is designed to make the transition from data visualization to quantitative fitting as smooth as possible. Combined with rbvfit's robust MCMC engine, it provides a complete workflow for professional absorption line analysis.

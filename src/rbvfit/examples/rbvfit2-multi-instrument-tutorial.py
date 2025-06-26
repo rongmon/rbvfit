@@ -105,11 +105,15 @@ print("=" * 60)
 # Both instruments observe the same physical system (OI 1302 at z=0.0)
 # but with different instrumental resolutions
 
-config_A = FitConfiguration()
+# Define instrumental resolutions (Full Width at Half Maximum in pixels)
+FWHM_XShooter = '2.2'  # Higher spectral resolution (sharper lines)
+FWHM_FIRE = '4.0'      # Lower spectral resolution (broader lines)
+
+config_A = FitConfiguration(FWHM=FWHM_XShooter)
 config_A.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
 print("XShooter configuration: OI 1302 at z=0.0, 1 component")
 
-config_B = FitConfiguration()
+config_B = FitConfiguration(FWHM=FWHM_FIRE)
 config_B.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
 print("FIRE configuration: identical physical system")
 
@@ -133,20 +137,14 @@ print("\n" + "=" * 60)
 print("SETTING UP INSTRUMENTAL PARAMETERS")
 print("=" * 60)
 
-# Define instrumental resolutions (Full Width at Half Maximum in pixels)
-FWHM_XShooter = '2.2'  # Higher spectral resolution (sharper lines)
-FWHM_FIRE = '4.0'      # Lower spectral resolution (broader lines)
 
-print(f"Instrumental resolutions:")
-print(f"  XShooter FWHM: {FWHM_XShooter} pixels (higher resolution)")
-print(f"  FIRE FWHM:     {FWHM_FIRE} pixels (lower resolution)")
 
 # Create instrument-specific models
 # Each model applies different instrumental broadening to the same physics
-model_A = VoigtModel(config_A, FWHM=FWHM_XShooter)  
+model_A = VoigtModel(config_A)  
 print(f"XShooter model: convolves with {FWHM_XShooter}-pixel Gaussian")
 
-model_B = VoigtModel(config_B, FWHM=FWHM_FIRE)      
+model_B = VoigtModel(config_B)      
 print(f"FIRE model: convolves with {FWHM_FIRE}-pixel Gaussian")
 
 print("\n✓ Instrumental models created")

@@ -1,0 +1,1138 @@
+"""
+Enhanced results management for rbvfit 2.0 with simplified architecture.
+
+This module provides the FitResults class for managing MCMC fitting results
+with HDF5 persistence, analysis capabilities, and enhanced plotting.
+"""
+
+from __future__ import annotations
+from typing import Dict, List, Tuple, Optional, Any, Union
+
+import numpy as np
+import h5py
+import json
+import pickle
+from pathlib import Path
+import warnings
+from dataclasses import dataclass
+import copy
+
+# Core dependencies
+import matplotlib.pyplot as plt
+from scipy.stats import chi2
+import corner
+import pandas as pd
+
+
+class CleanFitter:
+    """Clean fitter class for loading saved data."""
+    pass
+
+
+class CleanSampler:
+    """Clean sampler class for loading saved data."""
+    pass
+
+
+@dataclass
+class ParameterSummary:
+    """Container for parameter summary statistics."""
+    names: List[str]
+    best_fit: np.ndarray
+    errors: np.ndarray
+    percentiles: Dict[str, np.ndarray]  # 16th, 50th, 84th percentiles
+    mean: np.ndarray
+    std: np.ndarray
+
+
+class FitResults:
+    """
+    Enhanced container for rbvfit 2.0 MCMC fitting results.
+    
+    This class provides analysis capabilities, HDF5 persistence, and enhanced
+    plotting methods for absorption line fitting results.
+    """
+    
+    def __init__(self, fitter, model):
+        """
+        Initialize results container from fitter and model.
+        
+        Parameters
+        ----------
+        fitter : vfit
+            MCMC fitter object after running fit
+        model : VoigtModel
+            The v2.0 model object with configuration
+        """
+        self.fitter = fitter
+        self.model = model
+        
+        # Validate inputs
+        self._validate_inputs()
+        
+        # Extract key information
+        self._extract_mcmc_info()
+        
+        # Cache for expensive operations
+        self._cached_samples = None
+        self._cached_param_summary = None
+        self._cached_correlation = None
+        self._cached_convergence = None
+        self._compiled_model = None
+        
+    def _validate_inputs(self):
+        """Validate that inputs are compatible with rbvfit 2.0."""
+        # Check fitter has required attributes
+        required_fitter_attrs = ['sampler', 'theta', 'wave_obs', 'fnorm', 'enorm']
+        for attr in required_fitter_attrs:
+            if not hasattr(self.fitter, attr):
+                raise ValueError(f"Fitter missing required attribute: {attr}")
+        
+        # Check model is v2.0 VoigtModel
+        required_model_attrs = ['config', 'compile']
+        for attr in required_model_attrs:
+            if not hasattr(self.model, attr):
+                raise ValueError(f"Model appears to be v1.0, not v2.0. Missing: {attr}")
+        
+        # Check if MCMC was actually run
+        if not hasattr(self.fitter, 'sampler') or self.fitter.sampler is None:
+            raise ValueError("MCMC has not been run. No sampler found.")
+    
+    def _extract_mcmc_info(self):
+        """Extract basic MCMC information from fitter."""
+        self.n_walkers = getattr(self.fitter, 'no_of_Chain', 0)
+        self.n_steps = getattr(self.fitter, 'no_of_steps', 0)
+        self.sampler_name = getattr(self.fitter, 'sampler_name', 'emcee')
+        
+        # Extract bounds
+        self.bounds_lower = getattr(self.fitter, 'lb', None)
+        self.bounds_upper = getattr(self.fitter, 'ub', None)
+        
+        # Extract datasets info
+        self.is_multi_instrument = getattr(self.fitter, 'multi_instrument', False)
+        if self.is_multi_instrument:
+            self.instrument_data = getattr(self.fitter, 'instrument_data', {})
+        else:
+            self.instrument_data = None
+    
+    # === EASY ACCESS PROPERTIES ===
+    @property
+    def best_theta(self):
+        """Get best-fit parameters directly."""
+        return self.parameter_summary(verbose=False).best_fit
+    
+    @property
+    def bounds(self):
+        """Get parameter bounds as (lower, upper) tuple."""
+        return self.bounds_lower, self.bounds_upper
+    
+    @property  
+    def wavelength(self):
+        """Get wavelength array."""
+        return self.fitter.wave_obs
+        
+    @property
+    def flux(self):
+        """Get flux array."""
+        return self.fitter.fnorm
+        
+    @property
+    def error(self):
+        """Get error array."""
+        return self.fitter.enorm
+    
+    @property
+    def compiled_model(self):
+        """Get compiled model, compiling if needed."""
+        if self._compiled_model is None:
+            self._compiled_model = self.model.compile()
+        return self._compiled_model
+    
+    # === CONVENIENCE METHODS ===
+    def get_fit_essentials(self):
+        """Get everything needed for refitting."""
+        return {
+            'theta': self.best_theta,
+            'bounds': self.bounds,
+            'data': (self.wavelength, self.flux, self.error),
+            'model': self.model,
+            'compiled_model': self.compiled_model
+        }
+    
+    def evaluate_model(self, theta=None, wave=None):
+        """Evaluate model with best fit or custom parameters."""
+        if theta is None:
+            theta = self.best_theta
+        if wave is None:
+            wave = self.wavelength
+        return self.compiled_model.model_flux(theta, wave)
+    
+    def quick_plot(self, save_path=None, show_residuals=True):
+        """One-line plotting method."""
+        flux_model = self.evaluate_model()
+        
+        if show_residuals:
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8), 
+                                           gridspec_kw={'height_ratios': [3, 1]})
+        else:
+            fig, ax1 = plt.subplots(1, 1, figsize=(12, 6))
+        
+        # Main plot
+        ax1.plot(self.wavelength, self.flux, 'k-', alpha=0.7, label='Data')
+        ax1.plot(self.wavelength, flux_model, 'r-', linewidth=2, label='Best Fit')
+        ax1.fill_between(self.wavelength, self.flux-self.error, self.flux+self.error, 
+                        alpha=0.3, color='gray', label='±1σ')
+        ax1.set_ylabel('Normalized Flux')
+        ax1.legend()
+        ax1.set_title('rbvfit2 Results')
+        
+        if show_residuals:
+            # Residuals
+            residuals = self.flux - flux_model
+            ax2.plot(self.wavelength, residuals, 'k-', alpha=0.7)
+            ax2.axhline(0, color='r', linestyle='--', alpha=0.5)
+            ax2.fill_between(self.wavelength, -self.error, self.error, 
+                            alpha=0.3, color='gray')
+            ax2.set_xlabel('Wavelength (Å)')
+            ax2.set_ylabel('Residuals')
+        else:
+            ax1.set_xlabel('Wavelength (Å)')
+        
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.show()
+        
+        # Print fit quality
+        chi2 = np.sum(((self.flux - flux_model) / self.error)**2)
+        dof = len(self.wavelength) - len(self.best_theta)
+        print(f"χ² = {chi2:.2f}, χ²/ν = {chi2/dof:.3f}")
+    
+    def recompile_model(self, **kwargs):
+        """Recompile model with new settings (e.g., new FWHM)."""
+        self._compiled_model = self.model.compile(**kwargs)
+        return self._compiled_model
+    
+    def _get_samples(self, burnin_fraction: float = 0.2, thin: int = 1) -> np.ndarray:
+        """
+        Extract samples from sampler with caching.
+        
+        Parameters
+        ----------
+        burnin_fraction : float
+            Fraction of chain to discard as burn-in
+        thin : int
+            Thinning factor for samples
+            
+        Returns
+        -------
+        np.ndarray
+            MCMC samples array (n_samples, n_params)
+        """
+        if self._cached_samples is not None:
+            return self._cached_samples
+        
+        # Auto-detect burn-in based on autocorrelation if possible
+        try:
+            burnin = self._estimate_burnin()
+        except:
+            burnin = int(self.n_steps * burnin_fraction)
+        
+        # Extract samples using fitter method
+        try:
+            if hasattr(self.fitter.sampler, 'get_chain'):
+                # emcee or zeus with get_chain method
+                try:
+                    samples = self.fitter.sampler.get_chain(
+                        discard=burnin, thin=thin, flat=True
+                    )
+                except TypeError:
+                    # Older versions might not support these parameters
+                    chain = self.fitter.sampler.get_chain()
+                    samples = chain[burnin::thin].reshape(-1, chain.shape[-1])
+            else:
+                # Fallback for other samplers
+                chain = self.fitter.sampler.chain
+                samples = chain[:, burnin::thin, :].reshape(-1, chain.shape[-1])
+                
+        except Exception as e:
+            raise RuntimeError(f"Could not extract samples from sampler: {e}")
+        
+        self._cached_samples = samples
+        return samples
+    
+    def _estimate_burnin(self) -> int:
+        """Estimate burn-in length based on autocorrelation time."""
+        try:
+            if hasattr(self.fitter.sampler, 'get_autocorr_time'):
+                tau = self.fitter.sampler.get_autocorr_time()
+                mean_tau = np.nanmean(tau)
+                
+                if np.isfinite(mean_tau) and mean_tau > 0:
+                    # Use 3x autocorrelation time, but cap at 40% of chain
+                    burnin = min(int(3 * mean_tau), int(0.4 * self.n_steps))
+                    return max(burnin, int(0.1 * self.n_steps))  # Minimum 10%
+            
+        except Exception:
+            pass
+        
+        # Fallback to 20% of chain
+        return int(0.2 * self.n_steps)
+    
+    # =============================================================================
+    # SIMPLIFIED SAVE/LOAD METHODS
+    # =============================================================================
+    
+    def save(self, filename: Union[str, Path]) -> None:
+        """
+        Save fit results to HDF5 file.
+        
+        Parameters
+        ----------
+        filename : str or Path
+            Output HDF5 filename
+        """
+        filename = Path(filename)
+        filename.parent.mkdir(parents=True, exist_ok=True)
+        
+        with h5py.File(filename, 'w') as f:
+            # Metadata
+            meta = f.create_group('metadata')
+            meta.attrs['rbvfit_version'] = '2.0'
+            meta.attrs['sampler'] = self.sampler_name
+            meta.attrs['n_walkers'] = self.n_walkers
+            meta.attrs['n_steps'] = self.n_steps
+            meta.attrs['is_multi_instrument'] = self.is_multi_instrument
+            
+            # Store data arrays directly
+            data_group = f.create_group('data')
+            data_group.create_dataset('wave_obs', data=self.fitter.wave_obs)
+            data_group.create_dataset('fnorm', data=self.fitter.fnorm)
+            data_group.create_dataset('enorm', data=self.fitter.enorm)
+            
+            # Store bounds directly
+            bounds_group = f.create_group('bounds')
+            if self.bounds_lower is not None:
+                bounds_group.create_dataset('lb', data=self.bounds_lower)
+            if self.bounds_upper is not None:
+                bounds_group.create_dataset('ub', data=self.bounds_upper)
+            
+            # Store MCMC samples directly
+            mcmc_group = f.create_group('mcmc')
+            try:
+                if hasattr(self.fitter.sampler, 'get_chain'):
+                    chain = self.fitter.sampler.get_chain()
+                    mcmc_group.create_dataset('chain', data=chain)
+                elif hasattr(self.fitter.sampler, 'chain'):
+                    mcmc_group.create_dataset('chain', data=self.fitter.sampler.chain)
+            except Exception as e:
+                print(f"Warning: Could not save MCMC chain: {e}")
+            
+            # Store other fitter info directly
+            fitter_info = f.create_group('fitter_info')
+            if hasattr(self.fitter, 'theta'):
+                fitter_info.create_dataset('theta', data=self.fitter.theta)
+            if hasattr(self.fitter, 'instrument_data') and self.fitter.instrument_data:
+                multi_group = fitter_info.create_group('instrument_data')
+                for name, inst_data in self.fitter.instrument_data.items():
+                    inst_group = multi_group.create_group(name)
+                    inst_group.create_dataset('wave', data=inst_data['wave'])
+                    inst_group.create_dataset('flux', data=inst_data['flux'])
+                    inst_group.create_dataset('error', data=inst_data['error'])
+            
+            # Store model as pickled dataset  
+            model_group = f.create_group('model')
+            model_bytes = np.frombuffer(pickle.dumps(self.model), dtype=np.uint8)
+            model_group.create_dataset('data', data=model_bytes)
+        
+        print(f"✓ Saved fit results to {filename}")
+    
+    @classmethod
+    def load(cls, filename: Union[str, Path]) -> 'FitResults':
+        """
+        Load fit results from HDF5 file.
+        
+        Parameters
+        ----------
+        filename : str or Path
+            HDF5 filename to load
+            
+        Returns
+        -------
+        FitResults
+            Loaded fit results object with full functionality
+        """
+        filename = Path(filename)
+        if not filename.exists():
+            raise FileNotFoundError(f"File not found: {filename}")
+        
+        with h5py.File(filename, 'r') as f:
+            # Load model
+            model_bytes = f['model']['data'][...].tobytes()
+            model = pickle.loads(model_bytes)
+            
+            # Reconstruct fitter from saved data
+            fitter = CleanFitter()
+            
+            # Load data
+            data_group = f['data']
+            fitter.wave_obs = data_group['wave_obs'][...]
+            fitter.fnorm = data_group['fnorm'][...]
+            fitter.enorm = data_group['enorm'][...]
+            
+            # Load bounds
+            if 'bounds' in f:
+                bounds_group = f['bounds']
+                fitter.lb = bounds_group['lb'][...] if 'lb' in bounds_group else None
+                fitter.ub = bounds_group['ub'][...] if 'ub' in bounds_group else None
+            
+            # Load metadata
+            meta = f['metadata']
+            fitter.sampler_name = meta.attrs.get('sampler', 'emcee')
+            fitter.no_of_Chain = meta.attrs.get('n_walkers', 50)
+            fitter.no_of_steps = meta.attrs.get('n_steps', 1000)
+            fitter.multi_instrument = meta.attrs.get('is_multi_instrument', False)
+            
+            # Load MCMC data
+            if 'mcmc' in f and 'chain' in f['mcmc']:
+                chain_data = f['mcmc']['chain'][...]
+                
+                # Create simple sampler with get_chain method
+                sampler = CleanSampler()
+                sampler._chain = chain_data
+                
+                def get_chain(discard=0, thin=1, flat=False):
+                    if flat:
+                        return sampler._chain[discard::thin].reshape(-1, sampler._chain.shape[-1])
+                    else:
+                        return sampler._chain[discard::thin]
+                
+                sampler.get_chain = get_chain
+                fitter.sampler = sampler
+            
+            # Load other fitter info
+            if 'fitter_info' in f:
+                fitter_info = f['fitter_info']
+                if 'theta' in fitter_info:
+                    fitter.theta = fitter_info['theta'][...]
+                
+                # Load multi-instrument data
+                if 'instrument_data' in fitter_info:
+                    fitter.instrument_data = {}
+                    multi_group = fitter_info['instrument_data']
+                    for name in multi_group.keys():
+                        inst_group = multi_group[name]
+                        fitter.instrument_data[name] = {
+                            'wave': inst_group['wave'][...],
+                            'flux': inst_group['flux'][...],
+                            'error': inst_group['error'][...]
+                        }
+        
+        # Create and return FitResults object
+        results = cls.__new__(cls)  # Create without calling __init__
+        results.fitter = fitter
+        results.model = model
+        
+        # Extract info
+        results._extract_mcmc_info()
+        
+        # Initialize caches
+        results._cached_samples = None
+        results._cached_param_summary = None
+        results._cached_correlation = None
+        results._cached_convergence = None
+        results._compiled_model = None
+        
+        print(f"✓ Loaded fit results from {filename}")
+        return results
+    
+    # =============================================================================
+    # CORE FUNCTIONALITY
+    # =============================================================================
+    
+    def parameter_summary(self, verbose: bool = True) -> ParameterSummary:
+        """
+        Generate parameter summary table.
+        
+        Parameters
+        ----------
+        verbose : bool
+            Whether to print the summary table
+            
+        Returns
+        -------
+        ParameterSummary
+            Container with parameter statistics
+        """
+        if self._cached_param_summary is not None:
+            if verbose:
+                self._print_parameter_summary(self._cached_param_summary)
+            return self._cached_param_summary
+        
+        # Get samples
+        samples = self._get_samples()
+        n_params = samples.shape[1]
+        
+        # Generate parameter names
+        names = self._generate_parameter_names(n_params)
+        
+        # Calculate statistics
+        percentiles = {
+            '16th': np.percentile(samples, 16, axis=0),
+            '50th': np.percentile(samples, 50, axis=0),
+            '84th': np.percentile(samples, 84, axis=0)
+        }
+        
+        best_fit = percentiles['50th']  # Median as best fit
+        lower_err = best_fit - percentiles['16th']
+        upper_err = percentiles['84th'] - best_fit
+        
+        # Combine errors (take larger of lower/upper for symmetric error)
+        errors = np.maximum(lower_err, upper_err)
+        
+        summary = ParameterSummary(
+            names=names,
+            best_fit=best_fit,
+            errors=errors,
+            percentiles=percentiles,
+            mean=np.mean(samples, axis=0),
+            std=np.std(samples, axis=0)
+        )
+        
+        self._cached_param_summary = summary
+        
+        if verbose:
+            self._print_parameter_summary(summary)
+        
+        return summary
+    
+    def _generate_parameter_names(self, n_params: int) -> List[str]:
+        """Generate parameter names based on model structure."""
+        # Try to use model configuration if available
+        if hasattr(self.model, 'config') and self.model.config is not None:
+            try:
+                # Use v2.0 parameter manager approach
+                names = []
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"N_{ion}_z{z:.3f}_c{comp}")
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"b_{ion}_z{z:.3f}_c{comp}")
+                
+                for sys_idx, system in enumerate(self.model.config.systems):
+                    z = system.redshift
+                    for ion_group in system.ion_groups:
+                        ion = ion_group.ion_name
+                        for comp in range(ion_group.components):
+                            names.append(f"v_{ion}_z{z:.3f}_c{comp}")
+                
+                if len(names) == n_params:
+                    return names
+                    
+            except Exception:
+                pass
+        
+        # Fallback to generic names
+        nfit = n_params // 3
+        names = []
+        
+        # Add logN names
+        for i in range(nfit):
+            names.append(f"logN_{i+1}")
+        
+        # Add b names
+        for i in range(nfit):
+            names.append(f"b_{i+1}")
+        
+        # Add v names
+        for i in range(nfit):
+            names.append(f"v_{i+1}")
+        
+        return names
+    
+    def _print_parameter_summary(self, summary: ParameterSummary) -> None:
+        """Print formatted parameter summary."""
+        print("\n" + "=" * 70)
+        print("PARAMETER SUMMARY")
+        print("=" * 70)
+        
+        print(f"Sampler: {self.sampler_name}")
+        print(f"Walkers: {self.n_walkers}")
+        print(f"Steps: {self.n_steps}")
+        print(f"Parameters: {len(summary.names)}")
+        if self.is_multi_instrument:
+            n_instruments = len(self.instrument_data) if self.instrument_data else 1
+            print(f"Instruments: {n_instruments}")
+        
+        print(f"\nParameter Values:")
+        print("-" * 70)
+        print(f"{'Parameter':<20} {'Best Fit':<12} {'Error':<12} {'Mean':<12} {'Std':<12}")
+        print("-" * 70)
+        
+        for i, name in enumerate(summary.names):
+            print(f"{name:<20} {summary.best_fit[i]:11.4f} "
+                  f"{summary.errors[i]:11.4f} {summary.mean[i]:11.4f} "
+                  f"{summary.std[i]:11.4f}")
+        
+        print("=" * 70)
+    
+    def chi_squared(self) -> Dict[str, float]:
+        """
+        Calculate chi-squared statistics for the fit.
+        
+        Returns
+        -------
+        dict
+            Dictionary containing chi-squared metrics
+        """
+        summary = self.parameter_summary(verbose=False)
+        best_theta = summary.best_fit
+        
+        # Calculate model for primary dataset
+        try:
+            model_flux = self.evaluate_model(best_theta, self.wavelength)
+        except:
+            print("Warning: Could not evaluate model. Chi-squared calculation skipped.")
+            return {'chi2': np.nan, 'reduced_chi2': np.nan, 'dof': np.nan}
+        
+        # Primary dataset chi-squared
+        chi2 = np.sum((self.flux - model_flux)**2 / self.error**2)
+        n_data = len(self.flux)
+        n_params = len(best_theta)
+        dof = n_data - n_params
+        
+        chi2_stats = {
+            'chi2': chi2,
+            'dof': dof,
+            'reduced_chi2': chi2 / dof if dof > 0 else np.inf,
+            'n_data_points': n_data,
+            'n_parameters': n_params
+        }
+        
+        # Add multi-instrument contributions if available
+        if self.is_multi_instrument and self.instrument_data:
+            chi2_total = chi2
+            n_total = n_data
+            
+            for name, inst_data in self.instrument_data.items():
+                if name == 'main':
+                    continue
+                
+                try:
+                    inst_model = self.evaluate_model(best_theta, inst_data['wave'])
+                    inst_chi2 = np.sum((inst_data['flux'] - inst_model)**2 / inst_data['error']**2)
+                    
+                    chi2_total += inst_chi2
+                    n_total += len(inst_data['wave'])
+                    chi2_stats[f'chi2_{name}'] = inst_chi2
+                    
+                except:
+                    print(f"Warning: Could not evaluate model for instrument {name}")
+            
+            chi2_stats['chi2_total'] = chi2_total
+            chi2_stats['n_total_points'] = n_total
+            chi2_stats['dof_total'] = n_total - n_params
+            chi2_stats['reduced_chi2_total'] = chi2_total / (n_total - n_params) if (n_total - n_params) > 0 else np.inf
+        
+        return chi2_stats
+    
+    def corner_plot(self, save_path: Optional[str] = None, **kwargs) -> plt.Figure:
+        """
+        Create corner plot of parameter posterior distributions.
+        
+        Parameters
+        ----------
+        save_path : str, optional
+            Path to save the corner plot
+        **kwargs
+            Additional arguments passed to corner.corner()
+            
+        Returns
+        -------
+        plt.Figure
+            The corner plot figure
+        """
+        # Get samples and parameter info
+        samples = self._get_samples()
+        summary = self.parameter_summary(verbose=False)
+        
+        # Default corner plot arguments
+        corner_kwargs = {
+            'labels': summary.names,
+            'truths': summary.best_fit,
+            'show_titles': True,
+            'title_fmt': '.3f',
+            'quantiles': [0.16, 0.5, 0.84],
+            'levels': (1 - np.exp(-0.5), 1 - np.exp(-2), 1 - np.exp(-4.5)),
+            'plot_density': False,
+            'plot_datapoints': True,
+            'fill_contours': True,
+            'max_n_ticks': 3
+        }
+        
+        # Update with user-provided kwargs
+        corner_kwargs.update(kwargs)
+        
+        # Create corner plot
+        fig = corner.corner(samples, **corner_kwargs)
+        
+        # Add title
+        fig.suptitle(f'rbvfit2 MCMC Results\n'
+                     f'{self.sampler_name} sampler, {self.n_walkers} walkers, {self.n_steps} steps', 
+                     fontsize=14, y=0.96)
+        
+        fig.tight_layout(rect=[0, 0, 1, 0.98])
+        
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✓ Saved corner plot to {save_path}")
+        else:
+            plt.show()
+        
+        return fig
+    
+    def print_fit_summary(self) -> None:
+        """Print comprehensive fit summary."""
+        print("\n" + "=" * 80)
+        print("RBVFIT 2.0 FIT SUMMARY")
+        print("=" * 80)
+        
+        # Basic info
+        print(f"Model: rbvfit 2.0 VoigtModel")
+        print(f"Sampler: {self.sampler_name}")
+        print(f"Configuration: {self.n_walkers} walkers × {self.n_steps} steps")
+        
+        if self.is_multi_instrument:
+            n_instruments = len(self.instrument_data) if self.instrument_data else 1
+            print(f"Multi-instrument fit: {n_instruments} datasets")
+        
+        # Chi-squared statistics
+        chi2_stats = self.chi_squared()
+        if not np.isnan(chi2_stats['chi2']):
+            print(f"\nGoodness of fit:")
+            if self.is_multi_instrument and 'chi2_total' in chi2_stats:
+                print(f"  Combined χ² = {chi2_stats['chi2_total']:.2f}")
+                print(f"  Combined χ²/ν = {chi2_stats['reduced_chi2_total']:.3f}")
+                print(f"  DOF = {chi2_stats['dof_total']}")
+            else:
+                print(f"  χ² = {chi2_stats['chi2']:.2f}")
+                print(f"  χ²/ν = {chi2_stats['reduced_chi2']:.3f}")
+                print(f"  DOF = {chi2_stats['dof']}")
+        
+        # Quick parameter summary
+        summary = self.parameter_summary(verbose=False)
+        print(f"\nParameters: {len(summary.names)} fitted")
+        
+        if len(summary.names) <= 12:  # Show details for small parameter sets
+            print("  Best-fit values:")
+            for name, value, error in zip(summary.names, summary.best_fit, summary.errors):
+                print(f"    {name}: {value:.3f} ± {error:.3f}")
+        else:
+            print("  (Use .parameter_summary() for detailed values)")
+        
+        print("=" * 80)
+    
+    def __repr__(self) -> str:
+        """String representation of FitResults."""
+        summary = self.parameter_summary(verbose=False)
+        
+        return (f"FitResults(sampler='{self.sampler_name}', "
+                f"parameters={len(summary.names)})")
+    
+    # =============================================================================
+    # CONVERGENCE DIAGNOSTICS AND PLOTTING
+    # =============================================================================
+    
+    def convergence_diagnostics(self, verbose: bool = True) -> Dict[str, Any]:
+        """
+        Comprehensive convergence diagnostics with recommendations.
+        
+        Parameters
+        ----------
+        verbose : bool
+            Whether to print diagnostic results
+            
+        Returns
+        -------
+        dict
+            Dictionary containing all diagnostic metrics and recommendations
+        """
+        if self._cached_convergence is not None:
+            if verbose:
+                self._print_convergence_diagnostics(self._cached_convergence)
+            return self._cached_convergence
+        
+        diagnostics = {}
+        recommendations = []
+        
+        try:
+            # 1. Acceptance fraction analysis
+            acceptance_fraction = self._get_acceptance_fraction()
+            diagnostics['acceptance_fraction'] = {
+                'mean': np.mean(acceptance_fraction) if hasattr(acceptance_fraction, '__len__') else acceptance_fraction,
+                'individual': acceptance_fraction
+            }
+            
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if mean_accept < 0.2:
+                recommendations.append("❌ Low acceptance fraction (<0.2). Consider reducing step size or relaxing bounds.")
+            elif mean_accept > 0.7:
+                recommendations.append("⚠️ High acceptance fraction (>0.7). Consider increasing step size for better mixing.")
+            else:
+                recommendations.append("✅ Good acceptance fraction (0.2-0.7).")
+            
+        except Exception as e:
+            diagnostics['acceptance_fraction'] = None
+            recommendations.append(f"❓ Could not calculate acceptance fraction: {e}")
+        
+        try:
+            # 2. Autocorrelation time analysis
+            autocorr_time = self._get_autocorr_time()
+            diagnostics['autocorr_time'] = {
+                'tau': autocorr_time,
+                'mean_tau': np.nanmean(autocorr_time) if autocorr_time is not None else None
+            }
+            
+            if autocorr_time is not None:
+                mean_tau = np.nanmean(autocorr_time)
+                if np.isfinite(mean_tau):
+                    chain_length_ratio = self.n_steps / mean_tau
+                    diagnostics['chain_length_ratio'] = chain_length_ratio
+                    
+                    if chain_length_ratio < 50:
+                        recommended_length = int(50 * mean_tau)
+                        recommendations.append(
+                            f"⏱️ Chain too short. Current: {self.n_steps} steps, "
+                            f"Recommended: >{recommended_length} steps (50x autocorr time)"
+                        )
+                    else:
+                        recommendations.append("✅ Chain length adequate (>50x autocorr time).")
+                else:
+                    recommendations.append("❓ Could not determine autocorrelation time.")
+            else:
+                recommendations.append("❓ Autocorrelation time could not be calculated - chain likely too short")
+            
+        except Exception as e:
+            diagnostics['autocorr_time'] = None
+            recommendations.append(f"❓ Could not calculate autocorrelation time: {e}")
+        
+        # 3. Overall assessment
+        overall_status = self._assess_overall_convergence(diagnostics)
+        diagnostics['overall_status'] = overall_status
+        
+        if overall_status == "GOOD":
+            recommendations.append("✅ Excellent convergence - results are reliable")
+        elif overall_status == "MARGINAL":
+            recommendations.append("⚠️ Borderline convergence - proceed with caution")
+        elif overall_status == "POOR":
+            recommendations.append("❌ Poor convergence - results NOT reliable")
+        else:
+            recommendations.append("❓ Convergence status unclear - requires manual inspection")
+        
+        diagnostics['recommendations'] = recommendations
+        self._cached_convergence = diagnostics
+        
+        if verbose:
+            self._print_convergence_diagnostics(diagnostics)
+        
+        return diagnostics
+    
+    def _get_acceptance_fraction(self):
+        """Get acceptance fraction from sampler."""
+        if hasattr(self.fitter.sampler, 'acceptance_fraction'):
+            return self.fitter.sampler.acceptance_fraction
+        elif hasattr(self.fitter.sampler, 'get_chain'):
+            try:
+                chain = self.fitter.sampler.get_chain()
+                n_accepted = 0
+                n_total = 0
+                for walker_chain in chain.T:
+                    for i in range(1, len(walker_chain)):
+                        n_total += 1
+                        if not np.array_equal(walker_chain[i], walker_chain[i-1]):
+                            n_accepted += 1
+                return n_accepted / n_total if n_total > 0 else 0.0
+            except:
+                return None
+        return None
+    
+    def _get_autocorr_time(self):
+        if self.sampler_name.lower() == 'emcee':
+            try:
+                return self.fitter.sampler.get_autocorr_time()
+            except:
+                return None
+        else:
+            return None
+    
+    def _assess_overall_convergence(self, diagnostics):
+        """Assess overall convergence status."""
+        issues = []
+        
+        if diagnostics['acceptance_fraction'] is not None:
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if mean_accept < 0.2 or mean_accept > 0.7:
+                issues.append("acceptance_fraction")
+        
+        if diagnostics['autocorr_time'] is None or diagnostics['autocorr_time']['mean_tau'] is None:
+            issues.append("autocorr_unavailable")
+        else:
+            if diagnostics.get('chain_length_ratio') is not None:
+                if diagnostics['chain_length_ratio'] < 50:
+                    issues.append("chain_length")
+        
+        if len(issues) == 0:
+            return "GOOD"
+        elif len(issues) <= 2:
+            return "MARGINAL"
+        else:
+            return "POOR"
+    
+    def _print_convergence_diagnostics(self, diagnostics):
+        """Print formatted convergence diagnostics."""
+        print("\n" + "=" * 70)
+        print("CONVERGENCE DIAGNOSTICS")
+        print("=" * 70)
+        
+        status = diagnostics['overall_status']
+        status_symbols = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        print(f"Overall Status: {status_symbols.get(status, '?')} {status}")
+        print(f"Sampler: {self.sampler_name.upper()}")
+        
+        print(f"\nDetailed Metrics:")
+        print("-" * 50)
+        
+        if diagnostics['acceptance_fraction'] is not None:
+            mean_accept = diagnostics['acceptance_fraction']['mean']
+            if 0.2 <= mean_accept <= 0.7:
+                symbol = "✅"
+            else:
+                symbol = "❌"
+            print(f"Acceptance Fraction: {symbol} {mean_accept:.3f}")
+        else:
+            print("Acceptance Fraction: ❓ Not available")
+        
+        if diagnostics['autocorr_time'] is not None:
+            mean_tau = diagnostics['autocorr_time']['mean_tau']
+            if mean_tau is not None:
+                if 'chain_length_ratio' in diagnostics:
+                    ratio = diagnostics['chain_length_ratio']
+                    symbol = "✅" if ratio >= 50 else "⚠️" if ratio >= 20 else "❌"
+                    print(f"Chain Length Ratio: {symbol} {ratio:.1f}x autocorr time")
+                else:
+                    print(f"Mean Autocorr Time: ⚠️ {mean_tau:.1f} steps")
+            else:
+                print("Autocorr Time: ❌ Could not calculate")
+        else:
+            print("Autocorr Time: ❓ Not available")
+        
+        print(f"\nRecommendations:")
+        print("-" * 50)
+        for i, rec in enumerate(diagnostics['recommendations'], 1):
+            print(f"{i}. {rec}")
+        
+        print("=" * 70)
+    
+    def chain_trace_plot(self, save_path: Optional[str] = None, 
+                        n_cols: int = 3, figsize: Optional[Tuple[float, float]] = None) -> plt.Figure:
+        """
+        Create trace plots for visual convergence assessment.
+        
+        Parameters
+        ----------
+        save_path : str, optional
+            Path to save the trace plot
+        n_cols : int, optional
+            Number of columns in subplot grid
+        figsize : tuple, optional
+            Figure size (width, height)
+            
+        Returns
+        -------
+        plt.Figure
+            The trace plot figure
+        """
+        # Get samples and chain
+        try:
+            if hasattr(self.fitter.sampler, 'get_chain'):
+                chain = self.fitter.sampler.get_chain()
+            else:
+                samples = self._get_samples()
+                chain = samples.reshape(self.n_walkers, -1, samples.shape[1])
+        except Exception as e:
+            print(f"Could not extract chain for trace plots: {e}")
+            return None
+        
+        # Get parameter names
+        summary = self.parameter_summary(verbose=False)
+        param_names = summary.names
+        n_params = len(param_names)
+        
+        # Calculate subplot layout
+        n_rows = (n_params + n_cols - 1) // n_cols
+        
+        # Set figure size
+        if figsize is None:
+            figsize = (4 * n_cols, 3 * n_rows)
+        
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+        
+        # Normalize axes to a flat list
+        if isinstance(axes, np.ndarray):
+            axes = axes.flatten()
+        else:
+            axes = [axes]
+        
+        # Plot each parameter
+        for i in range(n_params):
+            ax = axes[i]
+            
+            # Plot all walkers for this parameter
+            for walker in range(self.n_walkers):
+                ax.plot(chain[:, walker, i], alpha=0.7, linewidth=0.5)
+            
+            # Add best-fit line
+            ax.axhline(summary.best_fit[i], color='red', linestyle='--', 
+                      linewidth=2, alpha=0.8, label='Best fit')
+            
+            # Format subplot
+            ax.set_title(param_names[i])
+            ax.set_xlabel('Step')
+            ax.set_ylabel('Value')
+            ax.grid(True, alpha=0.3)
+        
+        # Hide empty subplots
+        for i in range(n_params, len(axes)):
+            axes[i].set_visible(False)
+        
+        # Overall title
+        convergence = self.convergence_diagnostics(verbose=False)
+        status = convergence['overall_status']
+        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
+        
+        fig.suptitle(f'Chain Trace Plots - {status_symbol.get(status, "?")} {status} Convergence\n'
+                    f'{self.sampler_name} sampler: {self.n_walkers} walkers × {self.n_steps} steps', 
+                    fontsize=14, y=0.98)
+        
+        fig.tight_layout(rect=[0, 0, 1, 0.93])
+        
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✅ Saved trace plot to {save_path}")
+        else:
+            plt.show()
+        
+        return fig
+    
+    def correlation_matrix(self, plot: bool = False, save_path: Optional[str] = None) -> np.ndarray:
+        """
+        Calculate parameter correlation matrix.
+        
+        Parameters
+        ----------
+        plot : bool
+            Whether to create a correlation plot
+        save_path : str, optional
+            Path to save correlation plot
+            
+        Returns
+        -------
+        np.ndarray
+            Correlation matrix (n_params x n_params)
+        """
+        if self._cached_correlation is not None:
+            correlation = self._cached_correlation
+        else:
+            samples = self._get_samples()
+            correlation = np.corrcoef(samples.T)
+            self._cached_correlation = correlation
+        
+        if plot:
+            self._plot_correlation_matrix(correlation, save_path)
+        
+        return correlation
+    
+    def _plot_correlation_matrix(self, correlation, save_path=None):
+        """Plot correlation matrix heatmap."""
+        summary = self.parameter_summary(verbose=False)
+        
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Create heatmap
+        im = ax.imshow(correlation, cmap='RdBu_r', vmin=-1, vmax=1, aspect='auto')
+        
+        # Set ticks and labels
+        n_params = len(summary.names)
+        ax.set_xticks(range(n_params))
+        ax.set_yticks(range(n_params))
+        ax.set_xticklabels(summary.names, rotation=45, ha='right')
+        ax.set_yticklabels(summary.names)
+        
+        # Add colorbar
+        cbar = plt.colorbar(im, ax=ax)
+        cbar.set_label('Correlation Coefficient')
+        
+        # Add correlation values as text
+        for i in range(n_params):
+            for j in range(n_params):
+                if abs(correlation[i, j]) > 0.3:  # Only show significant correlations
+                    text = ax.text(j, i, f'{correlation[i, j]:.2f}', 
+                                 ha="center", va="center", 
+                                 color="white" if abs(correlation[i, j]) > 0.7 else "black",
+                                 fontsize=8)
+        
+        ax.set_title('Parameter Correlation Matrix')
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"✓ Saved correlation plot to {save_path}")
+        else:
+            plt.show()
+
+
+# =============================================================================
+# Convenience Functions
+# =============================================================================
+
+def save_fit_results(fitter, model, filename: Union[str, Path]) -> None:
+    """
+    Convenience function to save fit results.
+    
+    Parameters
+    ----------
+    fitter : vfit
+        MCMC fitter object
+    model : VoigtModel
+        rbvfit 2.0 model object
+    filename : str or Path
+        Output HDF5 filename
+    """
+    results = FitResults(fitter, model)
+    results.save(filename)
+
+
+def load_fit_results(filename: Union[str, Path]) -> FitResults:
+    """
+    Convenience function to load fit results.
+    
+    Parameters
+    ----------
+    filename : str or Path
+        HDF5 filename to load
+        
+    Returns
+    -------
+    FitResults
+        Loaded fit results object
+    """
+    return FitResults.load(filename)

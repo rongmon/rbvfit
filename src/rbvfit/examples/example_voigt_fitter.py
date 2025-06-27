@@ -162,7 +162,7 @@ mc.plot_model(v2_model,fitter,show_residuals=True,outfile='example-fit.png')
 from rbvfit.core import fit_results as f
 # Save results
 results = f.FitResults(fitter, v2_model)
-#results.save('my_fit.h5')
+results.save('my_fit.h5')
 
 # Load and analyze
 #results = f.FitResults.load('my_fit.h5')

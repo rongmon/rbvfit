@@ -638,107 +638,107 @@ class vfit(object):
             if verbose:
                 print(f"❌ Quick fit failed: {str(e)}")
             raise RuntimeError("Quick fitting failed") from e
+
+    def compute_best_theta(self, burntime=100):
+        """Compute best-fit parameters and their uncertainties from MCMC samples."""
+        if not hasattr(self, 'samples') or self.samples is None:
+            self.samples = self._extract_samples(self.sampler, burntime)
+    
+        self.best_theta = np.percentile(self.samples, 50, axis=0)
+        self.low_theta = np.percentile(self.samples, 10, axis=0)
+        self.high_theta = np.percentile(self.samples, 90, axis=0)
+
         
 
     def plot_corner(self, outfile=False, burntime=100, **kwargs):
         """Plot corner plot with sampler-agnostic sample extraction."""
-
-        if self.mcmc_flag==True:
-            ndim = self.ndim
-            
-            # Extract samples based on sampler type
-            samples = self._extract_samples(self.sampler, burntime)
-
-            st = np.percentile(samples, 50, axis=0)
-
-            nfit = int(ndim / 3)
-            N_tile = np.tile("logN", nfit)
-            b_tile = np.tile("b", nfit)
-            v_tile = np.tile("v", nfit)
-
-            tmp = np.append(N_tile, b_tile)
-            text_label = np.append(tmp, v_tile)
-
-            if 'True_values' in kwargs:
-                figure = corner.corner(samples, labels=text_label, truths=kwargs['True_values'])
-            else:
-                figure = corner.corner(samples, labels=text_label, truths=st)
-
-            # Sets title to outfile is not False
-            if outfile == False:
-                pass
-            else:
-                plt.title(outfile, y=1.05*ndim, loc='right') 
-
-            theta_prime = st
-            value1 = np.percentile(samples, 10, axis=0)
-            value2 = np.percentile(samples, 90, axis=0)
-            
-            # Extract the axes
-            axes = np.array(figure.axes).reshape((ndim, ndim))
-
-            # Loop over the diagonal
-            for i in range(ndim):
-                ax = axes[i, i]
-                ax.axvline(value1[i], color="aqua")
-                ax.axvline(value2[i], color="aqua")
-
-            # Loop over the histograms
-            for yi in range(ndim):
-                for xi in range(yi):
-                    ax = axes[yi, xi]
-                    ax.axvline(value1[xi], color="aqua")
-                    ax.axvline(value2[xi], color="aqua")
-
-            self.best_theta = theta_prime
-            self.low_theta = value1
-            self.high_theta = value2
-            self.samples = samples
-
-            if outfile == False:
-                plt.show()
-            else:
-                outfile_fig = outfile
-                figure.savefig(outfile_fig, bbox_inches='tight')
-        else:
+    
+        if self.mcmc_flag is not True:
             print("⚠️  MCMC Fit not done! Can't do corner plot. Exiting gracefully.")
-
-
-    def get_sampler_info(self):
-        """Get information about the sampler used."""
-        info = {
-            'sampler': self.sampler_name,
-            'walkers': self.no_of_Chain,
-            'steps': self.no_of_steps,
-            'multi_instrument': self.multi_instrument,
-            'has_zeus': HAS_ZEUS,
-            'mp_context': MP_CONTEXT
-        }
-        
-        if self.multi_instrument:
-            info['n_instruments'] = len(self.instrument_data)
-            info['instruments'] = list(self.instrument_data.keys())
-        
-        if hasattr(self, 'sampler'):
-            # Get acceptance fraction in sampler-agnostic way
-            acceptance_fraction = self._get_acceptance_fraction(self.sampler)
-            if acceptance_fraction is not None:
-                if isinstance(acceptance_fraction, (list, np.ndarray)):
-                    info['acceptance_fraction'] = np.mean(acceptance_fraction)
-                else:
-                    info['acceptance_fraction'] = acceptance_fraction
+            return
+    
+        # Only extract samples if not already done
+        if not hasattr(self, 'samples') or self.samples is None:
+            self.samples = self._extract_samples(self.sampler, burntime)
+    
+        # Only compute theta estimates if not already done
+        if not hasattr(self, 'best_theta') or self.best_theta is None:
+            self.compute_best_theta(burntime)
+    
+        ndim = self.ndim
+        samples = self.samples
+        st = self.best_theta
+    
+        nfit = int(ndim / 3)
+        N_tile = np.tile("logN", nfit)
+        b_tile = np.tile("b", nfit)
+        v_tile = np.tile("v", nfit)
+        text_label = np.append(np.append(N_tile, b_tile), v_tile)
+    
+        # Plot corner
+        truths = kwargs.get('True_values', st)
+        figure = corner.corner(samples, labels=text_label, truths=truths)
+    
+        # Optional figure title
+        if outfile:
+            plt.title(outfile, y=1.05 * ndim, loc='right')
+    
+        # Add vertical lines at error bounds
+        value1 = self.low_theta
+        value2 = self.high_theta
+        axes = np.array(figure.axes).reshape((ndim, ndim))
+    
+        for i in range(ndim):
+            axes[i, i].axvline(value1[i], color="aqua")
+            axes[i, i].axvline(value2[i], color="aqua")
+    
+        for yi in range(ndim):
+            for xi in range(yi):
+                axes[yi, xi].axvline(value1[xi], color="aqua")
+                axes[yi, xi].axvline(value2[xi], color="aqua")
+    
+        # Save or show plot
+        if outfile:
+            figure.savefig(outfile, bbox_inches='tight')
+        else:
+            plt.show()
+    
+    
+        def get_sampler_info(self):
+            """Get information about the sampler used."""
+            info = {
+                'sampler': self.sampler_name,
+                'walkers': self.no_of_Chain,
+                'steps': self.no_of_steps,
+                'multi_instrument': self.multi_instrument,
+                'has_zeus': HAS_ZEUS,
+                'mp_context': MP_CONTEXT
+            }
             
-            # Add sampler-specific info
-            if self.sampler_name == 'zeus' and hasattr(self.sampler, 'get_chain'):
-                try:
-                    r_hat = zeus.diagnostics.gelman_rubin(self.sampler.get_chain())
-                    info['r_hat_max'] = np.max(r_hat)
-                except:
-                    pass
-        
-        return info
-
-
+            if self.multi_instrument:
+                info['n_instruments'] = len(self.instrument_data)
+                info['instruments'] = list(self.instrument_data.keys())
+            
+            if hasattr(self, 'sampler'):
+                # Get acceptance fraction in sampler-agnostic way
+                acceptance_fraction = self._get_acceptance_fraction(self.sampler)
+                if acceptance_fraction is not None:
+                    if isinstance(acceptance_fraction, (list, np.ndarray)):
+                        info['acceptance_fraction'] = np.mean(acceptance_fraction)
+                    else:
+                        info['acceptance_fraction'] = acceptance_fraction
+                
+                # Add sampler-specific info
+                if self.sampler_name == 'zeus' and hasattr(self.sampler, 'get_chain'):
+                    try:
+                        r_hat = zeus.diagnostics.gelman_rubin(self.sampler.get_chain())
+                        info['r_hat_max'] = np.max(r_hat)
+                    except:
+                        pass
+            
+            return info
+    
+    
 def plot_model(model, fitter, outfile=False, xlim=None, ylim=None, show_residuals=True, 
                show_components=True, velocity_marks=True, burntime=None, 
                burn_fraction=0.2, n_posterior_samples=300, verbose=True,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """
-rbvfit 2.0 Results Tab - PyQt5 Implementation
+rbvfit 2.0 Results Tab - Updated with Real Data Integration
 
-Interface for viewing and exporting fit results with enhanced visualization.
+Interface for viewing and exporting fit results with actual MCMC data.
 """
 
 import numpy as np
@@ -20,6 +20,12 @@ try:
     HAS_MATPLOTLIB = True
 except ImportError:
     HAS_MATPLOTLIB = False
+
+try:
+    import corner
+    HAS_CORNER = True
+except ImportError:
+    HAS_CORNER = False
 
 from rbvfit.gui.io import export_results_csv, export_results_latex
 
@@ -76,52 +82,42 @@ class ResultsTab(QWidget):
         
         self.save_plots_btn = QPushButton("Save Plots")
         self.save_plots_btn.setEnabled(False)
-        self.save_plots_btn.setToolTip("Save all plots as image files")
+        self.save_plots_btn.setToolTip("Save all plots to files")
         control_layout.addWidget(self.save_plots_btn)
         
         control_layout.addStretch()
         
-        # Plot options
+        # Plot controls
         self.show_components_check = QCheckBox("Show Components")
         self.show_components_check.setChecked(True)
-        self.show_components_check.setToolTip("Show individual velocity components in plots")
+        self.show_components_check.setToolTip("Show individual Voigt components")
         control_layout.addWidget(self.show_components_check)
         
         self.show_residuals_check = QCheckBox("Show Residuals")
         self.show_residuals_check.setChecked(True)
-        self.show_residuals_check.setToolTip("Show residuals subplot")
+        self.show_residuals_check.setToolTip("Show fit residuals")
         control_layout.addWidget(self.show_residuals_check)
         
     def setup_plot_area(self, parent):
-        """Create plot display area with tabs"""
-        left_widget = QWidget()
-        left_layout = QVBoxLayout()
-        left_widget.setLayout(left_layout)
-        parent.addWidget(left_widget)
+        """Create plot area with tabs"""
+        plot_widget = QWidget()
+        plot_layout = QVBoxLayout()
+        plot_widget.setLayout(plot_layout)
+        parent.addWidget(plot_widget)
         
-        if HAS_MATPLOTLIB:
-            # Plot tabs
-            self.plot_tabs = QTabWidget()
-            left_layout.addWidget(self.plot_tabs)
+        if not HAS_MATPLOTLIB:
+            plot_layout.addWidget(QLabel("Matplotlib not available - plots disabled"))
+            return
             
-            # Corner plot tab
-            self.setup_corner_plot_tab()
-            
-            # Model comparison tab
-            self.setup_model_comparison_tab()
-            
-            # Velocity space tab
-            self.setup_velocity_plot_tab()
-            
-        else:
-            left_layout.addWidget(QLabel("Matplotlib not available"))
-            
-    def setup_corner_plot_tab(self):
-        """Create corner plot tab"""
-        corner_widget = QWidget()
+        # Plot tabs
+        self.plot_tabs = QTabWidget()
+        plot_layout.addLayout(QHBoxLayout())  # Controls will go here
+        plot_layout.addWidget(self.plot_tabs)
+        
+        # Corner plot tab
+        self.corner_widget = QWidget()
         corner_layout = QVBoxLayout()
-        corner_widget.setLayout(corner_layout)
-        self.plot_tabs.addTab(corner_widget, "Corner Plot")
+        self.corner_widget.setLayout(corner_layout)
         
         # Corner plot controls
         corner_controls = QHBoxLayout()
@@ -129,45 +125,45 @@ class ResultsTab(QWidget):
         
         corner_controls.addWidget(QLabel("Parameters:"))
         self.param_selector = QComboBox()
-        self.param_selector.addItems(["All Parameters", "N parameters", "b parameters", "v parameters"])
+        self.param_selector.addItems(["All parameters", "N parameters", "b parameters", "v parameters"])
         self.param_selector.setToolTip("Select which parameters to show in corner plot")
         corner_controls.addWidget(self.param_selector)
         
-        self.update_corner_btn = QPushButton("Update Plot")
+        self.update_corner_btn = QPushButton("Update")
         self.update_corner_btn.setEnabled(False)
-        self.update_corner_btn.setToolTip("Update corner plot with selected parameters")
+        self.update_corner_btn.setToolTip("Update corner plot")
         corner_controls.addWidget(self.update_corner_btn)
+        
+        self.export_corner_btn = QPushButton("Export")
+        self.export_corner_btn.setEnabled(False)
+        self.export_corner_btn.setToolTip("Export corner plot")
+        corner_controls.addWidget(self.export_corner_btn)
         
         corner_controls.addStretch()
         
-        self.export_corner_btn = QPushButton("Export Plot")
-        self.export_corner_btn.setEnabled(False)
-        self.export_corner_btn.setToolTip("Export corner plot as image")
-        corner_controls.addWidget(self.export_corner_btn)
-        
         # Corner plot canvas
-        self.corner_figure = Figure(figsize=(8, 8), dpi=80)
+        self.corner_figure = Figure(figsize=(8, 8))
         self.corner_canvas = FigureCanvas(self.corner_figure)
         corner_layout.addWidget(self.corner_canvas)
         
-    def setup_model_comparison_tab(self):
-        """Create model vs data comparison tab"""
-        comparison_widget = QWidget()
-        comparison_layout = QVBoxLayout()
-        comparison_widget.setLayout(comparison_layout)
-        self.plot_tabs.addTab(comparison_widget, "Model Comparison")
+        self.plot_tabs.addTab(self.corner_widget, "Corner Plot")
         
-        # Model comparison canvas
-        self.comparison_figure = Figure(figsize=(10, 8), dpi=80)
+        # Model comparison tab
+        self.comparison_widget = QWidget()
+        comparison_layout = QVBoxLayout()
+        self.comparison_widget.setLayout(comparison_layout)
+        
+        # Comparison plot canvas
+        self.comparison_figure = Figure(figsize=(12, 8))
         self.comparison_canvas = FigureCanvas(self.comparison_figure)
         comparison_layout.addWidget(self.comparison_canvas)
         
-    def setup_velocity_plot_tab(self):
-        """Create velocity space plot tab"""
-        velocity_widget = QWidget()
+        self.plot_tabs.addTab(self.comparison_widget, "Model vs Data")
+        
+        # Velocity plot tab
+        self.velocity_widget = QWidget()
         velocity_layout = QVBoxLayout()
-        velocity_widget.setLayout(velocity_layout)
-        self.plot_tabs.addTab(velocity_widget, "Velocity Space")
+        self.velocity_widget.setLayout(velocity_layout)
         
         # Velocity plot controls
         vel_controls = QHBoxLayout()
@@ -175,19 +171,19 @@ class ResultsTab(QWidget):
         
         vel_controls.addWidget(QLabel("Velocity Range:"))
         self.vel_range_combo = QComboBox()
-        self.vel_range_combo.addItems(["-500 to +500 km/s", "-200 to +200 km/s", "-100 to +100 km/s", "Auto"])
-        self.vel_range_combo.setToolTip("Select velocity range for display")
+        self.vel_range_combo.addItems(["Auto", "±200 km/s", "±500 km/s", "±1000 km/s"])
         vel_controls.addWidget(self.vel_range_combo)
-        
         vel_controls.addStretch()
         
         # Velocity plot canvas
-        self.velocity_figure = Figure(figsize=(10, 6), dpi=80)
+        self.velocity_figure = Figure(figsize=(12, 8))
         self.velocity_canvas = FigureCanvas(self.velocity_figure)
         velocity_layout.addWidget(self.velocity_canvas)
         
+        self.plot_tabs.addTab(self.velocity_widget, "Velocity Space")
+        
     def setup_results_panel(self, parent):
-        """Create statistics and parameter table panel"""
+        """Create results statistics and parameter table"""
         right_widget = QWidget()
         right_layout = QVBoxLayout()
         right_widget.setLayout(right_layout)
@@ -263,6 +259,10 @@ class ResultsTab(QWidget):
         self.copy_table_btn.clicked.connect(self.copy_table_to_clipboard)
         self.export_table_btn.clicked.connect(self.export_parameter_table)
         
+    def set_results(self, results):
+        """Set results - compatibility method for main window"""
+        self.update_results(results)
+        
     def update_results(self, results):
         """Update display with new fit results"""
         self.results = results
@@ -313,88 +313,187 @@ class ResultsTab(QWidget):
             self.velocity_canvas.draw()
             
     def update_statistics(self):
-        """Update fit statistics display"""
+        """Update fit statistics display with real data"""
         self.stats_text.clear()
         
         if self.results is None:
             self.stats_text.append("No results available")
             return
             
-        # TODO: Extract actual statistics from results object
-        # For now, show enhanced placeholder statistics
-        stats_html = """
-        <h4>Fit Quality</h4>
-        <table>
-        <tr><td><b>χ²/ν:</b></td><td>1.12</td></tr>
-        <tr><td><b>AIC:</b></td><td>156.3</td></tr>
-        <tr><td><b>BIC:</b></td><td>167.8</td></tr>
-        </table>
-        
-        <h4>MCMC Diagnostics</h4>
-        <table>
-        <tr><td><b>Samples:</b></td><td>2500</td></tr>
-        <tr><td><b>Burn-in:</b></td><td>500</td></tr>
-        <tr><td><b>Acceptance:</b></td><td>0.35</td></tr>
-        <tr><td><b>R_hat:</b></td><td>&lt; 1.01</td></tr>
-        </table>
-        
-        <h4>Convergence</h4>
-        <p style="color: green;"><b>✓ Good convergence</b></p>
-        <p>All parameters converged successfully</p>
-        """
-        
-        self.stats_text.setHtml(stats_html)
-        
+        try:
+            # Extract real statistics from FitResults object
+            if hasattr(self.results, 'fitter') and self.results.fitter:
+                fitter = self.results.fitter
+                
+                # Calculate chi-squared
+                if hasattr(fitter, 'fnorm') and hasattr(fitter, 'enorm') and hasattr(fitter, 'best_theta'):
+                    try:
+                        # Get model flux at best-fit parameters
+                        if hasattr(self.results, 'model') and self.results.model:
+                            model_flux = self.results.model.evaluate(fitter.best_theta, fitter.wave_obs)
+                            residuals = (fitter.fnorm - model_flux) / fitter.enorm
+                            chi2 = np.sum(residuals**2)
+                            ndof = len(fitter.fnorm) - len(fitter.best_theta)
+                            chi2_reduced = chi2 / ndof if ndof > 0 else np.inf
+                        else:
+                            chi2_reduced = np.nan
+                    except Exception:
+                        chi2_reduced = np.nan
+                else:
+                    chi2_reduced = np.nan
+                
+                # MCMC diagnostics
+                n_samples = len(getattr(fitter, 'samples', []))
+                n_params = len(getattr(fitter, 'best_theta', []))
+                acceptance_rate = getattr(fitter, 'acceptance_rate', np.nan)
+                
+                # Convergence diagnostics
+                try:
+                    if hasattr(self.results, 'convergence_diagnostics'):
+                        convergence = self.results.convergence_diagnostics()
+                        conv_status = convergence.get('overall_status', 'Unknown')
+                        rhat_max = convergence.get('rhat_max', np.nan)
+                    else:
+                        conv_status = 'Unknown'
+                        rhat_max = np.nan
+                except Exception:
+                    conv_status = 'Unknown'
+                    rhat_max = np.nan
+                
+                # Create HTML statistics display
+                stats_html = f"""
+                <h4>Fit Quality</h4>
+                <table>
+                <tr><td><b>χ²/ν:</b></td><td>{chi2_reduced:.3f}</td></tr>
+                <tr><td><b>Parameters:</b></td><td>{n_params}</td></tr>
+                <tr><td><b>Data points:</b></td><td>{len(getattr(fitter, 'fnorm', []))}</td></tr>
+                </table>
+                
+                <h4>MCMC Diagnostics</h4>
+                <table>
+                <tr><td><b>Samples:</b></td><td>{n_samples}</td></tr>
+                <tr><td><b>Chains:</b></td><td>{getattr(fitter, 'no_of_Chain', 'N/A')}</td></tr>
+                <tr><td><b>Acceptance:</b></td><td>{acceptance_rate:.3f}</td></tr>
+                <tr><td><b>R̂ (max):</b></td><td>{rhat_max:.3f}</td></tr>
+                </table>
+                
+                <h4>Convergence</h4>
+                <p style="color: {'green' if conv_status == 'Good' else 'orange' if conv_status == 'Warning' else 'red'};"><b>{conv_status} convergence</b></p>
+                """
+                
+                self.stats_text.setHtml(stats_html)
+                
+            else:
+                self.stats_text.append("Results object missing fitter data")
+                
+        except Exception as e:
+            self.stats_text.append(f"Error extracting statistics: {str(e)}")
+            
     def update_parameter_table(self):
-        """Update parameter table with results"""
+        """Update parameter table with real results"""
         # Clear existing data
         self.param_table.setRowCount(0)
+        self.parameter_data = []
         
         if self.results is None:
             return
             
-        # Extract parameters from results
-        if hasattr(self.results, 'parameters') and self.results.parameters:
-            self.parameter_data = []
-            
-            for param_name, value in self.results.parameters.items():
-                # Add some simulated uncertainty (in real implementation, get from MCMC)
-                if 'N_' in param_name:
-                    error = abs(value * 0.05)  # 5% error for N
-                    units = "log cm⁻²"
-                elif 'b_' in param_name:
-                    error = abs(value * 0.15)  # 15% error for b
-                    units = "km/s"
-                elif 'v_' in param_name:
-                    error = abs(value * 0.1)   # 10% error for v
-                    units = "km/s"
-                else:
-                    error = abs(value * 0.1)
-                    units = ""
+        try:
+            # Get parameter summary from results
+            if hasattr(self.results, 'parameter_summary'):
+                param_summary = self.results.parameter_summary(verbose=False)
                 
-                self.parameter_data.append((param_name, f"{value:.2f}", f"{error:.2f}", units))
-        else:
-            # Fallback to placeholder data
-            self.parameter_data = [
-                ("N_MgII_C1", "13.52", "0.08", "log cm⁻²"),
-                ("b_MgII_C1", "14.8", "2.3", "km/s"),
-                ("v_MgII_C1", "-48.2", "1.8", "km/s"),
-            ]
-        
-        self.param_table.setRowCount(len(self.parameter_data))
-        
-        for row, (param_name, best_fit, error, units) in enumerate(self.parameter_data):
-            self.param_table.setItem(row, 0, QTableWidgetItem(param_name))
-            self.param_table.setItem(row, 1, QTableWidgetItem(best_fit))
-            self.param_table.setItem(row, 2, QTableWidgetItem(error))
-            self.param_table.setItem(row, 3, QTableWidgetItem(units))
-            
-            # Make table read-only
-            for col in range(4):
-                item = self.param_table.item(row, col)
-                if item:
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                # Populate table with real parameters
+                for i, name in enumerate(param_summary.names):
+                    best_fit = param_summary.best_fit[i]
+                    error = param_summary.errors[i]
                     
+                    # Determine units based on parameter type
+                    if name.startswith('N_'):
+                        units = "log cm⁻²"
+                        best_fit_str = f"{best_fit:.3f}"
+                        error_str = f"{error:.3f}"
+                    elif name.startswith('b_'):
+                        units = "km/s"
+                        best_fit_str = f"{best_fit:.1f}"
+                        error_str = f"{error:.1f}"
+                    elif name.startswith('v_'):
+                        units = "km/s"
+                        best_fit_str = f"{best_fit:.1f}"
+                        error_str = f"{error:.1f}"
+                    else:
+                        units = ""
+                        best_fit_str = f"{best_fit:.3f}"
+                        error_str = f"{error:.3f}"
+                    
+                    self.parameter_data.append((name, best_fit_str, error_str, units))
+                    
+            elif hasattr(self.results, 'fitter') and hasattr(self.results.fitter, 'best_theta'):
+                # Fallback: extract basic info from fitter
+                fitter = self.results.fitter
+                best_theta = fitter.best_theta
+                
+                # Try to get parameter names from model
+                param_names = []
+                if hasattr(self.results, 'model') and hasattr(self.results.model, 'param_manager'):
+                    param_names = self.results.model.param_manager.get_parameter_names()
+                else:
+                    # Generic parameter names
+                    n_params = len(best_theta)
+                    n_comp = n_params // 3
+                    param_names = []
+                    for i in range(n_comp):
+                        param_names.extend([f"N_c{i+1}", f"b_c{i+1}", f"v_c{i+1}"])
+                
+                # Get uncertainties if available
+                if hasattr(fitter, 'samples') and len(fitter.samples) > 0:
+                    errors = np.std(fitter.samples, axis=0)
+                else:
+                    errors = np.zeros_like(best_theta)
+                
+                # Populate table
+                for i, (name, value, error) in enumerate(zip(param_names, best_theta, errors)):
+                    if name.startswith('N_'):
+                        units = "log cm⁻²"
+                        value_str = f"{value:.3f}"
+                        error_str = f"{error:.3f}"
+                    elif name.startswith('b_'):
+                        units = "km/s"
+                        value_str = f"{value:.1f}"
+                        error_str = f"{error:.1f}"
+                    elif name.startswith('v_'):
+                        units = "km/s"
+                        value_str = f"{value:.1f}"
+                        error_str = f"{error:.1f}"
+                    else:
+                        units = ""
+                        value_str = f"{value:.3f}"
+                        error_str = f"{error:.3f}"
+                    
+                    self.parameter_data.append((name, value_str, error_str, units))
+                    
+            # Update table widget
+            self.param_table.setRowCount(len(self.parameter_data))
+            
+            for row, (param_name, best_fit, error, units) in enumerate(self.parameter_data):
+                self.param_table.setItem(row, 0, QTableWidgetItem(param_name))
+                self.param_table.setItem(row, 1, QTableWidgetItem(best_fit))
+                self.param_table.setItem(row, 2, QTableWidgetItem(error))
+                self.param_table.setItem(row, 3, QTableWidgetItem(units))
+                
+                # Make table read-only
+                for col in range(4):
+                    item = self.param_table.item(row, col)
+                    if item:
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        
+        except Exception as e:
+            # Fallback to error message
+            self.param_table.setRowCount(1)
+            self.param_table.setItem(0, 0, QTableWidgetItem(f"Error: {str(e)}"))
+            for col in range(1, 4):
+                self.param_table.setItem(0, col, QTableWidgetItem(""))
+                
     def update_plots(self):
         """Update all plots"""
         if HAS_MATPLOTLIB and self.results:
@@ -403,7 +502,7 @@ class ResultsTab(QWidget):
             self.update_velocity_plot()
             
     def update_corner_plot(self):
-        """Update corner plot"""
+        """Update corner plot with real MCMC samples"""
         if not HAS_MATPLOTLIB:
             return
             
@@ -416,54 +515,69 @@ class ResultsTab(QWidget):
             ax.set_xticks([])
             ax.set_yticks([])
         else:
-            # TODO: Generate actual corner plot from results
-            # Enhanced placeholder with multiple parameter correlations
-            selected_params = self.param_selector.currentText()
-            
-            # Generate fake correlation data based on selection
-            np.random.seed(42)
-            if "All" in selected_params:
-                n_params = 6
-                param_names = ['N₁', 'N₂', 'b₁', 'b₂', 'v₁', 'v₂']
-            elif "N parameters" in selected_params:
-                n_params = 2
-                param_names = ['N₁', 'N₂']
-            elif "b parameters" in selected_params:
-                n_params = 2
-                param_names = ['b₁', 'b₂']
-            else:  # v parameters
-                n_params = 2
-                param_names = ['v₁', 'v₂']
-            
-            # Create subplot grid for corner plot
-            for i in range(n_params):
-                for j in range(i + 1):
-                    ax = self.corner_figure.add_subplot(n_params, n_params, i * n_params + j + 1)
-                    
-                    if i == j:
-                        # Diagonal: histograms
-                        data = np.random.normal(0, 1, 1000)
-                        ax.hist(data, bins=30, alpha=0.7, color='skyblue', density=True)
-                        ax.set_ylabel('Density')
-                        if i == n_params - 1:
-                            ax.set_xlabel(param_names[i])
+            try:
+                # Get MCMC samples
+                if hasattr(self.results, 'get_samples'):
+                    samples = self.results.get_samples()
+                elif hasattr(self.results, 'fitter') and hasattr(self.results.fitter, 'samples'):
+                    samples = self.results.fitter.samples
+                else:
+                    samples = None
+                
+                if samples is not None and len(samples) > 0:
+                    # Get parameter names
+                    if hasattr(self.results, 'parameter_summary'):
+                        param_summary = self.results.parameter_summary(verbose=False)
+                        param_names = param_summary.names
                     else:
-                        # Off-diagonal: scatter plots
-                        x = np.random.normal(0, 1, 1000)
-                        y = 0.3 * x + np.random.normal(0, 0.8, 1000)
-                        ax.scatter(x, y, alpha=0.5, s=1, color='darkblue')
-                        if i == n_params - 1:
-                            ax.set_xlabel(param_names[j])
-                        if j == 0:
-                            ax.set_ylabel(param_names[i])
-            
-            self.corner_figure.suptitle(f'Corner Plot: {selected_params}', fontsize=12)
-            
-        self.corner_figure.tight_layout()
+                        # Generic names
+                        n_params = samples.shape[1]
+                        param_names = [f"θ_{i+1}" for i in range(n_params)]
+                    
+                    # Filter parameters based on selection
+                    selected_params = self.param_selector.currentText()
+                    if "N parameters" in selected_params:
+                        indices = [i for i, name in enumerate(param_names) if name.startswith('N_')]
+                    elif "b parameters" in selected_params:
+                        indices = [i for i, name in enumerate(param_names) if name.startswith('b_')]
+                    elif "v parameters" in selected_params:
+                        indices = [i for i, name in enumerate(param_names) if name.startswith('v_')]
+                    else:  # All parameters
+                        indices = list(range(len(param_names)))
+                    
+                    if indices and HAS_CORNER:
+                        # Create corner plot with real data
+                        filtered_samples = samples[:, indices]
+                        filtered_names = [param_names[i] for i in indices]
+                        
+                        corner.corner(filtered_samples, labels=filtered_names, 
+                                    fig=self.corner_figure, 
+                                    show_titles=True, title_kwargs={"fontsize": 10})
+                    else:
+                        # Fallback if corner not available
+                        ax = self.corner_figure.add_subplot(111)
+                        ax.text(0.5, 0.5, 'Corner plot package not available\nInstall with: pip install corner', 
+                               ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                        ax.set_xticks([])
+                        ax.set_yticks([])
+                else:
+                    ax = self.corner_figure.add_subplot(111)
+                    ax.text(0.5, 0.5, 'No MCMC samples available', 
+                           ha='center', va='center', transform=ax.transAxes, fontsize=14)
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    
+            except Exception as e:
+                ax = self.corner_figure.add_subplot(111)
+                ax.text(0.5, 0.5, f'Error creating corner plot:\n{str(e)}', 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ax.set_xticks([])
+                ax.set_yticks([])
+                
         self.corner_canvas.draw()
         
     def update_model_comparison(self):
-        """Update model vs data comparison plot"""
+        """Update model vs data comparison plot with real data"""
         if not HAS_MATPLOTLIB:
             return
             
@@ -474,69 +588,68 @@ class ResultsTab(QWidget):
             ax.text(0.5, 0.5, 'No results to display',
                    ha='center', va='center', transform=ax.transAxes, fontsize=14)
         else:
-            # TODO: Generate actual model comparison from results
-            # Enhanced placeholder with multiple transitions
-            show_residuals = self.show_residuals_check.isChecked()
-            show_components = self.show_components_check.isChecked()
-            
-            if show_residuals:
-                ax1 = self.comparison_figure.add_subplot(211)
-                ax2 = self.comparison_figure.add_subplot(212)
-            else:
-                ax1 = self.comparison_figure.add_subplot(111)
-                ax2 = None
-            
-            # Generate fake spectrum data with multiple absorption lines
-            wave = np.linspace(2790, 2810, 300)
-            
-            # Multiple absorption lines
-            flux = np.ones_like(wave)
-            model = np.ones_like(wave)
-            
-            # Add absorption features
-            lines = [2796.3, 2803.5]  # MgII doublet
-            for line_wave in lines:
-                absorption = 0.4 * np.exp(-0.5 * ((wave - line_wave) / 0.8)**2)
-                flux -= absorption + 0.02 * np.random.normal(0, 1, len(wave))
-                model -= absorption
+            try:
+                # Get data and model from results
+                fitter = self.results.fitter
+                wave = fitter.wave_obs
+                flux = fitter.fnorm
+                error = fitter.enorm
                 
-                # Individual components if requested
-                if show_components:
-                    comp1 = 0.2 * np.exp(-0.5 * ((wave - (line_wave - 0.3)) / 0.6)**2)
-                    comp2 = 0.2 * np.exp(-0.5 * ((wave - (line_wave + 0.4)) / 0.5)**2)
-                    ax1.plot(wave, 1 - comp1, '--', alpha=0.7, linewidth=1, 
-                            label='Component 1' if line_wave == lines[0] else None)
-                    ax1.plot(wave, 1 - comp2, '--', alpha=0.7, linewidth=1,
-                            label='Component 2' if line_wave == lines[0] else None)
-            
-            # Main plot
-            ax1.plot(wave, flux, 'ko', markersize=1.5, alpha=0.7, label='Data')
-            ax1.plot(wave, model, 'r-', linewidth=2, label='Best-fit Model')
-            
-            ax1.set_ylabel('Normalized Flux')
-            ax1.legend(loc='upper right')
-            ax1.set_title('Model vs Data Comparison')
-            ax1.grid(True, alpha=0.3)
-            
-            if not show_residuals:
-                ax1.set_xlabel('Wavelength (Å)')
-            
-            # Residuals subplot
-            if show_residuals and ax2:
-                residuals = flux - model
-                ax2.plot(wave, residuals, 'ko', markersize=1.5, alpha=0.7)
-                ax2.axhline(0, color='r', linestyle='-', alpha=0.7)
-                ax2.fill_between(wave, -0.02, 0.02, alpha=0.3, color='gray', label='±1σ')
-                ax2.set_xlabel('Wavelength (Å)')
-                ax2.set_ylabel('Residuals')
-                ax2.legend()
-                ax2.grid(True, alpha=0.3)
+                # Calculate best-fit model
+                if hasattr(self.results, 'model'):
+                    model_flux = self.results.model.evaluate(fitter.best_theta, wave)
+                else:
+                    model_flux = np.ones_like(flux)  # Fallback
+                
+                # Create subplots
+                show_residuals = self.show_residuals_check.isChecked()
+                if show_residuals:
+                    ax1 = self.comparison_figure.add_subplot(211)
+                    ax2 = self.comparison_figure.add_subplot(212, sharex=ax1)
+                else:
+                    ax1 = self.comparison_figure.add_subplot(111)
+                    ax2 = None
+                
+                # Main plot: data vs model
+                ax1.step(wave, flux, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
+                ax1.fill_between(wave, flux - error, flux + error, 
+                               alpha=0.3, color='gray', label='Error')
+                ax1.plot(wave, model_flux, 'r-', linewidth=2, label='Best-fit Model')
+                
+                # Add components if requested
+                if self.show_components_check.isChecked():
+                    # TODO: Add individual component plotting if model supports it
+                    pass
+                
+                ax1.set_ylabel('Normalized Flux')
+                ax1.legend(loc='upper right')
+                ax1.grid(True, alpha=0.3)
+                ax1.set_title('Model vs Data Comparison')
+                
+                if not show_residuals:
+                    ax1.set_xlabel('Wavelength (Å)')
+                
+                # Residuals subplot
+                if show_residuals and ax2:
+                    residuals = (flux - model_flux) / error
+                    ax2.step(wave, residuals, 'k-', where='mid', linewidth=1, alpha=0.8)
+                    ax2.axhline(0, color='r', linestyle='-', alpha=0.7)
+                    ax2.fill_between(wave, -1, 1, alpha=0.3, color='gray', label='±1σ')
+                    ax2.set_xlabel('Wavelength (Å)')
+                    ax2.set_ylabel('Residuals (σ)')
+                    ax2.legend()
+                    ax2.grid(True, alpha=0.3)
+                    
+            except Exception as e:
+                ax = self.comparison_figure.add_subplot(111)
+                ax.text(0.5, 0.5, f'Error creating model plot:\n{str(e)}',
+                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
                 
         self.comparison_figure.tight_layout()
         self.comparison_canvas.draw()
         
     def update_velocity_plot(self):
-        """Update velocity space plot"""
+        """Update velocity space plot with real data"""
         if not HAS_MATPLOTLIB:
             return
             
@@ -547,177 +660,166 @@ class ResultsTab(QWidget):
             ax.text(0.5, 0.5, 'No results to display',
                    ha='center', va='center', transform=ax.transAxes, fontsize=14)
         else:
-            # TODO: Generate actual velocity plot from results
-            # Enhanced placeholder velocity plot
-            vel_range = self.vel_range_combo.currentText()
-            
-            if "500" in vel_range:
-                v_min, v_max = -500, 500
-            elif "200" in vel_range:
-                v_min, v_max = -200, 200
-            elif "100" in vel_range:
-                v_min, v_max = -100, 100
-            else:  # Auto
-                v_min, v_max = -300, 300
-            
-            ax = self.velocity_figure.add_subplot(111)
-            
-            # Generate velocity space data
-            velocity = np.linspace(v_min, v_max, 200)
-            
-            # Fake absorption profile with multiple components
-            flux = np.ones_like(velocity)
-            model = np.ones_like(velocity)
-            
-            # Two velocity components
-            comp1_v, comp1_b = -50, 15
-            comp2_v, comp2_b = 25, 20
-            
-            for comp_v, comp_b in [(comp1_v, comp1_b), (comp2_v, comp2_b)]:
-                absorption = 0.3 * np.exp(-0.5 * ((velocity - comp_v) / comp_b)**2)
-                flux -= absorption + 0.02 * np.random.normal(0, 1, len(velocity))
-                model -= absorption
+            try:
+                # Use FitResults velocity plotting method if available
+                if hasattr(self.results, 'plot_velocity_fits'):
+                    # Clear figure and use FitResults plotting
+                    self.velocity_figure.clear()
+                    
+                    # Get velocity range setting
+                    vel_range_text = self.vel_range_combo.currentText()
+                    if vel_range_text == "±200 km/s":
+                        velocity_range = (-200, 200)
+                    elif vel_range_text == "±500 km/s":
+                        velocity_range = (-500, 500)
+                    elif vel_range_text == "±1000 km/s":
+                        velocity_range = (-1000, 1000)
+                    else:
+                        velocity_range = None  # Auto
+                    
+                    # Create velocity plots
+                    show_components = self.show_components_check.isChecked()
+                    
+                    # Call the FitResults plotting method
+                    fig = self.results.plot_velocity_fits(
+                        show_components=show_components,
+                        velocity_range=velocity_range,
+                        show_rail_system=True,
+                        figure=self.velocity_figure
+                    )
+                else:
+                    # Fallback: basic velocity plot
+                    ax = self.velocity_figure.add_subplot(111)
+                    ax.text(0.5, 0.5, 'Velocity plotting not available in results object',
+                           ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                    
+            except Exception as e:
+                ax = self.velocity_figure.add_subplot(111)
+                ax.text(0.5, 0.5, f'Error creating velocity plot:\n{str(e)}',
+                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
                 
-                # Mark component centers
-                ax.axvline(comp_v, color='orange', linestyle=':', alpha=0.8, linewidth=2)
-            
-            ax.plot(velocity, flux, 'ko', markersize=2, alpha=0.7, label='Data')
-            ax.plot(velocity, model, 'r-', linewidth=2, label='Best-fit Model')
-            
-            ax.set_xlabel('Velocity (km/s)')
-            ax.set_ylabel('Normalized Flux')
-            ax.set_title('Velocity Space View')
-            ax.legend()
-            ax.grid(True, alpha=0.3)
-            
-            # Add component markers
-            ax.text(comp1_v, 0.1, 'C1', ha='center', va='bottom', 
-                   bbox=dict(boxstyle='round,pad=0.2', facecolor='orange', alpha=0.7))
-            ax.text(comp2_v, 0.1, 'C2', ha='center', va='bottom',
-                   bbox=dict(boxstyle='round,pad=0.2', facecolor='orange', alpha=0.7))
-            
-        self.velocity_figure.tight_layout()
         self.velocity_canvas.draw()
         
     def export_csv(self):
-        """Export results to CSV"""
+        """Export parameter table to CSV"""
+        if not self.parameter_data:
+            QMessageBox.warning(self, "No Data", "No parameter data to export")
+            return
+            
         filename, _ = QFileDialog.getSaveFileName(
-            self, "Export results to CSV", "",
+            self, "Export Parameters as CSV", "",
             "CSV files (*.csv);;All files (*.*)")
         
         if filename:
             try:
-                # Create CSV content from parameter table
                 import csv
                 with open(filename, 'w', newline='') as f:
                     writer = csv.writer(f)
                     writer.writerow(['Parameter', 'Best_Fit', 'Error', 'Units'])
-                    for param_data in self.parameter_data:
-                        writer.writerow(param_data)
-                        
-                self.main_window.update_status(f"Results exported: {filename}")
+                    writer.writerows(self.parameter_data)
+                    
+                self.main_window.update_status(f"Parameters exported: {filename}")
                 QMessageBox.information(self, "Export Complete", 
-                                      f"Results exported to:\n{filename}")
+                                      f"Parameters exported to {filename}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export CSV:\n{str(e)}")
+                QMessageBox.critical(self, "Export Error", f"Failed to export CSV:\n{str(e)}")
                 
     def export_latex(self):
-        """Export results to LaTeX table"""
+        """Export parameter table to LaTeX"""
+        if not self.parameter_data:
+            QMessageBox.warning(self, "No Data", "No parameter data to export")
+            return
+            
         filename, _ = QFileDialog.getSaveFileName(
-            self, "Export LaTeX table", "",
-            "TeX files (*.tex);;All files (*.*)")
+            self, "Export Parameters as LaTeX", "",
+            "LaTeX files (*.tex);;All files (*.*)")
         
         if filename:
             try:
-                latex_content = self.generate_latex_table()
                 with open(filename, 'w') as f:
-                    f.write(latex_content)
+                    f.write("\\begin{table}[ht]\n")
+                    f.write("\\centering\n")
+                    f.write("\\begin{tabular}{llll}\n")
+                    f.write("\\hline\n")
+                    f.write("Parameter & Best Fit & Error & Units \\\\\n")
+                    f.write("\\hline\n")
+                    
+                    for param, value, error, units in self.parameter_data:
+                        # Escape underscores for LaTeX
+                        param_latex = param.replace('_', '\\_')
+                        f.write(f"{param_latex} & {value} & {error} & {units} \\\\\n")
+                    
+                    f.write("\\hline\n")
+                    f.write("\\end{tabular}\n")
+                    f.write("\\caption{rbvfit Parameter Results}\n")
+                    f.write("\\label{tab:rbvfit_results}\n")
+                    f.write("\\end{table}\n")
                     
                 self.main_window.update_status(f"LaTeX table exported: {filename}")
                 QMessageBox.information(self, "Export Complete", 
-                                      f"LaTeX table exported to:\n{filename}")
+                                      f"LaTeX table exported to {filename}")
             except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to export LaTeX:\n{str(e)}")
+                QMessageBox.critical(self, "Export Error", f"Failed to export LaTeX:\n{str(e)}")
                 
-    def generate_latex_table(self):
-        """Generate LaTeX table from parameter data"""
-        latex = r"""
-\begin{table}[ht]
-\centering
-\caption{Best-fit absorption line parameters}
-\label{tab:absorption_params}
-\begin{tabular}{lccc}
-\hline
-Parameter & Best Fit & $\pm$ Error & Units \\
-\hline
-"""
-        
-        for param_name, best_fit, error, units in self.parameter_data:
-            # Convert parameter names to LaTeX format
-            latex_param = param_name.replace('_', r'\_')
-            if 'MgII' in param_name:
-                latex_param = latex_param.replace('MgII', r'{\rm MgII}')
-            if 'FeII' in param_name:
-                latex_param = latex_param.replace('FeII', r'{\rm FeII}')
-                
-            # Convert units to LaTeX
-            latex_units = units.replace('log cm⁻²', r'$\log$ cm$^{-2}$')
-            latex_units = latex_units.replace('km/s', r'km s$^{-1}$')            
-            latex += f"{latex_param} & {best_fit} & {error} & {latex_units} \\\\\n"
-            
-        latex += r"""
-\hline
-\end{tabular}
-\end{table}
-"""
-        return latex
-        
     def save_plots(self):
-        """Save all plots as image files"""
-        if not HAS_MATPLOTLIB:
-            QMessageBox.critical(self, "Error", "Matplotlib not available")
+        """Save all plots to files"""
+        if self.results is None:
+            QMessageBox.warning(self, "No Results", "No results to save")
             return
             
-        directory = QFileDialog.getExistingDirectory(self, "Select directory to save plots")
-        
-        if directory:
-            try:
-                # Save all plots
-                self.corner_figure.savefig(f"{directory}/corner_plot.png", 
-                                         dpi=300, bbox_inches='tight')
-                self.comparison_figure.savefig(f"{directory}/model_comparison.png", 
-                                             dpi=300, bbox_inches='tight')
-                self.velocity_figure.savefig(f"{directory}/velocity_plot.png", 
-                                           dpi=300, bbox_inches='tight')
+        # Get directory to save in
+        directory = QFileDialog.getExistingDirectory(self, "Select Directory for Plots")
+        if not directory:
+            return
+            
+        try:
+            saved_files = []
+            
+            # Save corner plot
+            if HAS_MATPLOTLIB:
+                corner_file = f"{directory}/corner_plot.png"
+                self.corner_figure.savefig(corner_file, dpi=300, bbox_inches='tight')
+                saved_files.append("corner_plot.png")
                 
-                self.main_window.update_status(f"Plots saved to: {directory}")
-                QMessageBox.information(self, "Export Complete", 
-                                      f"All plots saved to:\n{directory}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to save plots:\n{str(e)}")
+                # Save model comparison
+                comparison_file = f"{directory}/model_comparison.png"
+                self.comparison_figure.savefig(comparison_file, dpi=300, bbox_inches='tight')
+                saved_files.append("model_comparison.png")
                 
+                # Save velocity plot
+                velocity_file = f"{directory}/velocity_plot.png"
+                self.velocity_figure.savefig(velocity_file, dpi=300, bbox_inches='tight')
+                saved_files.append("velocity_plot.png")
+                
+            self.main_window.update_status(f"Plots saved to {directory}")
+            QMessageBox.information(self, "Save Complete", 
+                                  f"Saved plots:\n" + "\n".join(saved_files))
+                                  
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save plots:\n{str(e)}")
+            
     def export_corner_plot(self):
-        """Export corner plot as image"""
-        if not HAS_MATPLOTLIB:
-            QMessageBox.critical(self, "Error", "Matplotlib not available")
-            return
-            
+        """Export corner plot to file"""
         filename, _ = QFileDialog.getSaveFileName(
-            self, "Save corner plot", "",
-            "PNG files (*.png);;PDF files (*.pdf);;SVG files (*.svg);;All files (*.*)")
+            self, "Export corner plot", "",
+            "PNG files (*.png);;PDF files (*.pdf);;All files (*.*)")
         
         if filename:
             try:
                 self.corner_figure.savefig(filename, dpi=300, bbox_inches='tight')
                 self.main_window.update_status(f"Corner plot saved: {filename}")
+                QMessageBox.information(self, "Export Complete", 
+                                      f"Corner plot saved to {filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to save plot:\n{str(e)}")
                 
     def copy_table_to_clipboard(self):
         """Copy parameter table to clipboard"""
-        try:
-            from PyQt5.QtWidgets import QApplication
+        if not self.parameter_data:
+            QMessageBox.warning(self, "No Data", "No parameter data to copy")
+            return
             
+        try:
             # Create tab-separated text
             text = "Parameter\tBest Fit\t±Error\tUnits\n"
             for param_data in self.parameter_data:
@@ -734,18 +836,31 @@ Parameter & Best Fit & $\pm$ Error & Units \\
             
     def export_parameter_table(self):
         """Export parameter table to file"""
+        if not self.parameter_data:
+            QMessageBox.warning(self, "No Data", "No parameter data to export")
+            return
+            
         filename, _ = QFileDialog.getSaveFileName(
             self, "Export parameter table", "",
             "Text files (*.txt);;CSV files (*.csv);;All files (*.*)")
         
         if filename:
             try:
-                with open(filename, 'w') as f:
-                    f.write("Parameter\tBest_Fit\tError\tUnits\n")
-                    for param_data in self.parameter_data:
-                        f.write("\t".join(param_data) + "\n")
+                if filename.endswith('.csv'):
+                    import csv
+                    with open(filename, 'w', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow(['Parameter', 'Best_Fit', 'Error', 'Units'])
+                        writer.writerows(self.parameter_data)
+                else:
+                    with open(filename, 'w') as f:
+                        f.write("Parameter\tBest_Fit\tError\tUnits\n")
+                        for param_data in self.parameter_data:
+                            f.write("\t".join(param_data) + "\n")
                         
                 self.main_window.update_status(f"Parameter table exported: {filename}")
+                QMessageBox.information(self, "Export Complete", 
+                                      f"Parameter table exported to {filename}")
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to export table:\n{str(e)}")
                 

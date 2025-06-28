@@ -587,6 +587,7 @@ class vfit(object):
         self.ndim = len(self.lb)
         self.nwalkers = no_of_Chain
         self.mcmc_flag=True
+        self.compute_best_theta()
     
     
     def fit_quick(self, verbose=True):

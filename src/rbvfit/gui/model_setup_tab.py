@@ -1,37 +1,89 @@
 #!/usr/bin/env python
 """
-rbvfit 2.0 Model Setup Tab - PyQt5 Implementation
-
-Interface for building absorption line models with component management.
+rbvfit 2.0 Model Setup Tab - Redesigned
 """
 
 import pandas as pd
+import numpy as np
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QTreeWidget, QTreeWidgetItem, QPushButton, QGroupBox,
                             QTableWidget, QTableWidgetItem, QHeaderView, QLabel,
-                            QTextEdit, QMessageBox, QSpinBox, QComboBox, QMenu,
-                            QDoubleSpinBox, QFormLayout)
+                            QMessageBox, QSpinBox, QComboBox, QDoubleSpinBox,
+                            QFormLayout, QDialog, QDialogButtonBox, QLineEdit)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 from rbvfit.core.fit_configuration import FitConfiguration
-from rbvfit.gui.dialogs.add_system_dialog import AddSystemDialog
-from rbvfit.gui.io import create_parameter_dataframe
+from rbvfit.core.voigt_model import VoigtModel
+import rbvfit.vfit_mcmc as mc
+from rbvfit.gui.interactive_param_dialog import InteractiveParameterDialog, show_validation_warning
+
+
+class AddSystemDialog(QDialog):
+    """Dialog for adding new absorption system"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Absorption System")
+        self.setModal(True)
+        
+        layout = QFormLayout()
+        self.setLayout(layout)
+        
+        self.z_spin = QDoubleSpinBox()
+        self.z_spin.setRange(0.0, 10.0)
+        self.z_spin.setDecimals(6)
+        self.z_spin.setValue(0.0)
+        layout.addRow("Redshift:", self.z_spin)
+        
+        self.ion_combo = QComboBox()
+        self.ion_combo.setEditable(True)
+        self.ion_combo.addItem("")  # Empty option for auto-detect
+        common_ions = ['HI', 'CII', 'CIV', 'SiII', 'SiIV', 'OI', 'OVI', 'MgII', 'FeII']
+        self.ion_combo.addItems(common_ions)
+        layout.addRow("Ion (empty = auto-detect):", self.ion_combo)
+        
+        self.transitions_edit = QLineEdit()
+        self.transitions_edit.setPlaceholderText("e.g., 1548.2, 1550.3")
+        layout.addRow("Transitions (Å):", self.transitions_edit)
+        
+        self.fwhm_spin = QDoubleSpinBox()
+        self.fwhm_spin.setRange(0.1, 20.0)
+        self.fwhm_spin.setDecimals(2)
+        self.fwhm_spin.setValue(2.5)
+        layout.addRow("FWHM (pixels):", self.fwhm_spin)
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+        
+    def get_system_data(self):
+        """Return system data as dict"""
+        transitions_text = self.transitions_edit.text().strip()
+        transitions = [float(x.strip()) for x in transitions_text.split(',') if x.strip()]
+        
+        ion_name = self.ion_combo.currentText().strip()
+        
+        return {
+            'z': self.z_spin.value(),
+            'ion': ion_name,  # Empty string if auto-detect
+            'transitions': transitions,
+            'fwhm': self.fwhm_spin.value()
+        }
 
 
 class ModelSetupTab(QWidget):
     """Tab for setting up absorption line models"""
     
-    model_updated = pyqtSignal(object)  # FitConfiguration object
+    model_updated = pyqtSignal(object, dict)  # (compiled_model, mcmc_params)
     
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.config = FitConfiguration()
-        self.parameter_df = pd.DataFrame()  # Track component parameters
-        self.current_system = None
-        self.current_ion = None
-        self.fwhm_values = {}  # Store FWHM per instrument
+        self.systems = []  # List of system dicts
+        self.parameter_tables = {}  # Dict of system_id -> DataFrame
+        self.current_system_id = None
         
         self.setup_ui()
         self.setup_connections()
@@ -41,543 +93,519 @@ class ModelSetupTab(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
         
-        # Main splitter: systems tree | parameter management
+        # Main splitter: systems | parameters
         main_splitter = QSplitter(Qt.Horizontal)
         layout.addWidget(main_splitter)
         
-        # Left panel: System tree
-        self.setup_system_panel(main_splitter)
+        self.setup_systems_panel(main_splitter)
+        self.setup_parameters_panel(main_splitter)
         
-        # Right panel: Parameter management
-        self.setup_parameter_panel(main_splitter)
+        main_splitter.setSizes([300, 500])
         
-        main_splitter.setSizes([400, 600])
+        # Bottom controls
+        self.setup_bottom_controls(layout)
         
-    def setup_system_panel(self, parent):
-        """Create system tree view"""
-        left_widget = QWidget()
-        left_layout = QVBoxLayout()
-        left_widget.setLayout(left_layout)
-        parent.addWidget(left_widget)
+    def setup_systems_panel(self, parent):
+        """Create systems management panel"""
+        systems_widget = QWidget()
+        systems_layout = QVBoxLayout()
+        systems_widget.setLayout(systems_layout)
+        parent.addWidget(systems_widget)
         
         # Systems group
-        sys_group = QGroupBox("Absorption Systems")
-        sys_layout = QVBoxLayout()
-        sys_group.setLayout(sys_layout)
-        left_layout.addWidget(sys_group)
+        systems_group = QGroupBox("Absorption Systems")
+        systems_group_layout = QVBoxLayout()
+        systems_group.setLayout(systems_group_layout)
+        systems_layout.addWidget(systems_group)
         
-        # System tree
-        self.system_tree = QTreeWidget()
-        self.system_tree.setHeaderLabels(['System/Ion', 'Components', 'Transitions'])
-        self.system_tree.setToolTip("Tree view of all absorption systems and ions")
-        sys_layout.addWidget(self.system_tree)
+        # Systems list
+        self.systems_tree = QTreeWidget()
+        self.systems_tree.setHeaderLabels(['System', 'Details'])
+        self.systems_tree.setColumnWidth(0, 150)
+        systems_group_layout.addWidget(self.systems_tree)
         
-        # System control buttons
-        sys_btn_layout = QHBoxLayout()
+        # System controls
+        sys_controls_layout = QHBoxLayout()
+        systems_group_layout.addLayout(sys_controls_layout)
         
         self.add_system_btn = QPushButton("Add System")
-        self.add_system_btn.setToolTip("Add new absorption system")
-        sys_btn_layout.addWidget(self.add_system_btn)
+        self.edit_system_btn = QPushButton("Edit")
+        self.delete_system_btn = QPushButton("Delete")
         
-        self.delete_system_btn = QPushButton("Delete System")
+        sys_controls_layout.addWidget(self.add_system_btn)
+        sys_controls_layout.addWidget(self.edit_system_btn)
+        sys_controls_layout.addWidget(self.delete_system_btn)
+        
+        self.edit_system_btn.setEnabled(False)
         self.delete_system_btn.setEnabled(False)
-        self.delete_system_btn.setToolTip("Delete selected system")
-        sys_btn_layout.addWidget(self.delete_system_btn)
         
-        sys_layout.addLayout(sys_btn_layout)
+    def setup_parameters_panel(self, parent):
+        """Create parameters panel"""
+        params_widget = QWidget()
+        params_layout = QVBoxLayout()
+        params_widget.setLayout(params_layout)
+        parent.addWidget(params_widget)
         
-        # FWHM settings group
-        fwhm_group = QGroupBox("Instrumental FWHM Settings")
-        fwhm_layout = QFormLayout()
-        fwhm_group.setLayout(fwhm_layout)
-        left_layout.addWidget(fwhm_group)
+        # System selector
+        selector_layout = QHBoxLayout()
+        params_layout.addLayout(selector_layout)
         
-        # Default FWHM for new instruments
-        self.default_fwhm_spin = QDoubleSpinBox()
-        self.default_fwhm_spin.setRange(0.1, 10.0)
-        self.default_fwhm_spin.setValue(2.5)
-        self.default_fwhm_spin.setDecimals(2)
-        self.default_fwhm_spin.setToolTip("Default FWHM for new instruments (pixels)")
-        fwhm_layout.addRow("Default FWHM:", self.default_fwhm_spin)
+        selector_layout.addWidget(QLabel("Current System:"))
+        self.system_combo = QComboBox()
+        selector_layout.addWidget(self.system_combo)
+        selector_layout.addStretch()
         
-        # FWHM table for loaded instruments
-        self.fwhm_table = QTableWidget()
-        self.fwhm_table.setColumnCount(2)
-        self.fwhm_table.setHorizontalHeaderLabels(["Instrument", "FWHM"])
-        self.fwhm_table.horizontalHeader().setStretchLastSection(True)
-        self.fwhm_table.setMaximumHeight(150)
-        self.fwhm_table.setToolTip("FWHM values for each loaded instrument")
-        fwhm_layout.addRow("Instruments:", self.fwhm_table)
+        # Parameter input methods
+        methods_layout = QHBoxLayout()
+        params_layout.addLayout(methods_layout)
         
-    def setup_parameter_panel(self, parent):
-        """Create parameter management panel"""
-        right_widget = QWidget()
-        right_layout = QVBoxLayout()
-        right_widget.setLayout(right_layout)
-        parent.addWidget(right_widget)
+        self.interactive_btn = QPushButton("Interactive Parameters")
+        self.manual_btn = QPushButton("Manual Entry")
+        self.clear_params_btn = QPushButton("Clear")
         
-        # Parameter controls group
-        param_group = QGroupBox("Component Parameters")
-        param_layout = QVBoxLayout()
-        param_group.setLayout(param_layout)
-        right_layout.addWidget(param_group)
-        
-        # Component count control
-        count_layout = QHBoxLayout()
-        count_layout.addWidget(QLabel("Components:"))
-        
-        self.component_spin = QSpinBox()
-        self.component_spin.setRange(1, 20)
-        self.component_spin.setValue(1)
-        self.component_spin.setToolTip("Number of velocity components")
-        count_layout.addWidget(self.component_spin)
-        
-        self.add_component_btn = QPushButton("Add")
-        self.add_component_btn.setToolTip("Add new component")
-        count_layout.addWidget(self.add_component_btn)
-        
-        self.delete_component_btn = QPushButton("Delete")
-        self.delete_component_btn.setEnabled(False)
-        self.delete_component_btn.setToolTip("Delete selected component")
-        count_layout.addWidget(self.delete_component_btn)
-        
-        self.duplicate_component_btn = QPushButton("Duplicate")
-        self.duplicate_component_btn.setEnabled(False)
-        self.duplicate_component_btn.setToolTip("Duplicate selected component")
-        count_layout.addWidget(self.duplicate_component_btn)
-        
-        count_layout.addStretch()
-        param_layout.addLayout(count_layout)
+        methods_layout.addWidget(self.interactive_btn)
+        methods_layout.addWidget(self.manual_btn)
+        methods_layout.addWidget(self.clear_params_btn)
+        methods_layout.addStretch()
         
         # Parameter table
-        self.param_table = QTableWidget()
-        self.param_table.setContextMenuPolicy(Qt.CustomContextMenu)
-        self.param_table.customContextMenuRequested.connect(self.show_context_menu)
-        self.param_table.setToolTip("Component parameters: N (log column density), b (Doppler), v (velocity)")
-        param_layout.addWidget(self.param_table)
+        params_group = QGroupBox("Parameters")
+        params_group_layout = QVBoxLayout()
+        params_group.setLayout(params_group_layout)
+        params_layout.addWidget(params_group)
         
-        # Parameter action buttons
-        param_btn_layout = QHBoxLayout()
+        self.params_table = QTableWidget()
+        self.params_table.setColumnCount(4)
+        self.params_table.setHorizontalHeaderLabels(['Component', 'N (log cm⁻²)', 'b (km/s)', 'v (km/s)'])
         
-        self.reset_params_btn = QPushButton("Reset Parameters")
-        self.reset_params_btn.setToolTip("Reset all parameters to default values")
-        param_btn_layout.addWidget(self.reset_params_btn)
+        header = self.params_table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.Stretch)
         
-        self.apply_params_btn = QPushButton("Apply to Model")
-        self.apply_params_btn.setEnabled(False)
-        self.apply_params_btn.setToolTip("Apply current parameters to model configuration")
-        param_btn_layout.addWidget(self.apply_params_btn)
+        params_group_layout.addWidget(self.params_table)
         
-        param_layout.addLayout(param_btn_layout)
+        # Parameter controls
+        param_controls_layout = QHBoxLayout()
+        params_group_layout.addLayout(param_controls_layout)
         
-        # Mode selection
-        mode_layout = QHBoxLayout()
-        mode_layout.addWidget(QLabel("Fitting Mode:"))
+        self.add_component_btn = QPushButton("Add Component")
+        self.delete_component_btn = QPushButton("Delete Component")
         
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["Interactive", "Batch", "MCMC Only"])
-        self.mode_combo.setToolTip("Parameter estimation mode")
-        mode_layout.addWidget(self.mode_combo)
+        param_controls_layout.addWidget(self.add_component_btn)
+        param_controls_layout.addWidget(self.delete_component_btn)
+        param_controls_layout.addStretch()
         
-        mode_layout.addStretch()
-        param_layout.addLayout(mode_layout)
+        # Progress indicator
+        self.progress_label = QLabel("No systems configured")
+        params_layout.addWidget(self.progress_label)
         
-        # Summary text
-        summary_group = QGroupBox("Model Summary")
-        summary_layout = QVBoxLayout()
-        summary_group.setLayout(summary_layout)
-        right_layout.addWidget(summary_group)
+    def setup_bottom_controls(self, parent_layout):
+        """Create bottom control buttons"""
+        controls_layout = QHBoxLayout()
+        parent_layout.addLayout(controls_layout)
         
-        self.summary_text = QTextEdit()
-        self.summary_text.setMaximumHeight(100)
-        self.summary_text.setReadOnly(True)
-        self.summary_text.setToolTip("Summary of current model configuration")
-        summary_layout.addWidget(self.summary_text)
+        controls_layout.addStretch()
         
-        # Initialize with default component
-        self.initialize_default_parameters()
-        
-    def initialize_default_parameters(self):
-        """Initialize with default single component"""
-        self.parameter_df = create_parameter_dataframe(1)
-        self.setup_parameter_table()
-        self.update_summary()
-        
-    def setup_parameter_table(self):
-        """Setup parameter table with current data"""
-        if self.parameter_df.empty:
-            self.param_table.setRowCount(0)
-            self.param_table.setColumnCount(0)
-            return
-            
-        # Setup table structure
-        self.param_table.setRowCount(len(self.parameter_df))
-        self.param_table.setColumnCount(len(self.parameter_df.columns))
-        self.param_table.setHorizontalHeaderLabels(self.parameter_df.columns)
-        
-        # Fill table with data
-        for i, (idx, row) in enumerate(self.parameter_df.iterrows()):
-            for j, col in enumerate(self.parameter_df.columns):
-                item = QTableWidgetItem(str(row[col]))
-                if col == 'Component':
-                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make component name read-only
-                self.param_table.setItem(i, j, item)
-                
-        # Resize columns
-        self.param_table.resizeColumnsToContents()
-        header = self.param_table.horizontalHeader()
-        header.setStretchLastSection(True)
-        
-        # Update button states
-        self.update_button_states()
-        
-    def update_button_states(self):
-        """Update button enabled states based on current selection"""
-        has_selection = len(self.param_table.selectedItems()) > 0
-        has_multiple = len(self.parameter_df) > 1
-        
-        self.delete_component_btn.setEnabled(has_selection and has_multiple)
-        self.duplicate_component_btn.setEnabled(has_selection)
+        self.compile_btn = QPushButton("Compile Model")
+        self.compile_btn.setEnabled(False)
+        controls_layout.addWidget(self.compile_btn)
         
     def setup_connections(self):
         """Connect signals and slots"""
-        # System controls
         self.add_system_btn.clicked.connect(self.add_system)
+        self.edit_system_btn.clicked.connect(self.edit_system)
         self.delete_system_btn.clicked.connect(self.delete_system)
-        self.system_tree.itemSelectionChanged.connect(self.on_system_selection)
         
-        # Component controls
-        self.component_spin.valueChanged.connect(self.on_component_count_changed)
+        self.system_combo.currentTextChanged.connect(self.on_system_changed)
+        self.interactive_btn.clicked.connect(self.launch_interactive_params)
+        self.manual_btn.clicked.connect(self.setup_manual_params)
+        self.clear_params_btn.clicked.connect(self.clear_params)
+        
         self.add_component_btn.clicked.connect(self.add_component)
-        self.delete_component_btn.clicked.connect(self.delete_selected_component)
-        self.duplicate_component_btn.clicked.connect(self.duplicate_component)
+        self.delete_component_btn.clicked.connect(self.delete_component)
         
-        # Parameter controls
-        self.param_table.itemChanged.connect(self.on_parameter_changed)
-        self.param_table.itemSelectionChanged.connect(self.update_button_states)
-        self.reset_params_btn.clicked.connect(self.reset_parameters)
-        self.apply_params_btn.clicked.connect(self.apply_parameters)
+        self.compile_btn.clicked.connect(self.compile_model)
         
-        # FWHM controls
-        self.fwhm_table.itemChanged.connect(self.on_fwhm_changed)
-        self.default_fwhm_spin.valueChanged.connect(self.on_default_fwhm_changed)
-        
-        # Mode selection
-        self.mode_combo.currentTextChanged.connect(self.on_mode_changed)
+        self.systems_tree.itemSelectionChanged.connect(self.on_system_selection_changed)
         
     def add_system(self):
-        """Open dialog to add new system"""
-        result = AddSystemDialog.get_system(self)
-        if result:
-            try:
-                self.config.add_system(
-                    z=result['redshift'],
-                    ion=result['ion_name'],
-                    transitions=result['transitions'],
-                    components=result['components']
-                )
-                self.refresh_system_tree()
-                self.update_summary()
-                self.apply_params_btn.setEnabled(True)
-                self.main_window.update_status(f"Added system: {result['ion_name']} at z={result['redshift']:.4f}")
-            except Exception as e:
-                QMessageBox.critical(self, "Error", f"Failed to add system:\n{str(e)}")
+        """Add new absorption system"""
+        dialog = AddSystemDialog(self)
+        if dialog.exec_() == QDialog.Accepted:
+            system_data = dialog.get_system_data()
+            
+            if not system_data['transitions']:
+                QMessageBox.warning(self, "Invalid Input", "Please specify at least one transition")
+                return
                 
-    def delete_system(self):
-        """Delete selected system"""
-        current_item = self.system_tree.currentItem()
+            # Auto-detect ion if empty
+            if not system_data['ion']:
+                try:
+                    from rbvfit import rb_setline as rb
+                    line_info = rb.rb_setline(system_data['transitions'][0], 'closest')
+                    detected_ion = line_info['name'][0].split()[0]
+                    system_data['ion'] = detected_ion
+                    print(f"Auto-detected ion: {detected_ion}")
+                except Exception as e:
+                    QMessageBox.warning(self, "Auto-detect Failed", 
+                                      f"Could not auto-detect ion from wavelength {system_data['transitions'][0]:.1f}Å\n"
+                                      f"Error: {str(e)}\nPlease enter ion name manually.")
+                    return
+                
+            system_id = f"sys_{len(self.systems)}"
+            system_data['id'] = system_id
+            
+            self.systems.append(system_data)
+            self.parameter_tables[system_id] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
+            
+            self.update_systems_display()
+            self.update_progress()
+            
+    def edit_system(self):
+        """Edit selected system"""
+        current_item = self.systems_tree.currentItem()
         if not current_item:
             return
             
-        # Find system to delete (handle both system and ion items)
-        if current_item.parent():  # Ion item
-            system_item = current_item.parent()
-            ion_name = current_item.text(0)
-        else:  # System item
-            system_item = current_item
-            ion_name = None
+        system_id = current_item.data(0, Qt.UserRole)
+        system_data = next((s for s in self.systems if s['id'] == system_id), None)
+        
+        if system_data:
+            dialog = AddSystemDialog(self)
+            dialog.z_spin.setValue(system_data['z'])
+            dialog.ion_combo.setCurrentText(system_data['ion'])
+            dialog.transitions_edit.setText(', '.join(map(str, system_data['transitions'])))
+            dialog.fwhm_spin.setValue(system_data['fwhm'])
             
-        system_text = system_item.text(0)
+            if dialog.exec_() == QDialog.Accepted:
+                new_data = dialog.get_system_data()
+                system_data.update(new_data)
+                self.update_systems_display()
+                
+    def delete_system(self):
+        """Delete selected system"""
+        current_item = self.systems_tree.currentItem()
+        if not current_item:
+            return
+            
+        system_id = current_item.data(0, Qt.UserRole)
         
-        # Confirm deletion
-        msg = f"Delete system '{system_text}'"
-        if ion_name:
-            msg += f" ion '{ion_name}'"
-        msg += "?"
-        
-        reply = QMessageBox.question(self, "Confirm Deletion", msg,
-                                   QMessageBox.Yes | QMessageBox.No,
-                                   QMessageBox.No)
+        reply = QMessageBox.question(self, "Delete System", 
+                                   f"Delete system {system_id}?",
+                                   QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            # TODO: Implement system/ion deletion in config
-            # self.config.delete_system(...)
-            self.refresh_system_tree()
-            self.update_summary()
-            self.main_window.update_status("System deleted")
+            self.systems = [s for s in self.systems if s['id'] != system_id]
+            if system_id in self.parameter_tables:
+                del self.parameter_tables[system_id]
+                
+            self.update_systems_display()
+            self.update_progress()
             
-    def on_system_selection(self):
-        """Handle system tree selection"""
-        current_item = self.system_tree.currentItem()
+    def update_systems_display(self):
+        """Update systems tree display"""
+        self.systems_tree.clear()
+        self.system_combo.clear()
+        
+        for system in self.systems:
+            item = QTreeWidgetItem()
+            item.setText(0, f"{system['ion']} z={system['z']:.3f}")
+            item.setText(1, f"{len(system['transitions'])} transitions, FWHM={system['fwhm']}")
+            item.setData(0, Qt.UserRole, system['id'])
+            self.systems_tree.addTopLevelItem(item)
+            
+            self.system_combo.addItem(f"{system['ion']} z={system['z']:.3f}", system['id'])
+            
+    def on_system_selection_changed(self):
+        """Handle system selection change"""
+        current_item = self.systems_tree.currentItem()
+        self.edit_system_btn.setEnabled(current_item is not None)
         self.delete_system_btn.setEnabled(current_item is not None)
         
-        if current_item:
-            if current_item.parent():  # Ion selected
-                self.current_ion = current_item.text(0)
-                self.current_system = current_item.parent().text(0)
-            else:  # System selected
-                self.current_system = current_item.text(0)
-                self.current_ion = None
-                
-    def on_component_count_changed(self, count):
-        """Handle component count change"""
-        current_count = len(self.parameter_df)
+    def on_system_changed(self, text):
+        """Handle system combo change"""
+        if text:
+            system_id = self.system_combo.currentData()
+            self.current_system_id = system_id
+            self.load_parameter_table()
+            
+    def launch_interactive_params(self):
+        """Launch interactive parameter estimation"""
+        if not self.current_system_id:
+            QMessageBox.warning(self, "No System", "Please select a system first")
+            return
+            
+        # Get current system data
+        system_data = next((s for s in self.systems if s['id'] == self.current_system_id), None)
+        if not system_data:
+            return
+            
+        # Get spectrum data from main window
+        if not hasattr(self.main_window, 'get_spectrum_data'):
+            QMessageBox.warning(self, "No Data", "No spectrum data available")
+            return
+            
+        spec_data = self.main_window.get_spectrum_data()
+        if not spec_data:
+            QMessageBox.warning(self, "No Data", "No spectrum data loaded")
+            return
+            
+        # Use first available spectrum
+        first_key = list(spec_data.keys())[0]
+        spectrum_data = spec_data[first_key]
         
-        if count > current_count:
-            # Add components
-            for i in range(current_count, count):
-                self.add_component(silent=True)
-        elif count < current_count:
-            # Remove components
-            self.parameter_df = self.parameter_df.iloc[:count].reset_index(drop=True)
-            self.setup_parameter_table()
-            self.apply_params_btn.setEnabled(True)
-            
-    def add_component(self, silent=False):
-        """Add new component"""
-        if self.parameter_df.empty:
-            self.parameter_df = create_parameter_dataframe(1)
-        else:
-            # Create new component with default values
-            new_comp_num = len(self.parameter_df) + 1
-            new_row = {
-                'Component': f"C{new_comp_num}",
-                'N': 13.5,      # log column density
-                'N_err': 2.0,   # error/range
-                'b': 15.0,      # Doppler parameter (km/s)
-                'b_err': 10.0,  # error/range
-                'v': 0.0,       # velocity offset (km/s)
-                'v_err': 50.0   # error/range
-            }
-            
-            new_row_df = pd.DataFrame([new_row])
-            self.parameter_df = pd.concat([self.parameter_df, new_row_df], ignore_index=True)
-            
-        self.component_spin.setValue(len(self.parameter_df))
-        self.setup_parameter_table()
-        self.apply_params_btn.setEnabled(True)
+        # Launch interactive dialog
+        dialog = InteractiveParameterDialog(system_data, spectrum_data, self)
+        dialog.parameters_ready.connect(self.on_interactive_parameters_ready)
+        dialog.exec_()
         
-        if not silent:
-            self.main_window.update_status(f"Added component ({len(self.parameter_df)} total)")
+    def on_interactive_parameters_ready(self, df):
+        """Handle interactive parameters result"""
+        if self.current_system_id:
+            self.parameter_tables[self.current_system_id] = df.copy()
+            self.load_parameter_table()
+            self.update_progress()
+        
+    def setup_manual_params(self):
+        """Set up manual parameter entry"""
+        if not self.current_system_id:
+            QMessageBox.warning(self, "No System", "Please select a system first")
+            return
             
-    def delete_selected_component(self):
+        # Add default component if table is empty
+        df = self.parameter_tables[self.current_system_id]
+        if df.empty:
+            self.add_component()
+            
+    def clear_params(self):
+        """Clear parameters for current system"""
+        if self.current_system_id:
+            self.parameter_tables[self.current_system_id] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
+            self.load_parameter_table()
+            self.update_progress()
+            
+    def add_component(self):
+        """Add new component to current system"""
+        if not self.current_system_id:
+            return
+            
+        df = self.parameter_tables[self.current_system_id]
+        new_component = len(df) + 1
+        
+        new_row = pd.DataFrame({
+            'Component': [new_component],
+            'N': [13.5],  # Default log column density
+            'b': [25.0],  # Default Doppler parameter
+            'v': [0.0]    # Default velocity
+        })
+        
+        self.parameter_tables[self.current_system_id] = pd.concat([df, new_row], ignore_index=True)
+        self.load_parameter_table()
+        self.update_progress()
+        
+    def delete_component(self):
         """Delete selected component"""
-        selected_rows = set()
-        for item in self.param_table.selectedItems():
-            selected_rows.add(item.row())
-            
-        if not selected_rows:
-            QMessageBox.warning(self, "Warning", "No component selected")
+        if not self.current_system_id:
             return
             
-        if len(self.parameter_df) <= 1:
-            QMessageBox.warning(self, "Warning", "Cannot delete the last component")
+        current_row = self.params_table.currentRow()
+        if current_row >= 0:
+            df = self.parameter_tables[self.current_system_id]
+            self.parameter_tables[self.current_system_id] = df.drop(df.index[current_row]).reset_index(drop=True)
+            
+            # Renumber components
+            df = self.parameter_tables[self.current_system_id]
+            if not df.empty:
+                df['Component'] = range(1, len(df) + 1)
+                
+            self.load_parameter_table()
+            self.update_progress()
+            
+    def load_parameter_table(self):
+        """Load parameter table for current system"""
+        if not self.current_system_id:
+            self.params_table.setRowCount(0)
             return
             
-        # Remove rows in reverse order
-        for row in sorted(selected_rows, reverse=True):
-            self.parameter_df = self.parameter_df.drop(self.parameter_df.index[row]).reset_index(drop=True)
-            
-        # Renumber components
-        for i in range(len(self.parameter_df)):
-            self.parameter_df.iloc[i, self.parameter_df.columns.get_loc('Component')] = f"C{i+1}"
-            
-        self.component_spin.setValue(len(self.parameter_df))
-        self.setup_parameter_table()
-        self.apply_params_btn.setEnabled(True)
-        self.main_window.update_status(f"Deleted component ({len(self.parameter_df)} remaining)")
+        df = self.parameter_tables[self.current_system_id]
         
-    def duplicate_component(self):
-        """Duplicate selected component"""
-        selected_rows = set()
-        for item in self.param_table.selectedItems():
-            selected_rows.add(item.row())
-            
-        if not selected_rows:
-            QMessageBox.warning(self, "Warning", "No component selected")
-            return
-            
-        # Duplicate first selected row
-        row_to_dup = min(selected_rows)
-        if row_to_dup < len(self.parameter_df):
-            dup_row = self.parameter_df.iloc[row_to_dup].copy()
-            dup_row['Component'] = f"C{len(self.parameter_df) + 1}"
-            
-            new_row_df = pd.DataFrame([dup_row])
-            self.parameter_df = pd.concat([self.parameter_df, new_row_df], ignore_index=True)
-            
-            self.component_spin.setValue(len(self.parameter_df))
-            self.setup_parameter_table()
-            self.apply_params_btn.setEnabled(True)
-            self.main_window.update_status(f"Duplicated component ({len(self.parameter_df)} total)")
-            
-    def show_context_menu(self, position):
-        """Show right-click context menu"""
-        if self.param_table.itemAt(position) is None:
-            return
-            
-        menu = QMenu(self)
+        self.params_table.setRowCount(len(df))
         
-        if len(self.parameter_df) > 1:
-            delete_action = menu.addAction("Delete Component")
-            delete_action.triggered.connect(self.delete_selected_component)
+        for i, row in df.iterrows():
+            self.params_table.setItem(i, 0, QTableWidgetItem(str(row['Component'])))
+            self.params_table.setItem(i, 1, QTableWidgetItem(f"{row['N']:.2f}"))
+            self.params_table.setItem(i, 2, QTableWidgetItem(f"{row['b']:.1f}"))
+            self.params_table.setItem(i, 3, QTableWidgetItem(f"{row['v']:.1f}"))
             
-        duplicate_action = menu.addAction("Duplicate Component") 
-        duplicate_action.triggered.connect(self.duplicate_component)
+        # Connect item changed signal
+        self.params_table.itemChanged.connect(self.on_parameter_changed)
         
-        if menu.actions():
-            menu.exec_(self.param_table.mapToGlobal(position))
-            
     def on_parameter_changed(self, item):
         """Handle parameter table changes"""
-        # Update dataframe with new value
+        if not self.current_system_id:
+            return
+            
         row = item.row()
         col = item.column()
-        try:
-            value = float(item.text()) if col > 0 else item.text()
-            self.parameter_df.iloc[row, col] = value
-            self.apply_params_btn.setEnabled(True)
-        except ValueError:
-            # Revert invalid input
-            old_value = self.parameter_df.iloc[row, col]
-            item.setText(str(old_value))
-            
-    def reset_parameters(self):
-        """Reset all parameters to defaults"""
-        n_components = len(self.parameter_df)
-        self.parameter_df = create_parameter_dataframe(n_components)
-        self.setup_parameter_table()
-        self.apply_params_btn.setEnabled(True)
-        self.main_window.update_status("Parameters reset to defaults")
         
-    def apply_parameters(self):
-        """Apply current parameters to model configuration"""
         try:
-            # Update configuration with current parameters
-            self.update_config_components()
+            value = float(item.text())
+            df = self.parameter_tables[self.current_system_id]
             
-            # Emit signal for other tabs
-            self.model_updated.emit(self.config)
+            if col == 1:  # N column
+                df.iloc[row, df.columns.get_loc('N')] = value
+            elif col == 2:  # b column
+                df.iloc[row, df.columns.get_loc('b')] = value
+            elif col == 3:  # v column
+                df.iloc[row, df.columns.get_loc('v')] = value
+                
+            self.validate_parameters()
             
-            self.apply_params_btn.setEnabled(False)
-            self.update_summary()
-            self.main_window.update_status("Parameters applied to model")
+        except ValueError:
+            show_validation_warning(self, "Please enter a valid number")
+            self.load_parameter_table()  # Reload to reset invalid value
+            
+    def validate_parameters(self):
+        """Validate parameter ranges"""
+        if not self.current_system_id:
+            return
+            
+        df = self.parameter_tables[self.current_system_id]
+        
+        warnings = []
+        for i, row in df.iterrows():
+            if row['N'] < 10 or row['N'] > 22:
+                warnings.append(f"Component {i+1}: N outside typical range [10-22]")
+            if row['b'] < 5 or row['b'] > 200:
+                warnings.append(f"Component {i+1}: b outside typical range [5-200] km/s")
+                
+        if warnings:
+            show_validation_warning(self, "\n".join(warnings))
+            
+    def update_progress(self):
+        """Update progress indicator"""
+        total_systems = len(self.systems)
+        if total_systems == 0:
+            self.progress_label.setText("No systems configured")
+            self.compile_btn.setEnabled(False)
+            return
+            
+        completed_systems = sum(1 for sys_id in self.parameter_tables.keys() 
+                              if not self.parameter_tables[sys_id].empty)
+        
+        self.progress_label.setText(f"Parameters set for {completed_systems}/{total_systems} systems")
+        self.compile_btn.setEnabled(completed_systems == total_systems and total_systems > 0)
+        
+    def get_current_theta(self):
+        """Get combined theta array for all systems"""
+        if not self.systems:
+            return None
+            
+        theta_parts = []
+        
+        for system in self.systems:
+            system_id = system['id']
+            if system_id not in self.parameter_tables or self.parameter_tables[system_id].empty:
+                return None
+                
+            df = self.parameter_tables[system_id]
+            n_vals = df['N'].values
+            b_vals = df['b'].values
+            v_vals = df['v'].values
+            
+            theta_parts.extend([n_vals, b_vals, v_vals])
+            
+        return np.concatenate(theta_parts)
+        
+    def get_current_model(self):
+        """Get the current VoigtModel (before compilation)"""
+        if not self.systems:
+            return None
+            
+        # For now, create single instrument config
+        # TODO: Support multi-instrument
+        config = FitConfiguration()
+        
+        for system in self.systems:
+            system_id = system['id']
+            if system_id not in self.parameter_tables or self.parameter_tables[system_id].empty:
+                continue
+                
+            df = self.parameter_tables[system_id]
+            n_components = len(df)
+            
+            config.add_system(
+                z=system['z'],
+                ion=system['ion'],
+                transitions=system['transitions'],
+                components=n_components
+            )
+            
+        # Use FWHM from first system for now
+        fwhm = self.systems[0]['fwhm'] if self.systems else 2.5
+        model = VoigtModel(config, FWHM=str(fwhm))
+        
+        return model
+        
+    def compile_model(self):
+        """Compile model and prepare for fitting"""
+        try:
+            # Get current model
+            model = self.get_current_model()
+            if not model:
+                QMessageBox.warning(self, "No Model", "No valid model to compile")
+                return
+                
+            # Compile model
+            compiled = model.compile(verbose=True)
+            
+            # Get theta
+            theta = self.get_current_theta()
+            if theta is None:
+                QMessageBox.warning(self, "No Parameters", "No parameters available")
+                return
+                
+            # Set bounds
+            n_components_total = len(theta) // 3
+            n_guess = theta[:n_components_total]
+            b_guess = theta[n_components_total:2*n_components_total]
+            v_guess = theta[2*n_components_total:]
+            
+            bounds, lb, ub = mc.set_bounds(n_guess, b_guess, v_guess)
+            
+            # Get spectrum data from main window
+            if not hasattr(self.main_window, 'get_spectrum_data'):
+                QMessageBox.warning(self, "No Data", "No spectrum data available")
+                return
+                
+            spec_data = self.main_window.get_spectrum_data()
+            if not spec_data:
+                QMessageBox.warning(self, "No Data", "No spectrum data loaded")
+                return
+                
+            # Use first available spectrum for now
+            first_key = list(spec_data.keys())[0]
+            wave = spec_data[first_key]['wave']
+            flux = spec_data[first_key]['flux']
+            error = spec_data[first_key].get('error', np.ones_like(flux) * 0.05)
+            
+            # Prepare MCMC parameters
+            mcmc_params = {
+                'wave': wave,
+                'flux': flux,
+                'error': error,
+                'theta_guess': theta,
+                'bounds': (lb, ub)
+            }
+            
+            self.model_updated.emit(compiled, mcmc_params)
+            QMessageBox.information(self, "Success", "Model compiled successfully")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to apply parameters:\n{str(e)}")
+            QMessageBox.critical(self, "Compilation Error", f"Failed to compile model:\n{str(e)}")
             
-    def update_config_components(self):
-        """Update configuration with current component parameters"""
-        if self.config is None or self.parameter_df.empty:
-            return
-            
-        # TODO: Update config with parameter_df data
-        # This requires implementing parameter update methods in FitConfiguration
-        
-    def on_fwhm_changed(self, item):
-        """Handle FWHM table changes"""
-        row = item.row()
-        col = item.column()
-        
-        if col == 1:  # FWHM column
-            try:
-                fwhm = float(item.text())
-                instrument = self.fwhm_table.item(row, 0).text()
-                self.fwhm_values[instrument] = fwhm
-                self.apply_params_btn.setEnabled(True)
-                self.main_window.update_status(f"Updated FWHM for {instrument}: {fwhm}")
-            except ValueError:
-                QMessageBox.warning(self, "Warning", "Invalid FWHM value")
-                item.setText("2.5")  # Reset to default
-                
-    def on_default_fwhm_changed(self, value):
-        """Handle default FWHM change"""
-        self.main_window.update_status(f"Default FWHM set to {value}")
-        
-    def on_mode_changed(self, mode):
-        """Handle fitting mode change"""
-        self.main_window.update_status(f"Fitting mode: {mode}")
-        
-    def update_data(self, spectra_data):
-        """Update with new spectrum data"""
-        # Update FWHM table with loaded instruments
-        self.fwhm_table.setRowCount(len(spectra_data))
-        
-        for i, filename in enumerate(spectra_data.keys()):
-            instrument = spectra_data[filename].get('basename', filename)
-            
-            # Instrument name
-            item = QTableWidgetItem(instrument)
-            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            self.fwhm_table.setItem(i, 0, item)
-            
-            # FWHM value (use existing or default)
-            fwhm = self.fwhm_values.get(instrument, self.default_fwhm_spin.value())
-            self.fwhm_values[instrument] = fwhm
-            fwhm_item = QTableWidgetItem(str(fwhm))
-            self.fwhm_table.setItem(i, 1, fwhm_item)
-            
-        self.fwhm_table.resizeColumnsToContents()
-        
-    def get_fwhm_for_instrument(self, instrument):
-        """Get FWHM value for specified instrument"""
-        return self.fwhm_values.get(instrument, self.default_fwhm_spin.value())
-        
-    def refresh_system_tree(self):
-        """Refresh the system tree display"""
-        self.system_tree.clear()
-        
-        if not self.config:
-            return
-            
-        # TODO: Populate tree from config
-        # for system in self.config.systems:
-        #     system_item = QTreeWidgetItem([f"z={system.redshift:.4f}", "", ""])
-        #     self.system_tree.addTopLevelItem(system_item)
-        #     
-        #     for ion in system.ions:
-        #         ion_item = QTreeWidgetItem([ion.name, str(ion.components), str(len(ion.transitions))])
-        #         system_item.addChild(ion_item)
-        
-        self.system_tree.expandAll()
-        
-    def update_summary(self):
-        """Update model summary text"""
-        if not self.config:
-            self.summary_text.setPlainText("No model configured")
-            return
-            
-        summary = f"Model Configuration:\n"
-        summary += f"• Components: {len(self.parameter_df)}\n"
-        summary += f"• Systems: {len(getattr(self.config, 'systems', []))}\n"
-        summary += f"• Mode: {self.mode_combo.currentText()}\n"
-        
-        if self.fwhm_values:
-            summary += f"• Instruments: {len(self.fwhm_values)}\n"
-            
-        self.summary_text.setPlainText(summary)
-        
-    def handle_spectrum_click(self, wavelength):
-        """Handle spectrum click from fitting tab"""
-        # Add component at clicked wavelength
-        self.main_window.update_status(f"Spectrum clicked at {wavelength:.2f} Å")
-        
-    def refresh(self):
-        """Refresh the tab"""
-        self.refresh_system_tree()
-        self.update_summary()
-        
-    def update_from_config(self, config_dict):
-        """Update tab from loaded configuration"""
-        # TODO: Implement configuration loading
-        self.main_window.update_status("Configuration loaded")
+    def set_spectra_data(self, spectra_data):
+        """Set available spectra data"""
+        self.spectra_data = spectra_data

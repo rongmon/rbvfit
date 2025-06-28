@@ -23,7 +23,13 @@ except ImportError:
 def load_spectrum_file(filename: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load spectrum using rb_spectrum - handles all formats"""
     sp = rb_spectrum.from_file(filename)
-    return sp.wavelength.value, sp.flux.value, sp.sig.value
+    if sp.co_is_set:
+        flux=sp.flux.value/sp.co.value 
+        error=sp.sig.value/sp.co.value 
+    else:
+        flux=sp.flux.value
+        error=sp.sig.value
+    return sp.wavelength.value, flux, error
 
 
 def load_multiple_files(file_list: List[str]) -> Dict[str, Dict[str, np.ndarray]]:

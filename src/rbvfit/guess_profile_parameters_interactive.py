@@ -3,6 +3,9 @@ import numpy as np
 from typing import Tuple, List, Optional, Any, Dict, Union
 import matplotlib.figure
 import matplotlib.axes
+from rbvfit.rb_vfit import rb_veldiff 
+# Converting To velocities
+from rbvfit import rb_setline as line
 
 # Check if we're specifically in a Jupyter notebook (not just IPython)
 try:
@@ -50,9 +53,6 @@ except ImportError:
         else:
             print(obj)
 
-from rbvfit.rb_vfit import rb_veldiff 
-# Converting To velocities
-from rbvfit import rb_setline as line
 
 def quick_nv_estimate(wave: np.ndarray, norm_flx: np.ndarray, wrest: float, f0: float) -> Tuple[np.ndarray, np.ndarray]:
     """

@@ -1,78 +1,201 @@
 #!/usr/bin/env python
 """
-rbvfit 2.0 Fitting Tab - PyQt5 Implementation
+rbvfit 2.0 Fitting Tab - Enhanced with Parameter Bounds and Plot Range Controls
 
-Interface for interactive fitting with spectrum display and wavelength slicing.
+Enhanced fitting interface with parameter bounds editing, quick fit capability, and plot range controls.
 """
 
 import numpy as np
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
-                            QGroupBox, QComboBox, QCheckBox, QPushButton, QLabel,
-                            QSlider, QDoubleSpinBox, QSpinBox, QProgressBar,
-                            QTextEdit, QFormLayout, QMessageBox, QFrame,
-                            QTableWidget, QTableWidgetItem, QHeaderView)
-from PyQt5.QtCore import Qt, pyqtSignal, QTimer, QThread, pyqtSlot
+                            QGroupBox, QPushButton, QLabel, QComboBox, QSpinBox,
+                            QDoubleSpinBox, QCheckBox, QProgressBar, QTextEdit,
+                            QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
+                            QFormLayout, QDialog)
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot
 from PyQt5.QtGui import QFont
 
-# Always import matplotlib - no conditional checks
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.widgets import SpanSelector
 
-# Full path imports - always available
-from rbvfit.core.voigt_model import VoigtModel
-from rbvfit.analysis.mcmc_fitting import run_mcmc_fit
-from rbvfit.gui.io import slice_spectrum, reset_spectrum_slice
+import rbvfit.vfit_mcmc as mc
+from rbvfit.core import fit_results as fr
 
+# Import shared dialog
+from rbvfit.gui.shared_plot_range_dialog import PlotRangeDialog
 
 class MCMCThread(QThread):
-    """Thread for running MCMC fits"""
+    """Thread for running MCMC to avoid blocking GUI"""
     
-    progress_update = pyqtSignal(int)
     status_update = pyqtSignal(str)
-    fitting_completed = pyqtSignal(object)
+    fitting_completed = pyqtSignal(object)  # fitter object
     fitting_error = pyqtSignal(str)
     
-    def __init__(self, model, mcmc_params):
+    def __init__(self, model, theta, lb, ub, wave, flux, error, mcmc_params):
         super().__init__()
         self.model = model
+        self.theta = theta
+        self.lb = lb
+        self.ub = ub
+        self.wave = wave
+        self.flux = flux
+        self.error = error
         self.mcmc_params = mcmc_params
         
     def run(self):
-        """Run MCMC fitting in background"""
+        """Run MCMC fitting"""
         try:
             self.status_update.emit("Starting MCMC fitting...")
             
-            # Run the fit
-            results = run_mcmc_fit(self.model, **self.mcmc_params)
+            # Create fitter
+            fitter = mc.vfit(
+                self.model.model_flux,
+                self.theta, self.lb, self.ub,
+                self.wave, self.flux, self.error,
+                no_of_Chain=self.mcmc_params['n_walkers'],
+                no_of_steps=self.mcmc_params['n_steps'],
+                sampler=self.mcmc_params['sampler'],
+                perturbation=self.mcmc_params['perturbation']
+            )
             
-            self.status_update.emit("MCMC fitting completed")
-            self.fitting_completed.emit(results)
+            self.status_update.emit("Running MCMC chains...")
+            
+            # Run MCMC
+            fitter.runmcmc(
+                optimize=self.mcmc_params['optimize'],
+                verbose=False,
+                use_pool=self.mcmc_params['use_pool']
+            )
+            
+            self.status_update.emit("MCMC completed successfully")
+            self.fitting_completed.emit(fitter)
             
         except Exception as e:
             self.fitting_error.emit(str(e))
 
 
-class FittingTab(QWidget):
-    """Tab for interactive fitting and spectrum display"""
+class ParameterBoundsTable(QTableWidget):
+    """Table widget for editing parameter bounds and initial values"""
     
-    spectrum_clicked = pyqtSignal(float)  # wavelength
-    fitting_started = pyqtSignal(dict)    # mcmc_params
-    fitting_completed = pyqtSignal(object)  # results
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setup_table()
+        
+    def setup_table(self):
+        """Set up the parameter table"""
+        self.setColumnCount(5)
+        self.setHorizontalHeaderLabels(['Parameter', 'Initial', 'Lower', 'Upper', 'Units'])
+        
+        # Set column properties
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        
+        # Enable editing for Initial, Lower, Upper columns
+        self.setEditTriggers(QTableWidget.DoubleClicked | QTableWidget.EditKeyPressed)
+        
+    def populate_parameters(self, param_names, theta, lb, ub):
+        """Populate table with parameters and bounds"""
+        self.setRowCount(len(param_names))
+        
+        for i, (name, initial, lower, upper) in enumerate(zip(param_names, theta, lb, ub)):
+            # Parameter name (read-only)
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(name_item.flags() & ~Qt.ItemIsEditable)
+            self.setItem(i, 0, name_item)
+            
+            # Initial value (editable)
+            initial_item = QTableWidgetItem(f"{initial:.3f}")
+            self.setItem(i, 1, initial_item)
+            
+            # Lower bound (editable)
+            lb_item = QTableWidgetItem(f"{lower:.3f}")
+            self.setItem(i, 2, lb_item)
+            
+            # Upper bound (editable)
+            ub_item = QTableWidgetItem(f"{upper:.3f}")
+            self.setItem(i, 3, ub_item)
+            
+            # Units (read-only)
+            if name.startswith('N_'):
+                units = "log cm⁻²"
+            elif name.startswith('b_'):
+                units = "km/s"
+            elif name.startswith('v_'):
+                units = "km/s"
+            else:
+                units = ""
+                
+            units_item = QTableWidgetItem(units)
+            units_item.setFlags(units_item.flags() & ~Qt.ItemIsEditable)
+            self.setItem(i, 4, units_item)
+            
+    def get_parameters(self):
+        """Get current parameter values and bounds from table"""
+        n_params = self.rowCount()
+        theta = np.zeros(n_params)
+        lb = np.zeros(n_params)
+        ub = np.zeros(n_params)
+        
+        for i in range(n_params):
+            try:
+                theta[i] = float(self.item(i, 1).text())
+                lb[i] = float(self.item(i, 2).text())
+                ub[i] = float(self.item(i, 3).text())
+            except (ValueError, AttributeError):
+                # Handle invalid entries
+                theta[i] = 0.0
+                lb[i] = -np.inf
+                ub[i] = np.inf
+                
+        return theta, lb, ub
+        
+    def update_initial_values(self, new_theta):
+        """Update only the initial values column (for quick fit results)"""
+        for i in range(min(len(new_theta), self.rowCount())):
+            self.setItem(i, 1, QTableWidgetItem(f"{new_theta[i]:.3f}"))
+
+
+class FittingTab(QWidget):
+    """Enhanced fitting tab with parameter bounds control"""
+    
+    # Signals
+    fitting_started = pyqtSignal(dict)
+    fitting_completed = pyqtSignal(object)
     
     def __init__(self, main_window):
         super().__init__()
         self.main_window = main_window
-        self.spectra_data = {}
-        self.spectra_original = {}  # Keep original data
-        self.current_instrument = None
-        self.fit_config = None
-        self.velocity_markers = []
-        self.mcmc_thread = None
         
-        # Matplotlib setup
-        plt.style.use('default')
+        # Data storage
+        self.spectra_data = {}
+        self.current_instrument = None
+        self.compiled_model = None
+        self.current_theta = None
+        self.param_names = []
+        
+        # Plot range storage
+        self.plot_ranges = {
+            'xlim': None,  # None = auto, tuple = manual
+            'ylim': None,
+            'original_xlim': None,  # Store original auto ranges
+            'original_ylim': None
+        }
+        
+        # MCMC parameters
+        self.mcmc_params = {
+            'n_walkers': 20,
+            'n_steps': 1000,
+            'sampler': 'emcee',
+            'perturbation': 1e-4,
+            'optimize': True,
+            'use_pool': True
+        }
+        
+        # Fitting thread
+        self.mcmc_thread = None
         
         self.setup_ui()
         self.setup_connections()
@@ -82,641 +205,475 @@ class FittingTab(QWidget):
         layout = QVBoxLayout()
         self.setLayout(layout)
         
-        # Top controls
-        self.setup_top_controls(layout)
+        # Create splitter for main content
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter)
         
-        # Main content: spectrum display | controls
-        main_splitter = QSplitter(Qt.Horizontal)
-        layout.addWidget(main_splitter)
+        # Left side: Controls
+        self.setup_controls(splitter)
         
-        # Left: Spectrum display with slicing
-        self.setup_spectrum_panel(main_splitter)
+        # Right side: Spectrum plot
+        self.setup_spectrum_plot(splitter)
         
-        # Right: Parameter and MCMC controls
-        self.setup_control_panel(main_splitter)
+        splitter.setSizes([400, 600])
         
-        main_splitter.setSizes([800, 400])
-        
-    def setup_top_controls(self, parent_layout):
-        """Create top control bar"""
-        control_frame = QFrame()
-        control_layout = QHBoxLayout()
-        control_frame.setLayout(control_layout)
-        parent_layout.addWidget(control_frame)
-        
-        # Instrument selector
-        control_layout.addWidget(QLabel("Instrument:"))
-        self.instrument_combo = QComboBox()
-        self.instrument_combo.setToolTip("Select spectrum to display")
-        control_layout.addWidget(self.instrument_combo)
-        
-        # Wavelength range controls
-        control_layout.addWidget(QLabel("λ Range:"))
-        self.wave_min_spin = QDoubleSpinBox()
-        self.wave_min_spin.setRange(0, 50000)
-        self.wave_min_spin.setDecimals(2)
-        self.wave_min_spin.setSuffix(" Å")
-        self.wave_min_spin.setToolTip("Minimum wavelength")
-        control_layout.addWidget(self.wave_min_spin)
-        
-        control_layout.addWidget(QLabel("to"))
-        
-        self.wave_max_spin = QDoubleSpinBox()
-        self.wave_max_spin.setRange(0, 50000)
-        self.wave_max_spin.setDecimals(2)
-        self.wave_max_spin.setSuffix(" Å")
-        self.wave_max_spin.setToolTip("Maximum wavelength")
-        control_layout.addWidget(self.wave_max_spin)
-        
-        # Slice controls
-        self.slice_btn = QPushButton("Slice")
-        self.slice_btn.setToolTip("Apply wavelength slice")
-        control_layout.addWidget(self.slice_btn)
-        
-        self.reset_slice_btn = QPushButton("Reset")
-        self.reset_slice_btn.setToolTip("Reset to full spectrum")
-        control_layout.addWidget(self.reset_slice_btn)
-        
-        control_layout.addStretch()
-        
-        # Display controls
-        self.show_model_check = QCheckBox("Show Model")
-        self.show_model_check.setToolTip("Display current model overlay")
-        control_layout.addWidget(self.show_model_check)
-        
-        self.show_components_check = QCheckBox("Show Components")
-        self.show_components_check.setToolTip("Display individual components")
-        control_layout.addWidget(self.show_components_check)
-        
-    def setup_spectrum_panel(self, parent):
-        """Create spectrum display panel"""
-        spec_widget = QWidget()
-        spec_layout = QVBoxLayout()
-        spec_widget.setLayout(spec_layout)
-        parent.addWidget(spec_widget)
-        
-        # Spectrum display group
-        display_group = QGroupBox("Spectrum Display")
-        display_layout = QVBoxLayout()
-        display_group.setLayout(display_layout)
-        spec_layout.addWidget(display_group)
-        
-        # Create matplotlib figure
-        self.figure = Figure(figsize=(10, 6), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        self.canvas.setToolTip("Left click: add component, Right click: remove component")
-        display_layout.addWidget(self.canvas)
-        
-        # Create main spectrum axis
-        self.ax_spec = self.figure.add_subplot(111)
-        self.ax_spec.set_xlabel('Wavelength (Å)')
-        self.ax_spec.set_ylabel('Normalized Flux')
-        self.ax_spec.grid(True, alpha=0.3)
-        
-        # Initialize empty plot elements
-        self.spec_line = None
-        self.error_fill = None
-        self.model_line = None
-        self.component_lines = []
-        self.velocity_markers_plot = []
-        
-        # Connect mouse events
-        self.canvas.mpl_connect('button_press_event', self.on_spectrum_click)
-        
-        # Zoom/pan controls
-        zoom_layout = QHBoxLayout()
-        
-        self.zoom_check = QCheckBox("Zoom Mode")
-        self.zoom_check.setToolTip("Enable zoom/pan mode")
-        zoom_layout.addWidget(self.zoom_check)
-        
-        self.home_btn = QPushButton("Home")
-        self.home_btn.setToolTip("Reset zoom to full range")
-        zoom_layout.addWidget(self.home_btn)
-        
-        zoom_layout.addStretch()
-        display_layout.addLayout(zoom_layout)
-        
-    def setup_control_panel(self, parent):
-        """Create parameter and MCMC controls panel"""
+    def setup_controls(self, parent):
+        """Set up control panel"""
         control_widget = QWidget()
         control_layout = QVBoxLayout()
         control_widget.setLayout(control_layout)
         parent.addWidget(control_widget)
         
-        # Model preview group
-        preview_group = QGroupBox("Model Preview")
-        preview_layout = QVBoxLayout()
-        preview_group.setLayout(preview_layout)
-        control_layout.addWidget(preview_group)
+        # Instrument selection
+        self.setup_instrument_selection(control_layout)
         
-        self.preview_btn = QPushButton("Generate Preview")
-        self.preview_btn.setToolTip("Generate model preview with current parameters")
-        preview_layout.addWidget(self.preview_btn)
+        # Parameter bounds table
+        self.setup_parameter_bounds(control_layout)
         
-        # FWHM display table
-        fwhm_group = QGroupBox("Instrumental FWHM")
-        fwhm_layout = QVBoxLayout()
-        fwhm_group.setLayout(fwhm_layout)
-        control_layout.addWidget(fwhm_group)
+        # MCMC controls
+        self.setup_mcmc_controls(control_layout)
         
-        self.fwhm_table = QTableWidget()
-        self.fwhm_table.setColumnCount(2)
-        self.fwhm_table.setHorizontalHeaderLabels(["Instrument", "FWHM"])
-        self.fwhm_table.horizontalHeader().setStretchLastSection(True)
-        self.fwhm_table.setMaximumHeight(120)
-        self.fwhm_table.setToolTip("FWHM values used for model convolution")
-        fwhm_layout.addWidget(self.fwhm_table)
+        # Fitting controls and status
+        self.setup_fitting_controls(control_layout)
         
-        # MCMC parameters group
-        mcmc_group = QGroupBox("MCMC Parameters")
+    def setup_instrument_selection(self, parent_layout):
+        """Create instrument selection"""
+        inst_group = QGroupBox("Data Selection")
+        inst_layout = QFormLayout()
+        inst_group.setLayout(inst_layout)
+        parent_layout.addWidget(inst_group)
+        
+        self.instrument_combo = QComboBox()
+        self.instrument_combo.setToolTip("Select instrument/dataset for fitting")
+        inst_layout.addRow("Instrument:", self.instrument_combo)
+        
+        # Show model checkbox
+        self.show_model_check = QCheckBox("Show Model Overlay")
+        self.show_model_check.setToolTip("Overlay current model on spectrum")
+        inst_layout.addRow(self.show_model_check)
+        
+    def setup_parameter_bounds(self, parent_layout):
+        """Create parameter bounds table"""
+        bounds_group = QGroupBox("Parameter Values & Bounds")
+        bounds_layout = QVBoxLayout()
+        bounds_group.setLayout(bounds_layout)
+        parent_layout.addWidget(bounds_group)
+        
+        # Quick fit button
+        quick_fit_layout = QHBoxLayout()
+        bounds_layout.addLayout(quick_fit_layout)
+        
+        self.quick_fit_btn = QPushButton("Quick Fit")
+        self.quick_fit_btn.setEnabled(False)
+        self.quick_fit_btn.setToolTip("Run scipy optimization to get better initial parameters")
+        quick_fit_layout.addWidget(self.quick_fit_btn)
+        
+        quick_fit_layout.addStretch()
+        
+        # Parameter table
+        self.param_bounds_table = ParameterBoundsTable()
+        self.param_bounds_table.setMaximumHeight(200)
+        bounds_layout.addWidget(self.param_bounds_table)
+        
+    def setup_mcmc_controls(self, parent_layout):
+        """Create MCMC parameter controls"""
+        mcmc_group = QGroupBox("MCMC Settings")
         mcmc_layout = QFormLayout()
         mcmc_group.setLayout(mcmc_layout)
-        control_layout.addWidget(mcmc_group)
+        parent_layout.addWidget(mcmc_group)
+        
+        # Sampler selection
+        self.sampler_combo = QComboBox()
+        self.sampler_combo.addItems(['emcee', 'zeus'])
+        self.sampler_combo.setCurrentText(self.mcmc_params['sampler'])
+        self.sampler_combo.setToolTip("MCMC sampler algorithm")
+        mcmc_layout.addRow("Sampler:", self.sampler_combo)
         
         # Number of walkers
-        self.nwalkers_spin = QSpinBox()
-        self.nwalkers_spin.setRange(10, 1000)
-        self.nwalkers_spin.setValue(50)
-        self.nwalkers_spin.setToolTip("Number of MCMC walkers")
-        mcmc_layout.addRow("Walkers:", self.nwalkers_spin)
+        self.walkers_spin = QSpinBox()
+        self.walkers_spin.setRange(10, 200)
+        self.walkers_spin.setValue(self.mcmc_params['n_walkers'])
+        self.walkers_spin.setToolTip("Number of MCMC walkers")
+        mcmc_layout.addRow("Walkers:", self.walkers_spin)
         
         # Number of steps
-        self.nsteps_spin = QSpinBox()
-        self.nsteps_spin.setRange(100, 50000)
-        self.nsteps_spin.setValue(1000)
-        self.nsteps_spin.setToolTip("Number of MCMC steps")
-        mcmc_layout.addRow("Steps:", self.nsteps_spin)
+        self.steps_spin = QSpinBox()
+        self.steps_spin.setRange(100, 10000)
+        self.steps_spin.setValue(self.mcmc_params['n_steps'])
+        self.steps_spin.setToolTip("Number of MCMC steps per walker")
+        mcmc_layout.addRow("Steps:", self.steps_spin)
         
-        # Burn-in steps
-        self.burnin_spin = QSpinBox()
-        self.burnin_spin.setRange(0, 10000)
-        self.burnin_spin.setValue(100)
-        self.burnin_spin.setToolTip("Number of burn-in steps to discard")
-        mcmc_layout.addRow("Burn-in:", self.burnin_spin)
+        # Perturbation
+        self.perturbation_spin = QDoubleSpinBox()
+        self.perturbation_spin.setRange(1e-6, 1e-1)
+        self.perturbation_spin.setDecimals(6)
+        self.perturbation_spin.setValue(self.mcmc_params['perturbation'])
+        self.perturbation_spin.setToolTip("Walker initialization perturbation")
+        mcmc_layout.addRow("Perturbation:", self.perturbation_spin)
         
-        # Fitting controls
-        fitting_group = QGroupBox("Fitting Control")
-        fitting_layout = QVBoxLayout()
-        fitting_group.setLayout(fitting_layout)
-        control_layout.addWidget(fitting_group)
+        # Options
+        self.optimize_check = QCheckBox("Pre-optimize")
+        self.optimize_check.setChecked(self.mcmc_params['optimize'])
+        self.optimize_check.setToolTip("Optimize walker positions before MCMC")
+        mcmc_layout.addRow(self.optimize_check)
+        
+        self.pool_check = QCheckBox("Use multiprocessing")
+        self.pool_check.setChecked(self.mcmc_params['use_pool'])
+        self.pool_check.setToolTip("Use multiple CPU cores")
+        mcmc_layout.addRow(self.pool_check)
+        
+    def setup_fitting_controls(self, parent_layout):
+        """Create fitting buttons and status"""
+        fit_layout = QVBoxLayout()
+        parent_layout.addLayout(fit_layout)
         
         # Fit button
-        self.fit_btn = QPushButton("Start Fitting")
-        self.fit_btn.setToolTip("Start MCMC fitting process")
-        self.fit_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 8px; }")
-        fitting_layout.addWidget(self.fit_btn)
+        self.fit_btn = QPushButton("Start MCMC Fitting")
+        self.fit_btn.setEnabled(False)
+        self.fit_btn.setToolTip("Start MCMC fitting with current parameters")
+        fit_layout.addWidget(self.fit_btn)
         
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
-        fitting_layout.addWidget(self.progress_bar)
+        fit_layout.addWidget(self.progress_bar)
         
-        # Stop button
-        self.stop_btn = QPushButton("Stop Fitting")
-        self.stop_btn.setEnabled(False)
-        self.stop_btn.setToolTip("Stop current fitting process")
-        fitting_layout.addWidget(self.stop_btn)
-        
-        # Status text
-        status_group = QGroupBox("Status")
-        status_layout = QVBoxLayout()
-        status_group.setLayout(status_layout)
-        control_layout.addWidget(status_group)
-        
+        # Status
         self.status_text = QTextEdit()
         self.status_text.setMaximumHeight(150)
         self.status_text.setReadOnly(True)
-        self.status_text.setToolTip("Fitting status and messages")
-        status_layout.addWidget(self.status_text)
+        fit_layout.addWidget(self.status_text)
         
-        control_layout.addStretch()
+        fit_layout.addStretch()
+        
+    def setup_spectrum_plot(self, parent):
+        """Create spectrum plotting area with range controls"""
+        plot_widget = QWidget()
+        plot_layout = QVBoxLayout()
+        plot_widget.setLayout(plot_layout)
+        parent.addWidget(plot_widget)
+        
+        # Plot controls toolbar
+        plot_controls = QHBoxLayout()
+        plot_layout.addLayout(plot_controls)
+        
+        # Range controls
+        self.set_range_btn = QPushButton("Set Range")
+        self.set_range_btn.setToolTip("Set custom plot range")
+        plot_controls.addWidget(self.set_range_btn)
+        
+        self.reset_range_btn = QPushButton("Reset Range")
+        self.reset_range_btn.setToolTip("Reset to auto range")
+        plot_controls.addWidget(self.reset_range_btn)
+        
+        plot_controls.addStretch()
+        
+        # Matplotlib figure
+        self.figure = Figure(figsize=(10, 6))
+        self.canvas = FigureCanvas(self.figure)
+        self.ax_spec = self.figure.add_subplot(111)
+        plot_layout.addWidget(self.canvas)
+        
+        # Connect range control signals
+        self.set_range_btn.clicked.connect(self.set_custom_range)
+        self.reset_range_btn.clicked.connect(self.reset_range)
         
     def setup_connections(self):
         """Connect signals and slots"""
-        # Top controls
         self.instrument_combo.currentTextChanged.connect(self.on_instrument_changed)
-        self.wave_min_spin.valueChanged.connect(self.on_wave_range_changed)
-        self.wave_max_spin.valueChanged.connect(self.on_wave_range_changed)
-        self.slice_btn.clicked.connect(self.apply_wavelength_slice)
-        self.reset_slice_btn.clicked.connect(self.reset_wavelength_slice)
         self.show_model_check.toggled.connect(self.plot_spectrum)
-        self.show_components_check.toggled.connect(self.plot_spectrum)
-        
-        # Spectrum controls
-        self.zoom_check.toggled.connect(self.toggle_zoom_mode)
-        self.home_btn.clicked.connect(self.reset_zoom)
-        
-        # Model controls
-        self.preview_btn.clicked.connect(self.preview_model)
-        
-        # MCMC controls
+        self.quick_fit_btn.clicked.connect(self.run_quick_fit)
         self.fit_btn.clicked.connect(self.start_fitting)
-        self.stop_btn.clicked.connect(self.stop_fitting)
         
-    def update_data(self, spectra_data):
-        """Update with new spectrum data"""
-        self.spectra_data = spectra_data.copy()
-        self.spectra_original = spectra_data.copy()  # Keep originals
+    def set_spectra_data(self, spectra_data):
+        """Update spectra data"""
+        self.spectra_data = spectra_data
+        
+        # Reset plot ranges for new data
+        self.reset_plot_ranges()
         
         # Update instrument combo
         self.instrument_combo.clear()
-        for filename in spectra_data.keys():
-            basename = spectra_data[filename].get('basename', filename)
-            self.instrument_combo.addItem(basename, filename)
-            
-        # Update FWHM table
-        self.update_fwhm_table()
+        self.instrument_combo.addItems(list(spectra_data.keys()))
         
-        # Auto-select first instrument
-        if self.instrument_combo.count() > 0:
-            self.instrument_combo.setCurrentIndex(0)
-            
-        self.status_text.append(f"Loaded {len(spectra_data)} spectra")
-        
-    def update_fwhm_table(self):
-        """Update FWHM display table"""
-        self.fwhm_table.setRowCount(len(self.spectra_data))
-        
-        for i, filename in enumerate(self.spectra_data.keys()):
-            basename = self.spectra_data[filename].get('basename', filename)
-            
-            # Instrument name
-            item = QTableWidgetItem(basename)
-            item.setFlags(item.flags() & ~Qt.ItemIsEditable)
-            self.fwhm_table.setItem(i, 0, item)
-            
-            # FWHM value - get from model setup tab if available
-            if hasattr(self.main_window, 'model_tab'):
-                fwhm = self.main_window.model_tab.get_fwhm_for_instrument(basename)
-            else:
-                fwhm = 2.5  # Default
-                
-            fwhm_item = QTableWidgetItem(f"{fwhm:.2f}")
-            fwhm_item.setFlags(fwhm_item.flags() & ~Qt.ItemIsEditable)
-            self.fwhm_table.setItem(i, 1, fwhm_item)
-            
-        self.fwhm_table.resizeColumnsToContents()
-        
-    def update_model(self, fit_config):
-        """Update with new model configuration"""
-        self.fit_config = fit_config
-        self.plot_spectrum()
-        self.status_text.append("Model configuration updated")
-        
-    def on_instrument_changed(self, basename):
-        """Handle instrument selection change"""
-        if not basename:
-            return
-            
-        # Find filename for this basename
-        self.current_instrument = None
-        for filename, data in self.spectra_data.items():
-            if data.get('basename', filename) == basename:
-                self.current_instrument = filename
-                break
-                
-        if self.current_instrument:
+        if spectra_data:
+            self.current_instrument = list(spectra_data.keys())[0]
             self.plot_spectrum()
-            self.update_wavelength_range()
-            self.status_text.append(f"Selected instrument: {basename}")
             
-    def update_wavelength_range(self):
-        """Update wavelength range controls"""
-        if not self.current_instrument or self.current_instrument not in self.spectra_data:
-            return
+    def reset_plot_ranges(self):
+        """Reset plot ranges when new data is loaded"""
+        self.plot_ranges = {
+            'xlim': None,
+            'ylim': None, 
+            'original_xlim': None,
+            'original_ylim': None
+        }
             
-        spec_data = self.spectra_data[self.current_instrument]
-        wavelength = spec_data['wavelength']
+    def set_compiled_model(self, compiled_model, mcmc_params):
+        """Set the compiled model for fitting - backward compatible"""
+        self.compiled_model = compiled_model
         
-        # Update spin box ranges
-        wave_min = np.min(wavelength)
-        wave_max = np.max(wavelength)
+        # Extract theta from mcmc_params (existing interface)
+        if 'theta' in mcmc_params:
+            theta = mcmc_params['theta']
+        else:
+            # Fallback: try to get from main window
+            theta = self.main_window.get_current_theta()
+            if theta is None:
+                QMessageBox.warning(self, "No Parameters", "No parameter values available")
+                return
+                
+        self.current_theta = theta.copy()
         
-        self.wave_min_spin.setRange(wave_min, wave_max)
-        self.wave_max_spin.setRange(wave_min, wave_max)
+        # Generate parameter names
+        n_params = len(theta)
+        n_comp = n_params // 3
+        param_names = []
+        for i in range(n_comp):
+            param_names.extend([f'N_c{i+1}', f'b_c{i+1}', f'v_c{i+1}'])
+        self.param_names = param_names
         
-        # Set current values to full range
-        self.wave_min_spin.setValue(wave_min)
-        self.wave_max_spin.setValue(wave_max)
-        
-    def on_wave_range_changed(self):
-        """Handle wavelength range change"""
-        if self.wave_min_spin.value() >= self.wave_max_spin.value():
-            return  # Invalid range
-            
-        # Update plot limits if not in zoom mode
-        if not self.zoom_check.isChecked():
-            self.ax_spec.set_xlim(self.wave_min_spin.value(), self.wave_max_spin.value())
-            self.canvas.draw()
-            
-    def apply_wavelength_slice(self):
-        """Apply wavelength slice to current spectrum"""
-        if not self.current_instrument:
-            QMessageBox.warning(self, "Warning", "No spectrum selected")
-            return
-            
-        wave_min = self.wave_min_spin.value()
-        wave_max = self.wave_max_spin.value()
-        
-        if wave_min >= wave_max:
-            QMessageBox.warning(self, "Warning", "Invalid wavelength range")
-            return
-            
+        # Generate bounds
         try:
-            # Apply slice
-            self.spectra_data[self.current_instrument] = slice_spectrum(
-                self.spectra_original[self.current_instrument], 
-                wave_min, wave_max
-            )
+            # Extract individual parameter arrays for bounds generation
+            n_params = len(theta)
+            n_comp = n_params // 3
             
-            self.plot_spectrum()
-            self.status_text.append(f"Applied slice: {wave_min:.2f} - {wave_max:.2f} Å")
+            nguess = theta[:n_comp]
+            bguess = theta[n_comp:2*n_comp]
+            vguess = theta[2*n_comp:]
+            
+            # Generate bounds using rbvfit function
+            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+            
+            # Populate parameter table
+            self.param_bounds_table.populate_parameters(param_names, theta, lb, ub)
+            
+            # Enable controls
+            self.quick_fit_btn.setEnabled(True)
+            self.fit_btn.setEnabled(True)
+            
+            self.status_text.append("Model compiled - parameters loaded")
+            self.status_text.append(f"Parameters: {n_params} ({n_comp} components)")
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to slice spectrum:\n{str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to set up parameters:\n{str(e)}")
             
-    def reset_wavelength_slice(self):
-        """Reset spectrum to original data"""
-        if not self.current_instrument:
-            return
+    def on_instrument_changed(self, instrument_name):
+        """Handle instrument selection change"""
+        if instrument_name:
+            self.current_instrument = instrument_name
+            self.reset_plot_ranges()  # Reset ranges for different instrument
+            self.plot_spectrum()
             
-        # Restore original data
-        self.spectra_data[self.current_instrument] = self.spectra_original[self.current_instrument].copy()
-        
-        self.update_wavelength_range()
-        self.plot_spectrum()
-        self.status_text.append("Reset to full spectrum")
-        
     def plot_spectrum(self):
-        """Plot current spectrum with optional model overlay"""
-        if not self.current_instrument or self.current_instrument not in self.spectra_data:
+        """Plot the current spectrum with custom range support"""
+        if not self.current_instrument or not self.spectra_data:
             return
             
-        # Clear previous plot
         self.ax_spec.clear()
-        self.ax_spec.set_xlabel('Wavelength (Å)')
-        self.ax_spec.set_ylabel('Normalized Flux')
-        self.ax_spec.grid(True, alpha=0.3)
         
-        # Get spectrum data
         spec_data = self.spectra_data[self.current_instrument]
-        wavelength = spec_data['wavelength']
+        wave = spec_data['wave']
         flux = spec_data['flux']
         error = spec_data.get('error', np.ones_like(flux) * 0.05)
         
         # Plot spectrum
-        self.spec_line, = self.ax_spec.plot(wavelength, flux, 'k-', linewidth=0.8, label='Data')
+        self.ax_spec.step(wave, flux, 'k-', linewidth=0.8, label='Data')
+        self.ax_spec.fill_between(wave, flux - error, flux + error, 
+                                alpha=0.3, color='gray', label='Error')
         
-        # Plot error region
-        self.error_fill = self.ax_spec.fill_between(
-            wavelength, flux - error, flux + error, 
-            alpha=0.3, color='gray', label='Error'
-        )
-        
-        # Plot velocity markers
-        self.plot_velocity_markers()
-        
-        # Plot model if requested and available
-        if self.show_model_check.isChecked() and self.fit_config:
-            self.plot_model_overlay()
+        # Plot model if available and requested
+        if self.show_model_check.isChecked() and self.compiled_model and self.current_theta is not None:
+            try:
+                # Get current parameters from table
+                current_theta, _, _ = self.param_bounds_table.get_parameters()
+                model_flux = self.compiled_model.model_flux(current_theta, wave)
+                self.ax_spec.plot(wave, model_flux, 'r-', alpha=0.8, linewidth=2, label='Model')
+            except Exception as e:
+                print(f"Could not plot model: {e}")
+                
+        # Store original ranges if not set
+        if self.plot_ranges['original_xlim'] is None:
+            data_xlim = (wave.min(), wave.max())
+            flux_med = np.median(flux)
+            flux_std = np.std(flux)
+            data_ylim = (flux_med - 3*flux_std, flux_med + 3*flux_std)
             
-        # Set reasonable y-limits
-        flux_med = np.median(flux)
-        flux_std = np.std(flux)
-        self.ax_spec.set_ylim(flux_med - 3*flux_std, flux_med + 3*flux_std)
-        
-        # Add legend
+            self.plot_ranges['original_xlim'] = data_xlim
+            self.plot_ranges['original_ylim'] = data_ylim
+            
+        # Apply custom ranges or auto ranges
+        if self.plot_ranges['xlim'] is not None:
+            self.ax_spec.set_xlim(self.plot_ranges['xlim'])
+        else:
+            self.ax_spec.set_xlim(self.plot_ranges['original_xlim'])
+            
+        if self.plot_ranges['ylim'] is not None:
+            self.ax_spec.set_ylim(self.plot_ranges['ylim'])
+        else:
+            self.ax_spec.set_ylim(self.plot_ranges['original_ylim'])
+                
+        # Formatting
         self.ax_spec.legend(loc='upper right', fontsize=8)
+        self.ax_spec.set_xlabel('Wavelength (Å)')
+        self.ax_spec.set_ylabel('Normalized Flux')
+        self.ax_spec.grid(True, alpha=0.3)
         
-        # Update canvas
         self.figure.tight_layout()
         self.canvas.draw()
         
-    def plot_velocity_markers(self):
-        """Plot velocity component markers"""
-        self.velocity_markers_plot.clear()
+    def set_custom_range(self):
+        """Open range setting dialog"""
+        current_xlim = self.plot_ranges['xlim']
+        current_ylim = self.plot_ranges['ylim']
+        original_xlim = self.plot_ranges['original_xlim']
+        original_ylim = self.plot_ranges['original_ylim']
         
-        for i, wave in enumerate(self.velocity_markers):
-            line = self.ax_spec.axvline(wave, color='red', linestyle='--', alpha=0.7, linewidth=1)
-            self.velocity_markers_plot.append(line)
-            
-            # Add component label
-            ylim = self.ax_spec.get_ylim()
-            self.ax_spec.text(wave, ylim[1]*0.95, f'C{i+1}', 
-                            rotation=90, ha='right', va='top', 
-                            color='red', fontsize=8)
-                            
-    def plot_model_overlay(self):
-        """Plot model overlay on spectrum"""
-        if not self.fit_config or not self.current_instrument:
-            return
-            
-        try:
-            # Get FWHM for current instrument
-            basename = self.spectra_data[self.current_instrument].get('basename', self.current_instrument)
-            if hasattr(self.main_window, 'model_tab'):
-                fwhm = self.main_window.model_tab.get_fwhm_for_instrument(basename)
-            else:
-                fwhm = 2.5
-                
-            # Create VoigtModel
-            model = VoigtModel(self.fit_config, FWHM=str(fwhm))
-            
-            # Generate model spectrum
-            spec_data = self.spectra_data[self.current_instrument]
-            wavelength = spec_data['wavelength']
-            
-            # Get current parameters from model setup tab
-            if hasattr(self.main_window, 'model_tab') and not self.main_window.model_tab.parameter_df.empty:
-                # Use parameters from GUI
-                model_flux = model.evaluate_at_wavelengths(wavelength)
-                
-                # Plot total model
-                self.model_line, = self.ax_spec.plot(wavelength, model_flux, 'r-', 
-                                                   linewidth=1.5, label='Model', alpha=0.8)
-                
-                # Plot components if requested
-                if self.show_components_check.isChecked():
-                    self.plot_model_components(model, wavelength)
-                    
-            else:
-                self.status_text.append("No parameters available for model preview")
-                
-        except Exception as e:
-            self.status_text.append(f"Model plot error: {str(e)}")
-            
-    def plot_model_components(self, model, wavelength):
-        """Plot individual model components"""
-        try:
-            # Get individual component models
-            component_fluxes = model.evaluate_components_at_wavelengths(wavelength)
-            
-            colors = ['blue', 'green', 'orange', 'purple', 'brown']
-            self.component_lines.clear()
-            
-            for i, comp_flux in enumerate(component_fluxes):
-                color = colors[i % len(colors)]
-                line, = self.ax_spec.plot(wavelength, comp_flux, '--', 
-                                        color=color, linewidth=1, alpha=0.7,
-                                        label=f'Comp {i+1}')
-                self.component_lines.append(line)
-                
-        except Exception as e:
-            self.status_text.append(f"Component plot error: {str(e)}")
-            
-    def on_spectrum_click(self, event):
-        """Handle mouse clicks on spectrum"""
-        if not event.inaxes == self.ax_spec or not event.xdata:
-            return
-            
-        wavelength = event.xdata
+        dialog = PlotRangeDialog(current_xlim, current_ylim, original_xlim, original_ylim, self)
         
-        if event.button == 1:  # Left click - add component
-            if wavelength not in self.velocity_markers:
-                self.velocity_markers.append(wavelength)
-                self.plot_spectrum()
-                
-                # Emit signal for model setup tab
-                self.spectrum_clicked.emit(wavelength)
-                
-                self.main_window.update_status(
-                    f"Added component at {wavelength:.2f} Å ({len(self.velocity_markers)} total)")
-                    
-        elif event.button == 3:  # Right click - remove nearest component
-            if self.velocity_markers and event.xdata is not None:
-                distances = [abs(m - event.xdata) for m in self.velocity_markers]
-                nearest_idx = distances.index(min(distances))
-                removed_wavelength = self.velocity_markers.pop(nearest_idx)
-                self.plot_spectrum()
-                
-                self.main_window.update_status(
-                    f"Removed component at {removed_wavelength:.2f} Å ({len(self.velocity_markers)} total)")
-                    
-    def toggle_zoom_mode(self, enabled):
-        """Toggle zoom/pan mode"""
-        if enabled:
-            self.canvas.toolbar_visible = True
-            self.status_text.append("Zoom mode enabled - use mouse to zoom/pan")
-        else:
-            self.canvas.toolbar_visible = False
-            self.status_text.append("Zoom mode disabled")
-            
-    def reset_zoom(self):
-        """Reset zoom to full range"""
-        if self.current_instrument and self.current_instrument in self.spectra_data:
-            spec_data = self.spectra_data[self.current_instrument]
-            wavelength = spec_data['wavelength']
-            self.ax_spec.set_xlim(np.min(wavelength), np.max(wavelength))
-            self.canvas.draw()
-            
-    def preview_model(self):
-        """Generate and display model preview"""
-        if not self.fit_config:
-            QMessageBox.warning(self, "Warning", "No model configuration available")
-            return
-            
-        if not self.current_instrument:
-            QMessageBox.warning(self, "Warning", "No spectrum selected")
-            return
-            
-        self.status_text.clear()
-        self.status_text.append("Generating model preview...")
-        
-        try:
-            # Enable model display
-            self.show_model_check.setChecked(True)
+        if dialog.exec_() == QDialog.Accepted:
+            xlim, ylim = dialog.get_ranges()
+            self.plot_ranges['xlim'] = xlim
+            self.plot_ranges['ylim'] = ylim
             self.plot_spectrum()
             
-            self.status_text.append("Model preview generated successfully")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to generate preview:\n{str(e)}")
-            self.status_text.append(f"Preview error: {str(e)}")
-            
-    def start_fitting(self):
-        """Start MCMC fitting process"""
-        if not self.fit_config:
-            QMessageBox.warning(self, "Warning", "No model configuration available")
-            return
-            
-        if not self.current_instrument:
-            QMessageBox.warning(self, "Warning", "No spectrum selected")
-            return
-            
-        # Prepare MCMC parameters
-        mcmc_params = {
-            'nwalkers': self.nwalkers_spin.value(),
-            'nsteps': self.nsteps_spin.value(),
-            'burnin': self.burnin_spin.value()
-        }
+    def reset_range(self):
+        """Reset to original auto ranges"""
+        self.plot_ranges['xlim'] = None
+        self.plot_ranges['ylim'] = None
+        self.plot_spectrum()
         
-        # Create model with current FWHM
-        basename = self.spectra_data[self.current_instrument].get('basename', self.current_instrument)
-        if hasattr(self.main_window, 'model_tab'):
-            fwhm = self.main_window.model_tab.get_fwhm_for_instrument(basename)
-        else:
-            fwhm = 2.5
+    def run_quick_fit(self):
+        """Run quick scipy optimization"""
+        if not self.compiled_model or not self.current_instrument:
+            QMessageBox.warning(self, "No Model", "No compiled model available")
+            return
             
         try:
-            model = VoigtModel(self.fit_config, FWHM=str(fwhm))
+            # Get current parameters and bounds
+            theta, lb, ub = self.param_bounds_table.get_parameters()
             
-            # Start fitting thread
-            self.mcmc_thread = MCMCThread(model, mcmc_params)
-            self.mcmc_thread.progress_update.connect(self.update_progress)
-            self.mcmc_thread.status_update.connect(self.update_status)
+            # Get spectrum data
+            spec_data = self.spectra_data[self.current_instrument]
+            wave = spec_data['wave']
+            flux = spec_data['flux']
+            error = spec_data.get('error', np.ones_like(flux) * 0.05)
+            
+            # Create temporary fitter for quick fit
+            self.status_text.append("Running quick fit...")
+            
+            fitter = mc.vfit(
+                self.compiled_model.model_flux,
+                theta, lb, ub,
+                wave, flux, error
+            )
+            
+            # Run quick fit
+            fitter.fit_quick()
+            
+            # Update table with optimized parameters
+            self.param_bounds_table.update_initial_values(fitter.theta_best)
+            
+            # Update plot
+            self.plot_spectrum()
+            
+            # Calculate chi-squared
+            try:
+                model_flux = self.compiled_model.model_flux(fitter.theta_best, wave)
+                chi2 = np.sum(((flux - model_flux) / error) ** 2)
+                ndof = len(flux) - len(fitter.theta_best)
+                chi2_reduced = chi2 / ndof
+                
+                self.status_text.append(f"Quick fit completed: χ²/ν = {chi2_reduced:.3f}")
+            except Exception:
+                self.status_text.append("Quick fit completed")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Quick Fit Error", f"Quick fit failed:\n{str(e)}")
+            self.status_text.append(f"Quick fit error: {str(e)}")
+            
+    def start_fitting(self):
+        """Start MCMC fitting"""
+        if not self.compiled_model or not self.current_instrument:
+            QMessageBox.warning(self, "No Model", "No compiled model available")
+            return
+            
+        try:
+            # Get current parameters and bounds
+            theta, lb, ub = self.param_bounds_table.get_parameters()
+            
+            # Validate bounds
+            if not np.all(lb <= theta) or not np.all(theta <= ub):
+                QMessageBox.warning(self, "Invalid Bounds", 
+                                  "Initial values must be within bounds")
+                return
+                
+            # Get spectrum data
+            spec_data = self.spectra_data[self.current_instrument]
+            wave = spec_data['wave']
+            flux = spec_data['flux']
+            error = spec_data.get('error', np.ones_like(flux) * 0.05)
+            
+            # Update MCMC parameters from GUI
+            self.mcmc_params.update({
+                'sampler': self.sampler_combo.currentText(),
+                'n_walkers': self.walkers_spin.value(),
+                'n_steps': self.steps_spin.value(),
+                'perturbation': self.perturbation_spin.value(),
+                'optimize': self.optimize_check.isChecked(),
+                'use_pool': self.pool_check.isChecked()
+            })
+            
+            # Disable UI during fitting
+            self.fit_btn.setEnabled(False)
+            self.quick_fit_btn.setEnabled(False)
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setRange(0, 0)  # Indeterminate
+            
+            # Start MCMC thread
+            self.mcmc_thread = MCMCThread(
+                self.compiled_model, theta, lb, ub, wave, flux, error, self.mcmc_params
+            )
+            self.mcmc_thread.status_update.connect(self.on_status_update)
             self.mcmc_thread.fitting_completed.connect(self.on_fitting_completed)
             self.mcmc_thread.fitting_error.connect(self.on_fitting_error)
-            
             self.mcmc_thread.start()
             
-            # Update UI
-            self.fit_btn.setEnabled(False)
-            self.stop_btn.setEnabled(True)
-            self.progress_bar.setVisible(True)
-            
-            self.fitting_started.emit(mcmc_params)
+            self.fitting_started.emit(self.mcmc_params)
             
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to start fitting:\n{str(e)}")
+            QMessageBox.critical(self, "Fitting Error", f"Failed to start fitting:\n{str(e)}")
+            self.reset_fitting_ui()
             
-    def stop_fitting(self):
-        """Stop current fitting process"""
-        if self.mcmc_thread and self.mcmc_thread.isRunning():
-            self.mcmc_thread.terminate()
-            self.mcmc_thread.wait()
-            
-        self.reset_fitting_ui()
-        self.status_text.append("Fitting stopped by user")
-        
-    def reset_fitting_ui(self):
-        """Reset fitting UI elements"""
-        self.fit_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.progress_bar.setVisible(False)
-        self.mcmc_thread = None
-        
-    @pyqtSlot(int)
-    def update_progress(self, progress):
-        """Update progress bar"""
-        self.progress_bar.setValue(progress)
-        
     @pyqtSlot(str)
-    def update_status(self, message):
-        """Update status text"""
+    def on_status_update(self, message):
+        """Handle status updates"""
         self.status_text.append(message)
         
     @pyqtSlot(object)
-    def on_fitting_completed(self, results):
+    def on_fitting_completed(self, fitter):
         """Handle fitting completion"""
         self.reset_fitting_ui()
-        self.status_text.append("Fitting completed successfully!")
         
-        # Update model display with fitted parameters
-        self.plot_spectrum()
+        # Update parameter table with best-fit values
+        self.param_bounds_table.update_initial_values(fitter.best_theta)
         
-        # Emit signal to main window
+        # Create results object
+        if hasattr(self.main_window, 'get_current_model'):
+            model = self.main_window.get_current_model()
+            if model:
+                results = fr.FitResults(fitter, model)
+            else:
+                results = fitter  # Fallback
+        else:
+            results = fitter
+            
+        self.status_text.append("Fitting completed successfully")
         self.fitting_completed.emit(results)
+        
+        # Update model display
+        self.plot_spectrum()
         
     @pyqtSlot(str)
     def on_fitting_error(self, error_msg):
@@ -725,7 +682,19 @@ class FittingTab(QWidget):
         self.status_text.append(f"Fitting error: {error_msg}")
         QMessageBox.critical(self, "Fitting Error", f"MCMC fitting failed:\n{error_msg}")
         
+    def reset_fitting_ui(self):
+        """Reset UI after fitting"""
+        self.fit_btn.setEnabled(True)
+        self.quick_fit_btn.setEnabled(True)
+        self.progress_bar.setVisible(False)
+        
+    def get_current_theta(self):
+        """Return current theta parameters from table"""
+        if self.param_bounds_table.rowCount() > 0:
+            theta, _, _ = self.param_bounds_table.get_parameters()
+            return theta
+        return self.current_theta
+        
     def refresh(self):
         """Refresh the tab"""
         self.plot_spectrum()
-        self.update_fwhm_table()

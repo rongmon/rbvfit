@@ -24,6 +24,11 @@ LEARNING OBJECTIVES:
 - Learn parameter sharing concepts in rbvfit 2.0
 - Practice MCMC fitting with joint datasets
 - Interpret multi-instrument fitting results
+
+NEW IN THIS VERSION:
+- Uses the new unified interface for cleaner multi-instrument setup
+- Demonstrates automatic instrument detection
+- Shows improved plotting capabilities
 """
 
 import numpy as np
@@ -136,8 +141,6 @@ print("\n✓ Physical system configured")
 print("\n" + "=" * 60)
 print("SETTING UP INSTRUMENTAL PARAMETERS")
 print("=" * 60)
-
-
 
 # Create instrument-specific models
 # Each model applies different instrumental broadening to the same physics
@@ -269,42 +272,75 @@ print(f"  v: [{lb[2]:.1f}, {ub[2]:.1f}] km/s")
 print("\n✓ MCMC parameters configured")
 
 # ============================================================================
-# PART 7: JOINT MCMC FITTING
+# PART 7: JOINT MCMC FITTING - NEW UNIFIED INTERFACE
 # ============================================================================
 # Run the actual fitting using both datasets simultaneously
-# KEY CONCEPT: Combined likelihood from both instruments
+# KEY CONCEPT: Combined likelihood from both instruments using new clean interface
 
 print("\n" + "=" * 60)
-print("RUNNING JOINT MCMC FITTING")
+print("RUNNING JOINT MCMC FITTING - NEW UNIFIED INTERFACE")
 print("=" * 60)
 
-print("Setting up multi-instrument fitter...")
+print("Setting up multi-instrument fitter with new unified interface...")
 
-# Create vfit_mcmc object with multi-instrument support
+# NEW UNIFIED INTERFACE: Define instrument data outside the call
+instrument_data = {
+    'XShooter': {
+        'model': model_xshooter,    # XShooter model function
+        'wave': wave,               # XShooter wavelength array
+        'flux': flux,               # XShooter flux array
+        'error': error              # XShooter error array
+    },
+    'FIRE': {
+        'model': model_fire,        # FIRE model function
+        'wave': wave1,              # FIRE wavelength array
+        'flux': flux1,              # FIRE flux array
+        'error': error1             # FIRE error array
+    }
+}
+
+# Create vfit_mcmc object with new unified interface
 fitter = mc.vfit(
-    model_xshooter,           # Primary model function (XShooter)
-    theta, lb, ub,            # Parameters and bounds
-    wave, flux, error,        # Primary dataset (XShooter data)
+    instrument_data,              # All instruments in one dictionary
+    theta, lb, ub,               # Parameters and bounds
     no_of_Chain=20,
     no_of_steps=500,
     perturbation=1e-4,
-    sampler='zeus',
-    multi_instrument=True,    # Enable multi-instrument mode
-    instrument_data={         # Additional instruments
-        'FIRE': {
-            'model': model_fire,  # FIRE model function
-            'wave': wave1,        # FIRE wavelength array
-            'flux': flux1,        # FIRE flux array
-            'error': error1       # FIRE error array
-        }
-    }
+    sampler='zeus'
+    # Note: No multi_instrument flag needed - automatically detected!
 )
 
+print("New interface benefits:")
+print("  ✓ Symmetric treatment of all instruments")
+print("  ✓ No primary/secondary distinction")
+print("  ✓ Automatic multi-instrument detection")
+print("  ✓ Cleaner, more intuitive setup")
+
 print("Fitter configuration:")
-print("  Primary instrument: XShooter")
-print("  Additional instruments: FIRE")
+print(f"  Instruments: {', '.join(instrument_data.keys())}")
 print("  Shared parameters: N, b, v")
 print("  Different instrumental responses: Yes")
+print("  Multi-instrument mode: Automatically detected")
+
+# LEGACY INTERFACE (commented for reference):
+# fitter = mc.vfit(
+#     model_xshooter,           # Primary model function (XShooter)
+#     theta, lb, ub,            # Parameters and bounds
+#     wave, flux, error,        # Primary dataset (XShooter data)
+#     no_of_Chain=20,
+#     no_of_steps=500,
+#     perturbation=1e-4,
+#     sampler='zeus',
+#     multi_instrument=True,    # Enable multi-instrument mode
+#     instrument_data={         # Additional instruments
+#         'FIRE': {
+#             'model': model_fire,  # FIRE model function
+#             'wave': wave1,        # FIRE wavelength array
+#             'flux': flux1,        # FIRE flux array
+#             'error': error1       # FIRE error array
+#         }
+#     }
+# )
 
 print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
@@ -360,9 +396,10 @@ print("=" * 60)
 
 print("Preparing data/model comparison plots...")
 
+# Enhanced plotting with new interface support
 fig = mc.plot_model(model_A, fitter, 
                 outfile=False,           # or 'output.png' to save
-                show_residuals=False,     # Include residual plots
+                show_residuals=True,     # Include residual plots
                 velocity_marks=True,     # Mark component velocities
                 verbose=True)            # Print parameter summary
 
@@ -380,8 +417,16 @@ print("  ✓ How to load and prepare multi-instrument spectroscopic data")
 print("  ✓ How to configure shared physical systems in rbvfit 2.0")
 print("  ✓ How to handle different instrumental resolutions")
 print("  ✓ How to compile and use multi-instrument models")
+print("  ✓ How to use the new unified interface for cleaner setup")
 print("  ✓ How to run joint MCMC fitting")
 print("  ✓ How to analyze and visualize results")
+
+print("\nNew unified interface advantages:")
+print("  ✓ Symmetric treatment of all instruments")
+print("  ✓ Automatic multi-instrument detection")
+print("  ✓ No primary/secondary confusion")
+print("  ✓ Cleaner, more intuitive API")
+print("  ✓ Same performance and capabilities")
 
 print("\nKey advantages of multi-instrument fitting:")
 print("  • Better parameter constraints from combined data")
@@ -400,6 +445,12 @@ print("  2. Fit additional transitions (e.g., OI 1355) jointly")
 print("  3. Add more instruments if available")
 print("  4. Compare results with single-instrument fits")
 print("  5. Explore different ion species in the same system")
+
+print("\nInterface migration notes:")
+print("  • Legacy interface still works for backward compatibility")
+print("  • New interface recommended for all new code")
+print("  • Same analysis and plotting capabilities")
+print("  • Easy to extend to any number of instruments")
 
 print("\nFor questions or issues, consult the rbvfit 2.0 documentation")
 print("Happy fitting! 🎉")

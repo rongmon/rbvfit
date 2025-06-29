@@ -498,12 +498,15 @@ class ModelSetupTab(QWidget):
         self.progress_label.setText(f"Parameters set for {completed_systems}/{total_systems} systems")
         self.compile_btn.setEnabled(completed_systems == total_systems and total_systems > 0)
         
+
     def get_current_theta(self):
         """Get combined theta array for all systems"""
         if not self.systems:
             return None
             
-        theta_parts = []
+        all_n_vals = []
+        all_b_vals = []
+        all_v_vals = []
         
         for system in self.systems:
             system_id = system['id']
@@ -511,14 +514,12 @@ class ModelSetupTab(QWidget):
                 return None
                 
             df = self.parameter_tables[system_id]
-            n_vals = df['N'].values
-            b_vals = df['b'].values
-            v_vals = df['v'].values
+            all_n_vals.extend(df['N'].values)
+            all_b_vals.extend(df['b'].values)
+            all_v_vals.extend(df['v'].values)
             
-            theta_parts.extend([n_vals, b_vals, v_vals])
-            
-        return np.concatenate(theta_parts)
-        
+        return np.concatenate([all_n_vals, all_b_vals, all_v_vals])
+
     def get_current_model(self):
         """Get the current VoigtModel (before compilation)"""
         if not self.systems:

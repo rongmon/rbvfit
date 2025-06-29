@@ -806,7 +806,9 @@ class FitResults:
             
             # Try the newer diagnostics module first
             try:
-                r_hat = zeus.diagnostics.gelman_rubin(self.fitter.sampler.get_chain())
+                chain = self.fitter.sampler.get_chain().transpose(1, 0, 2)
+                # Then compute Gelman-Rubin diagnostic
+                r_hat = zeus.diagnostics.gelman_rubin(chain)
                 print(f"Using zeus.diagnostics - R-hat: {r_hat}")
                 return r_hat
             except AttributeError:

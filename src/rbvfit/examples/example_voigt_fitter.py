@@ -114,14 +114,36 @@ if HAS_ZEUS:
 else:
     sampler='emcee'
     
-# Create fitter
+# Create fitter #Legacy Call
+#fitter = mc.vfit(
+#    v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
+#    no_of_Chain=n_walkers, 
+#    no_of_steps=n_steps,
+#    sampler=sampler,
+#    perturbation=1e-4  # Smaller perturbation for walker initialization
+#)
+
+
+# Create fitter cleaner newer call
+# Define instrument setup outside the call - For multi instrument we just keep adding to this
+instrument_data = {
+    'COS': {
+        'model': v2_compiled.model_flux,
+        'wave': wave,
+        'flux': flux,
+        'error': error
+    }
+}
+
+# Clean call
 fitter = mc.vfit(
-    v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
+    instrument_data, theta, lb, ub,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
     sampler=sampler,
-    perturbation=1e-4  # Smaller perturbation for walker initialization
+    perturbation=1e-4
 )
+
 
 
 # Add this before runmcmc to debug:
@@ -162,12 +184,12 @@ mc.plot_model(v2_model,fitter,show_residuals=True,outfile='example-fit.png')
 from rbvfit.core import fit_results as f
 # Save results
 results = f.FitResults(fitter, v2_model)
-results.save('my_fit.h5')
+#results.save('my_fit.h5')
 
 # Load and analyze
 #results = f.FitResults.load('my_fit.h5')
 results.print_fit_summary()
-results.corner_plot(save_path='corner.png')
+results.corner_plot()#save_path='corner.png')
 results.convergence_diagnostics()
 
 # Visual chain inspection

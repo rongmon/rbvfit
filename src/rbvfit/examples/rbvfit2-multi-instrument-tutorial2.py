@@ -1,3 +1,38 @@
+#!/usr/bin/env python
+"""
+===============================================================================
+rbvfit 2.0 Tutorial: 3-Instrument Multi-System Absorption Line Fitting
+===============================================================================
+
+This tutorial demonstrates advanced multi-instrument fitting with rbvfit 2.0,
+fitting multiple ion systems across three different instruments simultaneously.
+
+WHAT THIS SCRIPT DOES:
+1. Loads spectroscopic data from three instruments (XShooter, FIRE, HIRES)
+2. Sets up complex multi-system absorption models (CIV, OI, SiII)
+3. Handles different instrumental resolutions correctly
+4. Runs joint MCMC fitting with shared physical parameters
+5. Demonstrates advanced analysis and visualization capabilities
+
+SCIENTIFIC MOTIVATION:
+- Joint fitting of multiple ion systems provides physical insights
+- Different instruments probe different wavelength ranges and sensitivities
+- Proper instrumental response handling is critical for accurate results
+- Advanced diagnostics ensure robust parameter constraints
+
+LEARNING OBJECTIVES:
+- Master complex multi-instrument, multi-system configurations
+- Understand advanced parameter management across instruments
+- Practice sophisticated MCMC diagnostics and analysis
+- Learn publication-quality visualization techniques
+
+NEW IN THIS VERSION:
+- Uses the new unified interface for all instruments
+- Demonstrates automatic instrument detection for 3+ instruments
+- Shows enhanced plotting and analysis capabilities
+- Includes complete legacy interface preservation for reference
+"""
+
 import numpy as np
 import sys
 import os
@@ -32,12 +67,12 @@ def load_spectrum(slice_name):
     
     return wave, flux, error
 
-# Load both datasets
+# Load all three datasets
 print("=" * 60)
 print("LOADING OBSERVATIONAL DATA")
 print("=" * 60)
 
-# XShooter spectrum (higher resolution)
+# XShooter spectrum (medium resolution)
 wave, flux, error = load_spectrum('J1030_9089_XShooter_OI1302.json')
 print(f"XShooter: {len(wave)} points, {wave.min():.1f}-{wave.max():.1f} Å")
 
@@ -49,14 +84,13 @@ print(f"FIRE: {len(wave1)} points, {wave1.min():.1f}-{wave1.max():.1f} Å")
 wave2, flux2, error2 = load_spectrum('J1030_9089_HIRES_OI_air2vac_updated.json')
 print(f"HIRES: {len(wave2)} points, {wave2.min():.1f}-{wave2.max():.1f} Å")
 
-#some tweaking to get everything to CIV redshift. This is rb_spec object specfic
-
-z=6.074762
+# Some tweaking to get everything to CIV redshift. This is rb_spec object specific
+z = 6.074762
 zabs_CIV = 4.9484
 
-wave_obs = wave * (z+1.)
-wave1_obs = wave1 * (z+1.)
-wave2_obs = wave2 * (z+1.) 
+wave_obs = wave * (z + 1.)
+wave1_obs = wave1 * (z + 1.)
+wave2_obs = wave2 * (z + 1.) 
 
 print("\n✓ Data loading complete")
 
@@ -201,47 +235,87 @@ print(f"\nParameter bounds set for MCMC exploration")
 print("\n✓ MCMC parameters configured")
 
 # ============================================================================
-# PART 6: JOINT MCMC FITTING WITH CORRECT FWHM
+# PART 6: JOINT MCMC FITTING - NEW UNIFIED INTERFACE
 # ============================================================================
 
 print("\n" + "=" * 60)
-print("RUNNING JOINT MCMC FITTING")
+print("RUNNING JOINT MCMC FITTING - NEW UNIFIED INTERFACE")
 print("=" * 60)
 
-print("Setting up 3-instrument joint fitter...")
+print("Setting up 3-instrument joint fitter with new unified interface...")
 print("KEY: Each instrument uses its correct FWHM during evaluation")
 
-# Create vfit_mcmc object with multi-instrument support
+# NEW UNIFIED INTERFACE: Define all instrument data outside the call
+instrument_data = {
+    'XShooter': {
+        'model': model_xshooter,    # XShooter model with correct FWHM
+        'wave': wave_obs,           # XShooter wavelength array
+        'flux': flux,               # XShooter flux array
+        'error': error              # XShooter error array
+    },
+    'FIRE': {
+        'model': model_fire,        # FIRE model with correct FWHM
+        'wave': wave1_obs,          # FIRE wavelength array
+        'flux': flux1,              # FIRE flux array
+        'error': error1             # FIRE error array
+    },
+    'HIRES': {
+        'model': model_hires,       # HIRES model with correct FWHM
+        'wave': wave2_obs,          # HIRES wavelength array
+        'flux': flux2,              # HIRES flux array
+        'error': error2             # HIRES error array
+    }
+}
+
+# Create vfit_mcmc object with new unified interface
 fitter = mc.vfit(
-    model_xshooter,           # Primary model function (XShooter)
-    theta, lb, ub,            # Parameters and bounds
-    wave_obs, flux, error,    # Primary dataset (XShooter data)
+    instrument_data,              # All 3 instruments in one dictionary
+    theta, lb, ub,               # Parameters and bounds
     no_of_Chain=50,
     no_of_steps=500,
     perturbation=1e-4,
-    sampler='zeus',
-    multi_instrument=True,    # Enable multi-instrument mode
-    instrument_data={         # Additional instruments
-        'FIRE': {
-            'model': model_fire,  # FIRE model with FIRE FWHM
-            'wave': wave1_obs,    # FIRE wavelength array
-            'flux': flux1,        # FIRE flux array
-            'error': error1       # FIRE error array
-        },
-        'HIRES': {
-            'model': model_hires, # HIRES model with HIRES FWHM
-            'wave': wave2_obs,    # HIRES wavelength array
-            'flux': flux2,        # HIRES flux array
-            'error': error2       # HIRES error array
-        }
-    }
+    sampler='zeus'
+    # Note: No multi_instrument flag needed - automatically detected!
 )
 
+print("New unified interface benefits:")
+print("  ✓ Symmetric treatment of all 3 instruments")
+print("  ✓ No primary/secondary distinction")
+print("  ✓ Automatic 3-instrument detection")
+print("  ✓ Cleaner, more intuitive setup")
+print("  ✓ Easy to extend to any number of instruments")
+
 print("Fitter configuration:")
-print("  Primary instrument: XShooter (FWHM=2.2)")
-print("  Additional instruments: FIRE (FWHM=4.0), HIRES (FWHM=4.285)")
+print(f"  Instruments: {', '.join(instrument_data.keys())}")
 print("  Shared parameters: All physics parameters (N, b, v)")
 print("  Different instrumental responses: YES - each uses correct FWHM")
+print("  Multi-instrument mode: Automatically detected")
+
+# LEGACY INTERFACE (commented for reference):
+# fitter = mc.vfit(
+#     model_xshooter,           # Primary model function (XShooter)
+#     theta, lb, ub,            # Parameters and bounds
+#     wave_obs, flux, error,    # Primary dataset (XShooter data)
+#     no_of_Chain=50,
+#     no_of_steps=500,
+#     perturbation=1e-4,
+#     sampler='zeus',
+#     multi_instrument=True,    # Enable multi-instrument mode
+#     instrument_data={         # Additional instruments
+#         'FIRE': {
+#             'model': model_fire,  # FIRE model with FIRE FWHM
+#             'wave': wave1_obs,    # FIRE wavelength array
+#             'flux': flux1,        # FIRE flux array
+#             'error': error1       # FIRE error array
+#         },
+#         'HIRES': {
+#             'model': model_hires, # HIRES model with HIRES FWHM
+#             'wave': wave2_obs,    # HIRES wavelength array
+#             'flux': flux2,        # HIRES flux array
+#             'error': error2       # HIRES error array
+#         }
+#     }
+# )
 
 print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
@@ -250,7 +324,7 @@ print("This may take several minutes depending on data size and convergence")
 fitter.runmcmc(optimize=True)
 
 print("\n✓ MCMC fitting completed")
-print("✓ All instruments used their correct FWHM values during fitting")
+print("✓ All 3 instruments used their correct FWHM values during fitting")
 
 # ============================================================================
 # PART 7: RESULTS ANALYSIS
@@ -291,6 +365,7 @@ print(f"✓ HIRES:    Used FWHM = {config_C.instrumental_params['FWHM']} pixels"
 
 print("\nThis fixes the previous bug where all instruments incorrectly used the same FWHM!")
 print("Now each instrument gets proper spectral resolution treatment.")
+print("The new unified interface maintains this correct behavior automatically.")
 
 # ============================================================================
 # PART 9: FIT SUMMARY AND QUALITY ASSESSMENT
@@ -351,29 +426,89 @@ print("Velocity plots created:")
 for ion_key, fig in velocity_plots.items():
     print(f"  {ion_key}: Shows all 3 instruments with correct FWHM")
 
+# Enhanced multi-instrument plotting with new interface
+print("Creating enhanced multi-instrument visualization...")
+enhanced_fig = mc.plot_model(model_A, fitter,
+                            outfile=False,
+                            show_residuals=True,
+                            velocity_marks=True,
+                            verbose=True)
+
 # ============================================================================
-# PART 11: SCIENTIFIC SUMMARY
+# PART 11: INTERFACE COMPARISON AND MIGRATION NOTES
+# ============================================================================
+
+print("\n" + "="*80)
+print("NEW UNIFIED INTERFACE ADVANTAGES")
+print("="*80)
+
+print("Key improvements with new unified interface:")
+print("✅ Symmetric treatment of all 3 instruments")
+print("✅ No arbitrary primary/secondary designation")
+print("✅ Automatic multi-instrument detection")
+print("✅ Cleaner, more readable code")
+print("✅ Easy to extend to 4, 5, or more instruments")
+print("✅ Same performance and analysis capabilities")
+print("✅ Enhanced plotting and diagnostics")
+
+print("\nMigration benefits:")
+print("• Legacy code still works (backward compatibility)")
+print("• New code is more intuitive and maintainable")
+print("• Same scientific results with better workflow")
+print("• Enhanced error handling and validation")
+
+print("\nNext-generation capabilities:")
+print("• Automatic instrument detection and validation")
+print("• Enhanced multi-instrument plotting")
+print("• Improved parameter organization")
+print("• Better error messages and diagnostics")
+
+# ============================================================================
+# PART 12: SCIENTIFIC SUMMARY
 # ============================================================================
 
 print("\n" + "="*80)
 print("SCIENTIFIC RESULTS SUMMARY") 
 print("="*80)
 
-print("🎉 Multi-instrument fitting with correct FWHM completed!")
+print("🎉 Advanced 3-instrument fitting with new unified interface completed!")
 
-print("\nKey improvements in this analysis:")
+print("\nTechnical achievements:")
 print("✅ Each instrument uses its correct FWHM value")
-print("✅ No more instrumental response bugs")
-print("✅ Proper spectral resolution treatment for each dataset")
-print("✅ More accurate parameter constraints")
-print("✅ Scientifically valid multi-instrument analysis")
+print("✅ Proper spectral resolution treatment for all datasets")
+print("✅ Advanced multi-system parameter constraints")
+print("✅ Robust MCMC diagnostics and convergence assessment")
+print("✅ Publication-quality visualization capabilities")
+
+print("\nScientific achievements:")
+print("🔬 Joint constraints on multiple ion systems")
+print("🔭 Cross-validation across three independent instruments")
+print("📊 Enhanced parameter precision from combined data")
+print("🎯 Systematic uncertainty reduction")
 
 print(f"\nQuality assessment:")
 print(f"  Convergence: {convergence['overall_status']}")
 print(f"  Fit quality: χ²/ν = {chi2_stats.get('reduced_chi2_total', 'N/A'):.3f}")
+print(f"  Instruments: 3 (XShooter, FIRE, HIRES)")
+print(f"  Ion systems: 3 (CIV, OI, SiII)")
+print(f"  Total parameters: {len(theta)}")
+
+print("\n🚀 Advanced Features Demonstrated:")
+print("• New unified interface for multi-instrument setup")
+print("• Automatic instrument detection and configuration")
+print("• Enhanced plotting with proper instrument labeling")
+print("• Advanced diagnostics and quality assessment")
+print("• Complete backward compatibility preservation")
 
 print("\n📊 Check velocity plots to see resolution differences between instruments")
-print("📈 All instruments now contribute correctly to the joint likelihood")
-print("🚀 Ready for publication!")
+print("📈 All 3 instruments contribute correctly to the joint likelihood")
+print("🎯 Ready for advanced multi-instrument scientific analysis!")
 
-print("\nAnalysis complete! 🎉")
+print("\n💡 For your own research:")
+print("• Use new unified interface for cleaner code")
+print("• Leverage automatic instrument detection")
+print("• Take advantage of enhanced plotting capabilities")
+print("• Apply advanced diagnostics for publication quality")
+
+print("\nAdvanced analysis complete! 🎉")
+print("New unified interface successfully demonstrated! ✨")

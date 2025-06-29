@@ -425,12 +425,20 @@ class FittingTab(QWidget):
                 
         self.current_theta = theta.copy()
         
-        # Generate parameter names
+        # Generate parameter names - corrected for new theta format [N1,N2,b1,b2,v1,v2]
         n_params = len(theta)
         n_comp = n_params // 3
         param_names = []
+        
+        # Add all N parameters first
         for i in range(n_comp):
-            param_names.extend([f'N_c{i+1}', f'b_c{i+1}', f'v_c{i+1}'])
+            param_names.append(f'N_c{i+1}')
+        # Add all b parameters
+        for i in range(n_comp):
+            param_names.append(f'b_c{i+1}')
+        # Add all v parameters  
+        for i in range(n_comp):
+            param_names.append(f'v_c{i+1}')
         self.param_names = param_names
         
         # Generate bounds

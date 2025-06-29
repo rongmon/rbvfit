@@ -40,95 +40,59 @@ except (AttributeError, RuntimeError):
 
 
 
-class vfit:
-    """
-    MCMC fitter for Voigt profile absorption lines with unified interface.
-    
-    This class supports both single and multi-instrument fitting through a
-    clean, unified interface that automatically detects the number of instruments.
-    
-    Examples
-    --------
-    Single instrument (new interface):
-    >>> fitter = vfit({
-    ...     'HIRES': {
-    ...         'model': model_func,
-    ...         'wave': wave_array,
-    ...         'flux': flux_array, 
-    ...         'error': error_array
-    ...     }
-    ... }, theta, lb, ub)
-    
-    Multi-instrument (new interface):
-    >>> fitter = vfit({
-    ...     'HIRES': {'model': model_a, 'wave': wave_a, 'flux': flux_a, 'error': error_a},
-    ...     'FIRE': {'model': model_b, 'wave': wave_b, 'flux': flux_b, 'error': error_b}
-    ... }, theta, lb, ub)
-    
-    Legacy interface (still supported):
-    >>> fitter = vfit(model, theta, lb, ub, wave, flux, error)
-    """
-    
-    def __init__(self, model_or_instrument_data, theta, lb, ub, 
-                 wave_obs=None, fnorm=None, enorm=None,
+class vfit(object):
+    def __init__(self, model, theta, lb, ub, wave_obs, fnorm, enorm, 
                  no_of_Chain=50, no_of_steps=1000, perturbation=1e-4,
-                 sampler='emcee', skip_initial_state_check=False,
-                 # Legacy parameters (for backward compatibility)
-                 multi_instrument=None, instrument_data=None,
+                 skip_initial_state_check=False, sampler='emcee',
+                 # New multi-instrument interface
+                 multi_instrument=False, instrument_data=None,
+                 # Legacy interface for backward compatibility
                  second_spec=False, second_spec_dict=None, model2=None,
                  **kwargs):
         """
-        Initialize MCMC fitter with unified interface.
+        Enhanced vfit class with multi-instrument support and multiple MCMC samplers.
         
         Parameters
         ----------
-        model_or_instrument_data : callable or dict
-            Either:
-            - Dict: New unified interface with instrument data
-              Format: {'instrument_name': {'model': func, 'wave': array, 
-                                          'flux': array, 'error': array}}
-            - Callable: Legacy interface with single model function
+        model : callable
+            Model function that takes (theta, wave) and returns flux
         theta : array_like
             Initial parameter guess
-        lb, ub : array_like
-            Lower and upper bounds for parameters
-        wave_obs, fnorm, enorm : array_like, optional
-            Legacy interface data arrays (required if using legacy interface)
+        lb : array_like
+            Lower bounds for parameters
+        ub : array_like
+            Upper bounds for parameters
+        wave_obs : array_like
+            Observed wavelength array
+        fnorm : array_like
+            Normalized flux array
+        enorm : array_like
+            Error array
         no_of_Chain : int, optional
-            Number of MCMC chains/walkers (default: 50)
+            Number of MCMC walkers (default: 50)
         no_of_steps : int, optional
             Number of MCMC steps (default: 1000)
         perturbation : float, optional
-            Initial walker perturbation (default: 1e-4)
-        sampler : str, optional
-            MCMC sampler: 'emcee' or 'zeus' (default: 'emcee')
+            Initial walker perturbation scale (default: 1e-6)
         skip_initial_state_check : bool, optional
-            Skip initial state validation (default: False)
-        
-        Legacy Parameters (deprecated but supported)
-        -------------------------------------------
+            Skip initial state check in sampler (default: False)
+        sampler : str, optional
+            MCMC sampler to use: 'emcee' or 'zeus' (default: 'emcee')
         multi_instrument : bool, optional
-            Deprecated - automatically detected
+            Whether to use multi-instrument fitting (default: False)
         instrument_data : dict, optional
-            Legacy secondary instrument data
+            Dictionary of additional instruments. Format:
+            {'instrument_name': {'model': model_func, 'wave': wave_array, 
+                               'flux': flux_array, 'error': error_array}}
         second_spec : bool, optional
-            Legacy two-instrument mode
+            Legacy parameter for two-instrument fitting (default: False)
         second_spec_dict : dict, optional
-            Legacy second instrument data
+            Legacy parameter for second instrument data
         model2 : callable, optional
-            Legacy second instrument model
+            Legacy parameter for second instrument model
+        **kwargs
+            Additional keyword arguments
         """
-
-        if isinstance(model_or_instrument_data, dict):
-            # New unified interface
-            self._setup_unified_interface(model_or_instrument_data, theta, lb, ub, 
-                                    no_of_Chain, no_of_steps, perturbation, 
-                                    sampler, skip_initial_state_check)
-            return
-
-        # Legacy interface - existing code
-        model = model_or_instrument_data
-
         # Store main dataset
         self.wave_obs = wave_obs
         self.fnorm = fnorm
@@ -156,57 +120,6 @@ class vfit:
         # Handle multi-instrument setup
         self._setup_multi_instrument(multi_instrument, instrument_data, 
                                     second_spec, second_spec_dict, model2)
-
-
-    def _setup_unified_interface(self, instrument_data_dict, theta, lb, ub, 
-                               no_of_Chain, no_of_steps, perturbation, 
-                               sampler, skip_initial_state_check):
-        """Set up fitter using new unified interface."""
-        # Validate
-        self._validate_unified_instrument_data(instrument_data_dict)
-        
-        # Store instrument data
-        self.instrument_data = instrument_data_dict
-        
-        # CRITICAL FIX: Set multi_instrument flag based on number of instruments
-        self.multi_instrument = len(instrument_data_dict) > 1
-        
-        # Set primary (first) for backward compatibility  
-        primary_name = list(instrument_data_dict.keys())[0]
-        primary_data = instrument_data_dict[primary_name]
-        
-        self.model = primary_data['model']
-        self.wave_obs = primary_data['wave']
-        self.fnorm = primary_data['flux'] 
-        self.enorm = primary_data['error']
-        
-        # Set MCMC parameters
-        self.theta = np.asarray(theta)
-        self.lb = np.asarray(lb)
-        self.ub = np.asarray(ub)
-        self.no_of_Chain = no_of_Chain
-        self.no_of_steps = no_of_steps
-        self.perturbation = perturbation
-        self.skip_initial_state_check = skip_initial_state_check
-        
-        # Sampler selection (copy from legacy path)
-        self.sampler_name = sampler.lower()
-        if self.sampler_name not in ['emcee', 'zeus']:
-            raise ValueError(f"Unknown sampler '{sampler}'. Use 'emcee' or 'zeus'.")
-        
-        if self.sampler_name == 'zeus' and not HAS_ZEUS:
-            raise ImportError(
-                "Zeus sampler requested but not installed. "
-                "Install with: pip install zeus-mcmc"
-            )
-        
-        # Print setup confirmation
-        if self.multi_instrument:
-            instrument_names = ', '.join(self.instrument_data.keys())
-            print(f"✓ Unified interface: {len(self.instrument_data)} instruments configured ({instrument_names})")
-        else:
-            print(f"✓ Unified interface: Single instrument configured")
-
 
     def _setup_multi_instrument(self, multi_instrument, instrument_data,
                                second_spec, second_spec_dict, model2):
@@ -274,14 +187,6 @@ class vfit:
             # Single instrument mode
             self.multi_instrument = False
             self.instrument_data = None
-
-    def _validate_unified_instrument_data(self, instrument_data):
-        """Validate unified interface data."""
-        required_keys = {'model', 'wave', 'flux', 'error'}
-        for name, data in instrument_data.items():
-            if not required_keys.issubset(data.keys()):
-                raise ValueError(f"Instrument '{name}' missing keys: {required_keys - set(data.keys())}")
-    
     
     def _validate_instrument_data(self, instrument_data):
         """Validate instrument_data format"""
@@ -316,31 +221,10 @@ class vfit:
     def lnlike(self, theta):
         """
         Calculate log-likelihood for single or multi-instrument data.
-        Uses unified instrument_data when available, falls back to legacy mode.
         """
         try:
-            # NEW UNIFIED PATH: Check for instrument_data first
-            if hasattr(self, 'instrument_data') and self.instrument_data is not None:
-                # Unified likelihood calculation (works for 1 or N instruments)
-                lnlike_total = 0.0
-                
-                for instrument_name, data in self.instrument_data.items():
-                    # Evaluate model for this instrument
-                    model_dat = data['model'](theta, data['wave'])
-                    
-                    # Calculate likelihood contribution
-                    inv_sigma2 = 1.0 / (data['error'] ** 2)
-                    lnlike_instrument = -0.5 * (
-                        np.sum((data['flux'] - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2))
-                    )
-                    
-                    lnlike_total += lnlike_instrument
-                
-                return lnlike_total
-                
-            # LEGACY PATH: Original logic for backward compatibility
-            elif hasattr(self, 'multi_instrument') and self.multi_instrument:
-                # Legacy multi-instrument likelihood calculation (should not happen with new interface)
+            if self.multi_instrument:
+                # Multi-instrument likelihood calculation
                 lnlike_total = 0.0
                 
                 for instrument_name, data in self.instrument_data.items():
@@ -358,7 +242,7 @@ class vfit:
                 return lnlike_total
                 
             else:
-                # Legacy single instrument likelihood
+                # Single instrument likelihood (original logic)
                 model_dat = self.model(theta, self.wave_obs)
                 inv_sigma2 = 1.0 / (self.enorm ** 2)
                 lnlike_total = -0.5 * (
@@ -366,7 +250,7 @@ class vfit:
                 )
                 
                 return lnlike_total
-        
+            
         except Exception:
             # Return -inf for any evaluation errors
             return -np.inf
@@ -686,9 +570,7 @@ class vfit:
         if self.sampler_name == 'zeus':
             # Zeus-specific diagnostics
             try:
-                chain = sampler.get_chain().transpose(1, 0, 2)
-                # Then compute Gelman-Rubin diagnostic
-                rhat = zeus.diagnostics.gelman_rubin(chain)
+                r_hat = zeus.diagnostics.gelman_rubin(sampler.get_chain())
                 print(f"Gelman-Rubin R-hat: {np.max(r_hat):.3f}")
                 if np.max(r_hat) > 1.1:
                     print("⚠ Warning: R-hat > 1.1, chains may not have converged")
@@ -933,29 +815,42 @@ def plot_model(model, fitter, outfile=False, xlim=None, ylim=None, show_residual
     else:
         raise ValueError("Cannot determine result type. Fitter must have either MCMC samples or quick fit results.")
 
-def _setup_datasets(fitter, datasets=None, verbose=True):
+
+def _setup_datasets(fitter, datasets=None,verbose=True):
     """
     Set up datasets for plotting, with optional override.
-    """
-    plot_datasets = {}
     
-    # NEW UNIFIED INTERFACE: Use instrument_data if available
-    if hasattr(fitter, 'instrument_data') and fitter.instrument_data is not None:
+    Parameters
+    ----------
+    fitter : vfit
+        MCMC fitter object
+    datasets : dict, optional
+        Override datasets
+        
+    Returns
+    -------
+    dict
+        Dictionary mapping instrument names to (wave, flux, error) tuples
+    """
+    # Start with original fitter data
+    plot_datasets = {
+        'Primary': (fitter.wave_obs, fitter.fnorm, fitter.enorm)
+    }
+    
+    # Add multi-instrument data from fitter if available
+    if hasattr(fitter, 'instrument_data') and fitter.instrument_data:
         for name, data in fitter.instrument_data.items():
-            plot_datasets[name] = (data['wave'], data['flux'], data['error'])
-    else:
-        # LEGACY FALLBACK: Use primary attributes
-        plot_datasets['Primary'] = (fitter.wave_obs, fitter.fnorm, fitter.enorm)
+            if name != 'main':  # Skip 'main' which is the primary dataset
+                plot_datasets[name] = (data['wave'], data['flux'], data['error'])
     
     # Apply dataset overrides if provided
     if datasets is not None:
         if _is_single_dataset_format(datasets):
-            # Single dataset override - replace first instrument
-            first_name = list(plot_datasets.keys())[0]
-            _validate_dataset(datasets, first_name)
-            plot_datasets[first_name] = (datasets['wave'], datasets['flux'], datasets['error'])
+            # Single dataset override - replace primary
+            _validate_dataset(datasets, 'Primary')
+            plot_datasets['Primary'] = (datasets['wave'], datasets['flux'], datasets['error'])
             if verbose:
-                print(f"Using provided dataset for {first_name}")
+                print("Using provided dataset for Primary instrument")
         else:
             # Multi-instrument format
             for name, data in datasets.items():
@@ -965,6 +860,7 @@ def _setup_datasets(fitter, datasets=None, verbose=True):
                     print(f"Using provided dataset for {name}")
     
     return plot_datasets
+
 
 def _is_single_dataset_format(datasets):
     """Check if datasets is in single instrument format."""
@@ -1259,17 +1155,13 @@ def _plot_model_v2(model, fitter, outfile=False, xlim=None, ylim=None, show_resi
     if is_multi_instrument:
         return _plot_multi_instrument_v2_with_datasets(
             model, plot_datasets, best_theta, samples, show_residuals,
-            show_components, velocity_marks, xlim, ylim, n_posterior_samples, outfile, 
+            show_components, velocity_marks, xlim, ylim, n_posterior_samples,outfile, 
             verbose=True)
     else:
-        # FIX: Use first available instrument instead of hard-coded 'Primary'
-        first_instrument_name = list(plot_datasets.keys())[0]
-        first_dataset = plot_datasets[first_instrument_name]
-        
         return _plot_single_instrument_v2_with_datasets(
-            model, first_dataset, best_theta, samples, show_residuals,
+            model, plot_datasets['Primary'], best_theta, samples, show_residuals,
             show_components, velocity_marks, xlim, ylim, n_posterior_samples, 
-            outfile, datasets is not None, verbose=True)
+            outfile, datasets is not None,verbose=True)
 
 def _plot_single_instrument_v2_with_datasets(model, dataset, best_theta, samples, 
                                            show_residuals, show_components, velocity_marks,
@@ -2066,84 +1958,40 @@ def print_performance_tips():
 
 
 def print_multi_instrument_help():
-    """Print help for multi-instrument usage with updated examples."""
+    """Print help for multi-instrument usage."""
     print("\nMulti-Instrument Usage:")
     print("=" * 25)
     
-    print("\n🆕 NEW UNIFIED INTERFACE (Recommended):")
-    print("="*45)
-    
-    print("\n📖 Single Instrument:")
+    print("\n📖 New Interface (Recommended):")
     print("```python")
-    print("# Clean, symmetric interface")
-    print("fitter = vfit({")
-    print("    'HIRES': {")
-    print("        'model': model_func,")
-    print("        'wave': wave_array,")
-    print("        'flux': flux_array,")
-    print("        'error': error_array")
-    print("    }")
-    print("}, theta, lb, ub)")
-    print("```")
-    
-    print("\n📖 Multi-Instrument:")
-    print("```python")
-    print("# Same pattern for any number of instruments")
-    print("fitter = vfit({")
-    print("    'HIRES': {'model': model_a, 'wave': wave_a, 'flux': flux_a, 'error': error_a},")
-    print("    'FIRE':  {'model': model_b, 'wave': wave_b, 'flux': flux_b, 'error': error_b},")
-    print("    'UVES':  {'model': model_c, 'wave': wave_c, 'flux': flux_c, 'error': error_c}")
-    print("}, theta, lb, ub)")
+    print("# Set up models for each instrument")
+    print("model_A = lambda theta, wave: compiled.model_flux(theta, wave, instrument='A')")
+    print("model_B = lambda theta, wave: compiled.model_flux(theta, wave, instrument='B')")
     print("")
-    print("# Automatic detection: no flags needed!")
-    print("# Multi-instrument mode detected automatically")
-    print("```")
-    
-    print("\n📜 LEGACY INTERFACE (Still Supported):")
-    print("="*40)
-    
-    print("\n📖 Legacy Single Instrument:")
-    print("```python")
-    print("fitter = vfit(model, theta, lb, ub, wave, flux, error)")
-    print("```")
-    
-    print("\n📖 Legacy Multi-Instrument:")
-    print("```python")
-    print("fitter = vfit(model_a, theta, lb, ub, wave_a, flux_a, error_a,")
+    print("# Create fitter with multi-instrument data")
+    print("fitter = vfit(model_A, theta, lb, ub, wave_A, flux_A, error_A,")
     print("              multi_instrument=True,")
     print("              instrument_data={")
-    print("                  'FIRE': {'model': model_b, 'wave': wave_b, 'flux': flux_b, 'error': error_b}")
+    print("                  'B': {'model': model_B, 'wave': wave_B, 'flux': flux_B, 'error': error_B},")
+    print("                  'C': {'model': model_C, 'wave': wave_C, 'flux': flux_C, 'error': error_C}")
     print("              })")
     print("```")
     
-    print("\n✨ BENEFITS OF NEW UNIFIED INTERFACE:")
-    print("• 🎯 Symmetric treatment of all instruments")
-    print("• 🚫 No more primary/secondary confusion") 
-    print("• 🤖 Automatic single/multi-instrument detection")
-    print("• 🧹 Cleaner, more intuitive API")
-    print("• 🔄 Full backward compatibility")
-    print("• 📈 Same performance and analysis capabilities")
-    
-    print("\n🔧 MIGRATION GUIDE:")
+    print("\n📜 Legacy Interface (Still Supported):")
     print("```python")
-    print("# OLD WAY (still works)")
-    print("fitter = vfit(model_main, theta, lb, ub, wave_main, flux_main, error_main,")
-    print("              multi_instrument=True,")
-    print("              instrument_data={'secondary': {...}})")
-    print("")
-    print("# NEW WAY (recommended)")
-    print("fitter = vfit({")
-    print("    'main': {'model': model_main, 'wave': wave_main, 'flux': flux_main, 'error': error_main},")
-    print("    'secondary': {'model': model_sec, 'wave': wave_sec, 'flux': flux_sec, 'error': error_sec}")
-    print("}, theta, lb, ub)")
+    print("# Two-instrument fitting (legacy)")
+    print("fitter = vfit(model_A, theta, lb, ub, wave_A, flux_A, error_A,")
+    print("              second_spec=True,")
+    print("              second_spec_dict={'wave': wave_B, 'flux': flux_B, 'error': error_B},")
+    print("              model2=model_B)")
     print("```")
     
-    print("\n💡 COMPATIBILITY NOTES:")
-    print("• All plotting functions work identically")
-    print("• fit_results analysis unchanged") 
-    print("• MCMC diagnostics identical")
-    print("• Parameter extraction same")
-    print("• New interface produces same fitter object after runmcmc()")
+    print("\n✨ Benefits of Multi-Instrument Fitting:")
+    print("• Shared physical parameters across instruments")
+    print("• Better parameter constraints from joint data")
+    print("• Automatic handling of instrument-specific wavelength coverage")
+    print("• Consistent error propagation across all datasets")
+
 
 # Ion-specific bounds lookup table
 ION_BOUNDS_TABLE = {
@@ -2369,64 +2217,10 @@ def get_ion_bounds(ion_name):
 # Legacy compatibility
 vfit_mcmc = vfit  # Alias for backward compatibility
 
-def print_usage_examples():
-    """Print usage examples for the refactored interface."""
-    print("\n" + "="*60)
-    print("RBVFIT 2.0 MCMC FITTING - USAGE EXAMPLES")
-    print("="*60)
-    
-    print("\n🆕 New Unified Interface (Recommended):")
-    print("="*40)
-    
-    print("\n📖 Single Instrument:")
-    print("```python")
-    print("fitter = vfit({")
-    print("    'HIRES': {")
-    print("        'model': model_func,")
-    print("        'wave': wave_array,")
-    print("        'flux': flux_array,")
-    print("        'error': error_array")
-    print("    }")
-    print("}, theta, lb, ub)")
-    print("```")
-    
-    print("\n📖 Multi-Instrument:")
-    print("```python")
-    print("fitter = vfit({")
-    print("    'HIRES': {'model': model_a, 'wave': wave_a, 'flux': flux_a, 'error': error_a},")
-    print("    'FIRE': {'model': model_b, 'wave': wave_b, 'flux': flux_b, 'error': error_b},")
-    print("    'UVES': {'model': model_c, 'wave': wave_c, 'flux': flux_c, 'error': error_c}")
-    print("}, theta, lb, ub)")
-    print("```")
-    
-    print("\n📜 Legacy Interface (Still Supported):")
-    print("="*40)
-    
-    print("\n📖 Single Instrument (Legacy):")
-    print("```python")
-    print("fitter = vfit(model, theta, lb, ub, wave, flux, error)")
-    print("```")
-    
-    print("\n📖 Multi-Instrument (Legacy):")
-    print("```python")
-    print("fitter = vfit(model_a, theta, lb, ub, wave_a, flux_a, error_a,")
-    print("              multi_instrument=True,")
-    print("              instrument_data={")
-    print("                  'FIRE': {'model': model_b, 'wave': wave_b, 'flux': flux_b, 'error': error_b}")
-    print("              })")
-    print("```")
-    
-    print("\n✨ Benefits of New Interface:")
-    print("• Symmetric treatment of all instruments")
-    print("• No more primary/secondary confusion")
-    print("• Automatic single/multi-instrument detection")
-    print("• Cleaner, more intuitive API")
-    print("• Full backward compatibility")
 
 if __name__ == "__main__":
     # Print comprehensive help when module is run directly
     print_sampler_info()
     print_performance_tips()
     print_multi_instrument_help()
-    print_usage_examples()
 

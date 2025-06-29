@@ -82,7 +82,7 @@ class RangeDialog(QDialog):
         layout.addRow("X max:", self.xmax_spin)
         
         self.ymin_spin = QDoubleSpinBox()
-        self.ymin_spin.setRange(-2, 2)
+        self.ymin_spin.setRange(-20000, 20000)
         self.ymin_spin.setDecimals(3)
         self.ymin_spin.setValue(current_ylim[0])
         layout.addRow("Y min:", self.ymin_spin)

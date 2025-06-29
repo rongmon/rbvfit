@@ -352,7 +352,7 @@ class ResultsTab(QWidget):
                     if hasattr(self.results, 'convergence_diagnostics'):
                         convergence = self.results.convergence_diagnostics()
                         conv_status = convergence.get('overall_status', 'Unknown')
-                        rhat_max = convergence.get('rhat_max', np.nan)
+                        rhat_max = convergence.get('max_r_hat', np.nan)
                     else:
                         conv_status = 'Unknown'
                         rhat_max = np.nan
@@ -362,6 +362,9 @@ class ResultsTab(QWidget):
                 
                 # Create HTML statistics display
                 stats_html = f"""
+                <h4>Convergence</h4>
+                <p style="color: {'green' if conv_status == 'GOOD' else 'orange' if conv_status == 'MARGINAL' else 'red'};"><b>{conv_status} convergence</b></p>
+
                 <h4>Fit Quality</h4>
                 <table>
                 <tr><td><b>χ²/ν:</b></td><td>{chi2_reduced:.3f}</td></tr>
@@ -375,10 +378,7 @@ class ResultsTab(QWidget):
                 <tr><td><b>Chains:</b></td><td>{getattr(fitter, 'no_of_Chain', 'N/A')}</td></tr>
                 <tr><td><b>Acceptance:</b></td><td>{acceptance_rate:.3f}</td></tr>
                 <tr><td><b>R̂ (max):</b></td><td>{rhat_max:.3f}</td></tr>
-                </table>
-                
-                <h4>Convergence</h4>
-                <p style="color: {'green' if conv_status == 'Good' else 'orange' if conv_status == 'Warning' else 'red'};"><b>{conv_status} convergence</b></p>
+                </table>                
                 """
                 
                 self.stats_text.setHtml(stats_html)

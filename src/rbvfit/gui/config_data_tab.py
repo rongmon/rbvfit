@@ -14,12 +14,246 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QLabel, QDoubleSpinBox, QLineEdit, QComboBox,
                             QTableWidget, QTableWidgetItem, QHeaderView,
                             QFileDialog, QMessageBox, QTextEdit, QCheckBox,
-                            QFormLayout, QSpinBox, QDialog, QDialogButtonBox)
+                            QFormLayout, QSpinBox, QDialog, QDialogButtonBox,QButtonGroup,QRadioButton)
+
+
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from rbvfit.gui.io import load_multiple_files, slice_spectrum, get_spectrum_info
+
+class EnhancedWavelengthTrimDialog(QDialog):
+    """Enhanced dialog for wavelength trimming with multiple region support"""
+    
+    def __init__(self, wave_min, wave_max, current_min=None, current_max=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Enhanced Wavelength Trimming")
+        self.setModal(True)
+        self.resize(500, 400)
+        
+        self.wave_min = wave_min
+        self.wave_max = wave_max
+        self.current_expression = None
+        
+        self.setup_ui(current_min, current_max)
+        
+    def setup_ui(self, current_min, current_max):
+        """Create enhanced dialog interface"""
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        
+        # Mode selection
+        mode_group = QGroupBox("Selection Mode")
+        mode_layout = QVBoxLayout()
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+        
+        self.mode_group = QButtonGroup()
+        self.simple_mode = QRadioButton("Simple Range (Min/Max)")
+        self.multi_mode = QRadioButton("Multiple Regions")
+        self.expression_mode = QRadioButton("Custom Expression")
+        
+        self.mode_group.addButton(self.simple_mode, 0)
+        self.mode_group.addButton(self.multi_mode, 1)
+        self.mode_group.addButton(self.expression_mode, 2)
+        
+        mode_layout.addWidget(self.simple_mode)
+        mode_layout.addWidget(self.multi_mode)
+        mode_layout.addWidget(self.expression_mode)
+        
+        self.simple_mode.setChecked(True)  # Default mode
+        
+        # Simple range controls
+        self.simple_widget = QGroupBox("Simple Range")
+        simple_layout = QFormLayout()
+        self.simple_widget.setLayout(simple_layout)
+        layout.addWidget(self.simple_widget)
+        
+        self.min_spin = QDoubleSpinBox()
+        self.min_spin.setRange(self.wave_min, self.wave_max)
+        self.min_spin.setDecimals(2)
+        self.min_spin.setValue(current_min if current_min is not None else self.wave_min)
+        simple_layout.addRow("Minimum λ (Å):", self.min_spin)
+        
+        self.max_spin = QDoubleSpinBox()
+        self.max_spin.setRange(self.wave_min, self.wave_max)
+        self.max_spin.setDecimals(2)
+        self.max_spin.setValue(current_max if current_max is not None else self.wave_max)
+        simple_layout.addRow("Maximum λ (Å):", self.max_spin)
+        
+        # Multiple regions controls
+        self.multi_widget = QGroupBox("Multiple Regions")
+        multi_layout = QVBoxLayout()
+        self.multi_widget.setLayout(multi_layout)
+        layout.addWidget(self.multi_widget)
+        
+        multi_layout.addWidget(QLabel("Enter wavelength ranges (one per line):"))
+        multi_layout.addWidget(QLabel("Format: min-max (e.g., 1000-1100)"))
+        
+        self.regions_text = QTextEdit()
+        self.regions_text.setMaximumHeight(100)
+        self.regions_text.setPlaceholderText("1000-1100\n1150-1180\n1300-1350")
+        multi_layout.addWidget(self.regions_text)
+        
+        # Expression controls
+        self.expression_widget = QGroupBox("Custom Expression")
+        expr_layout = QVBoxLayout()
+        self.expression_widget.setLayout(expr_layout)
+        layout.addWidget(self.expression_widget)
+        
+        expr_layout.addWidget(QLabel("Enter custom wavelength selection expression:"))
+        expr_layout.addWidget(QLabel("Use 'wave' as variable. Examples:"))
+        expr_layout.addWidget(QLabel("• (wave>1000)*(wave<1100)+(wave>1150)*(wave<1180)"))
+        expr_layout.addWidget(QLabel("• (wave>1200)&(wave<1300)|(wave>1400)&(wave<1500)"))
+        
+        self.expression_text = QLineEdit()
+        self.expression_text.setPlaceholderText("(wave>1000)*(wave<1100)+(wave>1150)*(wave<1180)")
+        expr_layout.addWidget(self.expression_text)
+        
+        # Validation button
+        self.validate_btn = QPushButton("Validate Expression")
+        expr_layout.addWidget(self.validate_btn)
+        
+        # Initially hide multi and expression widgets
+        self.multi_widget.setVisible(False)
+        self.expression_widget.setVisible(False)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        layout.addLayout(button_layout)
+        
+        reset_btn = QPushButton("Reset to Full Range")
+        button_layout.addWidget(reset_btn)
+        
+        button_layout.addStretch()
+        
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_layout.addWidget(buttons)
+        
+        # Connect signals
+        self.mode_group.buttonClicked.connect(self.on_mode_changed)
+        self.validate_btn.clicked.connect(self.validate_expression)
+        reset_btn.clicked.connect(self.reset_range)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        
+    def on_mode_changed(self, button):
+        """Handle mode change"""
+        mode_id = self.mode_group.id(button)
+        
+        self.simple_widget.setVisible(mode_id == 0)
+        self.multi_widget.setVisible(mode_id == 1)
+        self.expression_widget.setVisible(mode_id == 2)
+        
+        # Adjust dialog size
+        self.adjustSize()
+        
+    def validate_expression(self):
+        """Validate the custom expression"""
+        expression = self.expression_text.text().strip()
+        if not expression:
+            QMessageBox.warning(self, "Empty Expression", "Please enter an expression")
+            return
+            
+        try:
+            # Create a test wavelength array
+            wave = np.linspace(self.wave_min, self.wave_max, 1000)
+            
+            # Evaluate the expression
+            mask = self.evaluate_expression(expression, wave)
+            
+            if not isinstance(mask, np.ndarray) or mask.dtype != bool:
+                raise ValueError("Expression must return a boolean array")
+                
+            n_selected = np.sum(mask)
+            total_points = len(wave)
+            percentage = (n_selected / total_points) * 100
+            
+            QMessageBox.information(self, "Expression Valid", 
+                                  f"Expression is valid!\n"
+                                  f"Would select {n_selected}/{total_points} points ({percentage:.1f}%)")
+                                  
+        except Exception as e:
+            QMessageBox.warning(self, "Invalid Expression", 
+                              f"Expression error:\n{str(e)}\n\n"
+                              f"Make sure to use 'wave' as the variable and valid Python operators:\n"
+                              f"• Comparison: >, <, >=, <=, ==, !=\n"
+                              f"• Logical: &, |, ~ (and, or, not)\n"
+                              f"• Use parentheses for grouping")
+    
+    def evaluate_expression(self, expression, wave):
+        """Safely evaluate wavelength selection expression"""
+        # Replace common alternative operators
+        expression = expression.replace('*', '&')  # Convert * to & for logical AND
+        expression = expression.replace('+', '|')  # Convert + to | for logical OR
+        
+        # Create safe namespace with only numpy and wave
+        namespace = {
+            'wave': wave,
+            'np': np,
+            '__builtins__': {}  # Remove built-in functions for safety
+        }
+        
+        try:
+            result = eval(expression, namespace)
+            return result
+        except Exception as e:
+            raise ValueError(f"Cannot evaluate expression: {str(e)}")
+    
+    def reset_range(self):
+        """Reset to full wavelength range"""
+        if self.simple_mode.isChecked():
+            self.min_spin.setValue(self.wave_min)
+            self.max_spin.setValue(self.wave_max)
+        elif self.multi_mode.isChecked():
+            self.regions_text.clear()
+        else:  # expression mode
+            self.expression_text.clear()
+    
+    def get_selection_data(self):
+        """Return selection data based on current mode"""
+        if self.simple_mode.isChecked():
+            return {
+                'mode': 'simple',
+                'min': self.min_spin.value(),
+                'max': self.max_spin.value()
+            }
+        elif self.multi_mode.isChecked():
+            regions = self.parse_regions()
+            return {
+                'mode': 'multi',
+                'regions': regions
+            }
+        else:  # expression mode
+            return {
+                'mode': 'expression',
+                'expression': self.expression_text.text().strip()
+            }
+    
+    def parse_regions(self):
+        """Parse multiple regions from text input"""
+        regions = []
+        text = self.regions_text.toPlainText().strip()
+        
+        for line in text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+                
+            # Try to parse format like "1000-1100"
+            if '-' in line:
+                try:
+                    parts = line.split('-')
+                    if len(parts) == 2:
+                        min_val = float(parts[0].strip())
+                        max_val = float(parts[1].strip())
+                        if min_val < max_val:
+                            regions.append((min_val, max_val))
+                except ValueError:
+                    continue
+                    
+        return regions
 
 
 class ConfigurationDialog(QDialog):
@@ -363,7 +597,7 @@ class ConfigurationDataTab(QWidget):
         # Data controls
         self.load_files_btn.clicked.connect(self.load_spectrum_files)
         self.assign_data_btn.clicked.connect(self.assign_data_to_config)
-        self.trim_wavelength_btn.clicked.connect(self.trim_wavelengths)
+        self.trim_wavelength_btn.clicked.connect(self.enhanced_trim_wavelengths)
         self.build_unions_btn.clicked.connect(self.build_unions)
         self.reset_data_btn.clicked.connect(self.reset_data)
         
@@ -389,6 +623,59 @@ class ConfigurationDataTab(QWidget):
             self.configurations[config_data['name']] = config_data
             self.update_config_display()
             self.update_status()
+
+
+    def setup_fwhm_controls(self, layout):
+        """Setup FWHM controls with unit selection"""
+        
+        # FWHM Unit selector
+        fwhm_unit_layout = QHBoxLayout()
+        
+        fwhm_unit_layout.addWidget(QLabel("FWHM Unit:"))
+        self.fwhm_unit_combo = QComboBox()
+        self.fwhm_unit_combo.addItems(['pixels', 'km/s'])
+        self.fwhm_unit_combo.setCurrentText('pixels')  # Default to pixels
+        fwhm_unit_layout.addWidget(self.fwhm_unit_combo)
+        fwhm_unit_layout.addStretch()
+        
+        layout.addRow(fwhm_unit_layout)
+        
+        # FWHM value input
+        self.fwhm_spin = QDoubleSpinBox()
+        self.fwhm_spin.setRange(0.1, 20.0)  # Default range for pixels
+        self.fwhm_spin.setDecimals(2)
+        self.fwhm_spin.setValue(2.5)
+        self.fwhm_spin.setSuffix(' px')
+        layout.addRow("FWHM:", self.fwhm_spin)
+        
+        # Connect unit change to update range and suffix
+        self.fwhm_unit_combo.currentTextChanged.connect(self.on_fwhm_unit_changed)
+
+
+    def on_fwhm_unit_changed(self, unit):
+        """Handle FWHM unit change"""
+        current_value = self.fwhm_spin.value()
+        
+        if unit == 'pixels':
+            self.fwhm_spin.setRange(0.1, 20.0)
+            self.fwhm_spin.setSuffix(' px')
+            # If we had a reasonable conversion, we could do it here
+            # For now, just update the range and let user adjust
+            if hasattr(self, '_last_unit') and self._last_unit == 'km/s':
+                # Coming from km/s - suggest a reasonable pixel value
+                if current_value > 50:  # Clearly a km/s value
+                    self.fwhm_spin.setValue(2.5)  # Default pixel value
+        else:  # km/s
+            self.fwhm_spin.setRange(1.0, 300.0)
+            self.fwhm_spin.setSuffix(' km/s')
+            # If we had a reasonable conversion, we could do it here
+            if hasattr(self, '_last_unit') and self._last_unit == 'pixels':
+                # Coming from pixels - suggest a reasonable km/s value
+                if current_value < 30:  # Clearly a pixel value
+                    self.fwhm_spin.setValue(20.0)  # Default km/s value
+        
+        self._last_unit = unit
+
             
     def edit_configuration(self):
         """Edit selected configuration"""
@@ -539,6 +826,125 @@ class ConfigurationDataTab(QWidget):
         
         QMessageBox.information(self, "Data Assigned", 
                               f"Assigned '{filename}' to configuration '{config_name}'")
+
+    # Enhanced trim_configuration_data method for ConfigurationDataTab
+    def enhanced_trim_configuration_data(self, config_name, selection_data):
+        """Enhanced method to apply wavelength selection to configuration data"""
+        config_data = self.configurations[config_name]
+        
+        # Use original data for trimming
+        wave_orig = config_data['wave_original']
+        flux_orig = config_data['flux_original']
+        error_orig = config_data['error_original']
+        
+        try:
+            # Create mask based on selection mode
+            if selection_data['mode'] == 'simple':
+                # Simple range
+                wave_min = selection_data['min']
+                wave_max = selection_data['max']
+                mask = (wave_orig >= wave_min) & (wave_orig <= wave_max)
+                
+            elif selection_data['mode'] == 'multi':
+                # Multiple regions
+                mask = np.zeros_like(wave_orig, dtype=bool)
+                for min_val, max_val in selection_data['regions']:
+                    region_mask = (wave_orig >= min_val) & (wave_orig <= max_val)
+                    mask |= region_mask
+                    
+            elif selection_data['mode'] == 'expression':
+                # Custom expression
+                expression = selection_data['expression']
+                if not expression:
+                    raise ValueError("No expression provided")
+                
+                # Use the same evaluation method as in dialog
+                mask = self.evaluate_wavelength_expression(expression, wave_orig)
+                
+            else:
+                raise ValueError(f"Unknown selection mode: {selection_data['mode']}")
+            
+            # Apply mask
+            if not np.any(mask):
+                raise ValueError("Selection would result in no data points")
+                
+            config_data['wave'] = wave_orig[mask]
+            config_data['flux'] = flux_orig[mask]
+            config_data['error'] = error_orig[mask]
+            
+            # Store selection info for reference
+            config_data['_last_selection'] = selection_data
+            
+            return True
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Selection Error", 
+                               f"Failed to apply wavelength selection:\n{str(e)}")
+            return False
+    
+    
+    def evaluate_wavelength_expression(self, expression, wave):
+        """Safely evaluate wavelength selection expression"""
+        # Replace common alternative operators
+        expression = expression.replace('*', '&')  # Convert * to & for logical AND
+        expression = expression.replace('+', '|')  # Convert + to | for logical OR
+        
+        # Create safe namespace
+        namespace = {
+            'wave': wave,
+            'np': np,
+            '__builtins__': {}
+        }
+        
+        try:
+            result = eval(expression, namespace)
+            if not isinstance(result, np.ndarray) or result.dtype != bool:
+                raise ValueError("Expression must return a boolean array")
+            return result
+        except Exception as e:
+            raise ValueError(f"Cannot evaluate expression: {str(e)}")
+    
+    
+    # Enhanced trim_wavelengths method for ConfigurationDataTab
+    def enhanced_trim_wavelengths(self):
+        """Enhanced trim wavelengths method with multiple region support"""
+        current_item = self.config_list.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "No Selection", "Please select a configuration")
+            return
+            
+        config_name = current_item.text().split(' - ')[0]
+        config_data = self.configurations[config_name]
+        
+        if config_data['wave'] is None:
+            QMessageBox.warning(self, "No Data", "Configuration has no assigned data")
+            return
+            
+        wave = config_data['wave']
+        current_min, current_max = wave.min(), wave.max()
+        orig_min, orig_max = config_data['wave_original'].min(), config_data['wave_original'].max()
+        
+        # Use enhanced dialog
+        dialog = EnhancedWavelengthTrimDialog(orig_min, orig_max, current_min, current_max, parent=self)
+        if dialog.exec_() == QDialog.Accepted:
+            selection_data = dialog.get_selection_data()
+            
+            # Apply enhanced trimming
+            if self.enhanced_trim_configuration_data(config_name, selection_data):
+                self.update_config_display()
+                self.update_preview()
+                self.update_status()
+                
+                # Show summary
+                new_wave = self.configurations[config_name]['wave']
+                n_points = len(new_wave)
+                wave_range = f"{new_wave.min():.1f}-{new_wave.max():.1f}"
+                
+                QMessageBox.information(self, "Trimming Applied", 
+                                      f"Wavelength selection applied to '{config_name}'\n"
+                                      f"Result: {n_points} points, range {wave_range} Å")
+    
+
         
     def trim_wavelengths(self):
         """Trim wavelengths for selected configuration"""

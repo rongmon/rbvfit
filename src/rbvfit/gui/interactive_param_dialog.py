@@ -8,7 +8,7 @@ import pandas as pd
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
                             QLabel, QMessageBox, QComboBox, QTableWidget, 
                             QTableWidgetItem, QHeaderView, QDoubleSpinBox,
-                            QFormLayout)
+                            QFormLayout,QInputDialog)
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -271,12 +271,12 @@ class VelocitySelector:
         
         # Remove from list
         removed_vel = self.vel_guess.pop(nearest_idx)
+        print(f"Removed component at {removed_vel:.1f} km/s")  # DEBUG
         
-        # Clear all markers and redraw
+        # Just clear markers - let the parent redraw everything
         self.clear_markers()
-        for vel in self.vel_guess:
-            self.add_component(vel)
-            
+    
+    # DON'T redraw here - let the calling code handle it            
     def clear_markers(self):
         """Clear all visual markers"""
         for marker in self.markers:
@@ -338,13 +338,17 @@ class InteractiveParameterDialog(QDialog):
             self.transition_combo = None
             
         # Instructions
-        inst_text = "Left click: add | Right click: range | 'r': reset | 'c': clear all"
-        layout.addWidget(QLabel(inst_text))
-        
+        inst_text = ("Left click: add | Right click: remove nearest | 'r': reset | 'c': clear all\n"
+             "'z': zoom in | 'o': zoom out | 'x'/'X': set xmin/xmax | 'y'/'Y': set ymin/ymax | 'm': manual range")
+        layout.addWidget(QLabel(inst_text))        
         # Plot
         self.figure = Figure(figsize=(12, 6))
         self.canvas = FigureCanvas(self.figure)
         self.ax = self.figure.add_subplot(111)
+        # ENABLE KEYBOARD FOCUS
+        self.canvas.setFocusPolicy(Qt.ClickFocus)  # Allow canvas to receive focus
+        self.canvas.setFocus()  # Give it focus initially
+
         layout.addWidget(self.canvas)
         
         # Status
@@ -362,7 +366,6 @@ class InteractiveParameterDialog(QDialog):
         button_layout.addWidget(self.done_btn)
         button_layout.addWidget(cancel_btn)
         
-        self.done_btn.setEnabled(False)
         
         # Connect
         self.done_btn.clicked.connect(self.finish_selection)
@@ -427,26 +430,42 @@ class InteractiveParameterDialog(QDialog):
         if not self.velocity_selector or not event.inaxes:
             return
             
+        # ENSURE CANVAS HAS FOCUS for keyboard events
+        self.canvas.setFocus()
+        
         if event.button == 1:  # Left click - add component
             self.velocity_selector.add_component(event.xdata)
             self.canvas.draw()
             self.update_status()
             
-        elif event.button == 3:  # Right click - range dialog
-            current_xlim = self.ax.get_xlim()
-            current_ylim = self.ax.get_ylim()
-            
-            dialog = RangeDialog(current_xlim, current_ylim, self)
-            if dialog.exec_() == QDialog.Accepted:
-                xlim, ylim = dialog.get_ranges()
-                self.ax.set_xlim(xlim)
-                self.ax.set_ylim(ylim)
-                self.canvas.draw()
+        elif event.button == 3:  # Right click - remove nearest component
+            if self.velocity_selector.vel_guess:  # Only if components exist
+                self.velocity_selector.remove_nearest(event.xdata)
+    
+            # Redraw all remaining components
+            for vel in self.velocity_selector.vel_guess:
+                self.velocity_selector.add_component(vel)
+            self.canvas.draw()
+            self.update_status()
                 
+
     def on_key(self, event):
         """Handle key presses"""
+        print(f"Key pressed: '{event.key}'")  # DEBUG
+        
         if not self.velocity_selector:
             return
+        
+        # Get current mouse position for boundary setting
+        if hasattr(event, 'xdata') and hasattr(event, 'ydata') and event.xdata is not None:
+            x = event.xdata
+            y = event.ydata
+        else:
+            # Fallback to center if no mouse position
+            xlim = self.ax.get_xlim()
+            ylim = self.ax.get_ylim()
+            x = (xlim[0] + xlim[1]) / 2
+            y = (ylim[0] + ylim[1]) / 2
             
         if event.key == 'r':  # Reset range
             self.ax.set_xlim(self.original_xlim)
@@ -458,11 +477,82 @@ class InteractiveParameterDialog(QDialog):
             self.canvas.draw()
             self.update_status()
             
+        elif event.key == 'z':  # Zoom in
+            xlim = self.ax.get_xlim()
+            ylim = self.ax.get_ylim()
+            x_center = (xlim[0] + xlim[1]) / 2
+            y_center = (ylim[0] + ylim[1]) / 2
+            x_range = (xlim[1] - xlim[0]) * 0.8
+            y_range = (ylim[1] - ylim[0]) * 0.8
+            self.ax.set_xlim(x_center - x_range/2, x_center + x_range/2)
+            self.ax.set_ylim(y_center - y_range/2, y_center + y_range/2)
+            self.canvas.draw()
+            
+        elif event.key == 'o':  # Zoom out
+            xlim = self.ax.get_xlim()
+            ylim = self.ax.get_ylim()
+            x_center = (xlim[0] + xlim[1]) / 2
+            y_center = (ylim[0] + ylim[1]) / 2
+            x_range = (xlim[1] - xlim[0]) * 1.2
+            y_range = (ylim[1] - ylim[0]) * 1.2
+            self.ax.set_xlim(x_center - x_range/2, x_center + x_range/2)
+            self.ax.set_ylim(y_center - y_range/2, y_center + y_range/2)
+            self.canvas.draw()
+            
+        # SIMPLE BOUNDARY SETTING
+        elif event.key == 'x':  # Set x-min (left boundary) at cursor
+            current_xlim = self.ax.get_xlim()
+            self.ax.set_xlim(x, current_xlim[1])
+            self.canvas.draw()
+            
+        elif event.key == 'X':  # Set x-max (right boundary) at cursor
+            current_xlim = self.ax.get_xlim()
+            self.ax.set_xlim(current_xlim[0], x)
+            self.canvas.draw()
+            
+        elif event.key == 'y':  # Set y-min (bottom boundary) at cursor
+            current_ylim = self.ax.get_ylim()
+            self.ax.set_ylim(y, current_ylim[1])
+            self.canvas.draw()
+            
+        elif event.key == 'Y':  # Set y-max (top boundary) at cursor
+            current_ylim = self.ax.get_ylim()
+            self.ax.set_ylim(current_ylim[0], y)
+            self.canvas.draw()
+            
+        # MANUAL RANGE INPUT
+        elif event.key == 'm':  # Manual range input popup
+            from PyQt5.QtWidgets import QInputDialog
+            
+            # X-range input
+            current_xlim = self.ax.get_xlim()
+            xlim_str, ok = QInputDialog.getText(self, 'Manual X-Limits', 
+                                               f'Input x-range (current: {current_xlim[0]:.1f},{current_xlim[1]:.1f}):',
+                                               text=f'{current_xlim[0]:.1f},{current_xlim[1]:.1f}')
+            if ok and xlim_str:
+                try:
+                    xlimit = [float(val.strip()) for val in xlim_str.split(',')]
+                    if len(xlimit) == 2:
+                        self.ax.set_xlim(xlimit)
+                        
+                        # Y-range input
+                        current_ylim = self.ax.get_ylim()
+                        ylim_str, ok2 = QInputDialog.getText(self, 'Manual Y-Limits', 
+                                                           f'Input y-range (current: {current_ylim[0]:.2f},{current_ylim[1]:.2f}):',
+                                                           text=f'{current_ylim[0]:.2f},{current_ylim[1]:.2f}')
+                        if ok2 and ylim_str:
+                            ylimit = [float(val.strip()) for val in ylim_str.split(',')]
+                            if len(ylimit) == 2:
+                                self.ax.set_ylim(ylimit)
+                        
+                        self.canvas.draw()
+                except ValueError:
+                    QMessageBox.warning(self, "Invalid Input", "Please enter two numbers separated by comma")    
+            
     def update_status(self):
         """Update status"""
         n = len(self.velocity_selector.vel_guess) if self.velocity_selector else 0
         self.status_label.setText(f"Selected {n} components")
-        self.done_btn.setEnabled(n > 0)
         
     def finish_selection(self):
         """Finish and get parameters"""

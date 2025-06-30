@@ -3,6 +3,7 @@
 rbvfit 2.0 Fitting Tab - Enhanced with Parameter Bounds and Plot Range Controls
 
 Enhanced fitting interface with parameter bounds editing, quick fit capability, and plot range controls.
+Updated for unified vfit_mcmc interface.
 """
 
 import numpy as np
@@ -30,15 +31,12 @@ class MCMCThread(QThread):
     fitting_completed = pyqtSignal(object)  # fitter object
     fitting_error = pyqtSignal(str)
     
-    def __init__(self, model, theta, lb, ub, wave, flux, error, mcmc_params):
+    def __init__(self, instrument_data, theta, lb, ub, mcmc_params):
         super().__init__()
-        self.model = model
+        self.instrument_data = instrument_data
         self.theta = theta
         self.lb = lb
         self.ub = ub
-        self.wave = wave
-        self.flux = flux
-        self.error = error
         self.mcmc_params = mcmc_params
         
     def run(self):
@@ -46,11 +44,10 @@ class MCMCThread(QThread):
         try:
             self.status_update.emit("Starting MCMC fitting...")
             
-            # Create fitter
+            # Create fitter with unified interface
             fitter = mc.vfit(
-                self.model.model_flux,
+                self.instrument_data,    # Unified instrument data dictionary
                 self.theta, self.lb, self.ub,
-                self.wave, self.flux, self.error,
                 no_of_Chain=self.mcmc_params['n_walkers'],
                 no_of_steps=self.mcmc_params['n_steps'],
                 sampler=self.mcmc_params['sampler'],
@@ -62,8 +59,7 @@ class MCMCThread(QThread):
             # Run MCMC
             fitter.runmcmc(
                 optimize=self.mcmc_params['optimize'],
-                verbose=False,
-                use_pool=self.mcmc_params['use_pool']
+                verbose=False
             )
             
             self.status_update.emit("MCMC completed successfully")
@@ -169,12 +165,18 @@ class FittingTab(QWidget):
         super().__init__()
         self.main_window = main_window
         
-        # Data storage
-        self.spectra_data = {}
+        # Data storage - NEW: unified interface
+        self.instrument_data = {}
+        self.theta = None
+        self.lb = None
+        self.ub = None
+        self.param_names = []
         self.current_instrument = None
+        
+        # Legacy support
+        self.spectra_data = {}
         self.compiled_model = None
         self.current_theta = None
-        self.param_names = []
         
         # Plot range storage
         self.plot_ranges = {
@@ -244,7 +246,7 @@ class FittingTab(QWidget):
         parent_layout.addWidget(inst_group)
         
         self.instrument_combo = QComboBox()
-        self.instrument_combo.setToolTip("Select instrument/dataset for fitting")
+        self.instrument_combo.setToolTip("Select instrument/dataset for viewing")
         inst_layout.addRow("Instrument:", self.instrument_combo)
         
         # Show model checkbox
@@ -259,13 +261,13 @@ class FittingTab(QWidget):
         bounds_group.setLayout(bounds_layout)
         parent_layout.addWidget(bounds_group)
         
-        # Quick fit button
+        # Quick fit button (disabled for multi-instrument for now)
         quick_fit_layout = QHBoxLayout()
         bounds_layout.addLayout(quick_fit_layout)
         
         self.quick_fit_btn = QPushButton("Quick Fit")
         self.quick_fit_btn.setEnabled(False)
-        self.quick_fit_btn.setToolTip("Run scipy optimization to get better initial parameters")
+        self.quick_fit_btn.setToolTip("Quick optimization (single instrument only)")
         quick_fit_layout.addWidget(self.quick_fit_btn)
         
         quick_fit_layout.addStretch()
@@ -384,9 +386,136 @@ class FittingTab(QWidget):
         self.show_model_check.toggled.connect(self.plot_spectrum)
         self.quick_fit_btn.clicked.connect(self.run_quick_fit)
         self.fit_btn.clicked.connect(self.start_fitting)
+
+    def set_model_data(self, instrument_data, theta, bounds):
+        """
+        Set model data from the updated Model Setup tab.
+        
+        Parameters
+        ----------
+        instrument_data : dict
+            Dictionary with instrument data for vfit_mcmc unified interface
+            Format: {'instrument_name': {'model': func, 'wave': array, 'flux': array, 'error': array}}
+        theta : np.ndarray
+            Global parameter array [N1,N2,...,b1,b2,...,v1,v2,...]
+        bounds : dict
+            Dictionary with 'lb' and 'ub' arrays for lower and upper bounds
+        """
+        print(f"Setting model data: {len(instrument_data)} instruments, {len(theta)} parameters")
+        
+        # Store the unified interface data
+        self.instrument_data = instrument_data
+        self.theta = theta.copy()
+        self.lb = bounds['lb'].copy()
+        self.ub = bounds['ub'].copy()
+        
+        # Generate parameter names from theta structure
+        n_params = len(theta)
+        n_comp = n_params // 3
+        param_names = []
+        
+        # Add all N parameters first, then b, then v (matches theta structure)
+        for i in range(n_comp):
+            param_names.append(f'N_c{i+1}')
+        for i in range(n_comp):
+            param_names.append(f'b_c{i+1}')
+        for i in range(n_comp):
+            param_names.append(f'v_c{i+1}')
+        self.param_names = param_names
+        
+        # Update instrument selector
+        self.instrument_combo.clear()
+        for name in instrument_data.keys():
+            self.instrument_combo.addItem(name)
+        
+        # Set first instrument as current
+        if instrument_data:
+            self.current_instrument = list(instrument_data.keys())[0]
+            
+        # Convert instrument_data to spectra_data format for plotting compatibility
+        self.spectra_data = {}
+        for name, data in instrument_data.items():
+            self.spectra_data[name] = {
+                'wave': data['wave'],
+                'flux': data['flux'],
+                'error': data['error']
+            }
+        
+        # Populate parameter table
+        self.param_bounds_table.populate_parameters(param_names, theta, self.lb, self.ub)
+        
+        # Enable controls
+        self.fit_btn.setEnabled(True)
+        # Quick fit disabled for multi-instrument
+        self.quick_fit_btn.setEnabled(len(instrument_data) == 1)
+        
+        # Update status
+        self.status_text.clear()
+        self.status_text.append("Model data loaded:")
+        self.status_text.append(f"  Instruments: {len(instrument_data)}")
+        self.status_text.append(f"  Parameters: {n_params} ({n_comp} components)")
+        for name, data in instrument_data.items():
+            wave = data['wave']
+            self.status_text.append(f"  {name}: {len(wave)} points, {wave.min():.1f}-{wave.max():.1f} Å")
+        
+        # Reset plot ranges and update plot
+        self.reset_plot_ranges()
+        self.plot_spectrum()
+        
+        print(f"✓ Fitting tab ready: {len(instrument_data)} instruments, {n_params} parameters")
+
+    # LEGACY SUPPORT: Keep the old interface for backward compatibility
+    def set_compiled_model(self, compiled_model, mcmc_params):
+        """Set the compiled model for fitting - backward compatible"""
+        print("Warning: Using legacy set_compiled_model interface")
+        self.compiled_model = compiled_model
+        
+        # Extract theta from mcmc_params (existing interface)
+        if 'theta' in mcmc_params:
+            theta = mcmc_params['theta']
+        else:
+            # Fallback: try to get from main window
+            theta = getattr(self.main_window, 'theta', None)
+            if theta is None:
+                QMessageBox.warning(self, "No Parameters", "No parameter values available")
+                return
+                
+        self.current_theta = theta.copy()
+        
+        # This is a legacy single-instrument setup
+        # Convert to new interface if possible
+        if hasattr(self.main_window, 'spectra_data'):
+            spectra_data = self.main_window.spectra_data
+            if spectra_data:
+                # Create fake instrument_data from legacy data
+                instrument_data = {}
+                for name, data in spectra_data.items():
+                    instrument_data[name] = {
+                        'model': compiled_model.model_flux,  # Same model for all
+                        'wave': data['wave'],
+                        'flux': data['flux'],
+                        'error': data['error']
+                    }
+                
+                # Create bounds
+                n_params = len(theta)
+                n_comp = n_params // 3
+                nguess = theta[:n_comp]
+                bguess = theta[n_comp:2*n_comp]
+                vguess = theta[2*n_comp:]
+                bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+                bounds_dict = {'lb': lb, 'ub': ub}
+                
+                # Use new interface
+                self.set_model_data(instrument_data, theta, bounds_dict)
+                return
+        
+        # Fallback to old behavior if conversion fails
+        self.status_text.append("Legacy model interface - limited functionality")
         
     def set_spectra_data(self, spectra_data):
-        """Update spectra data"""
+        """Update spectra data - legacy support"""
+        print("Warning: Using legacy set_spectra_data interface")
         self.spectra_data = spectra_data
         
         # Reset plot ranges for new data
@@ -399,7 +528,7 @@ class FittingTab(QWidget):
         if spectra_data:
             self.current_instrument = list(spectra_data.keys())[0]
             self.plot_spectrum()
-            
+        
     def reset_plot_ranges(self):
         """Reset plot ranges when new data is loaded"""
         self.plot_ranges = {
@@ -408,64 +537,6 @@ class FittingTab(QWidget):
             'original_xlim': None,
             'original_ylim': None
         }
-            
-    def set_compiled_model(self, compiled_model, mcmc_params):
-        """Set the compiled model for fitting - backward compatible"""
-        self.compiled_model = compiled_model
-        
-        # Extract theta from mcmc_params (existing interface)
-        if 'theta' in mcmc_params:
-            theta = mcmc_params['theta']
-        else:
-            # Fallback: try to get from main window
-            theta = self.main_window.get_current_theta()
-            if theta is None:
-                QMessageBox.warning(self, "No Parameters", "No parameter values available")
-                return
-                
-        self.current_theta = theta.copy()
-        
-        # Generate parameter names - corrected for new theta format [N1,N2,b1,b2,v1,v2]
-        n_params = len(theta)
-        n_comp = n_params // 3
-        param_names = []
-        
-        # Add all N parameters first
-        for i in range(n_comp):
-            param_names.append(f'N_c{i+1}')
-        # Add all b parameters
-        for i in range(n_comp):
-            param_names.append(f'b_c{i+1}')
-        # Add all v parameters  
-        for i in range(n_comp):
-            param_names.append(f'v_c{i+1}')
-        self.param_names = param_names
-        
-        # Generate bounds
-        try:
-            # Extract individual parameter arrays for bounds generation
-            n_params = len(theta)
-            n_comp = n_params // 3
-            
-            nguess = theta[:n_comp]
-            bguess = theta[n_comp:2*n_comp]
-            vguess = theta[2*n_comp:]
-            
-            # Generate bounds using rbvfit function
-            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
-            
-            # Populate parameter table
-            self.param_bounds_table.populate_parameters(param_names, theta, lb, ub)
-            
-            # Enable controls
-            self.quick_fit_btn.setEnabled(True)
-            self.fit_btn.setEnabled(True)
-            
-            self.status_text.append("Model compiled - parameters loaded")
-            self.status_text.append(f"Parameters: {n_params} ({n_comp} components)")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to set up parameters:\n{str(e)}")
             
     def on_instrument_changed(self, instrument_name):
         """Handle instrument selection change"""
@@ -492,12 +563,20 @@ class FittingTab(QWidget):
                                 alpha=0.3, color='gray', label='Error')
         
         # Plot model if available and requested
-        if self.show_model_check.isChecked() and self.compiled_model and self.current_theta is not None:
+        if self.show_model_check.isChecked() and self.theta is not None:
             try:
                 # Get current parameters from table
                 current_theta, _, _ = self.param_bounds_table.get_parameters()
-                model_flux = self.compiled_model.model_flux(current_theta, wave)
-                self.ax_spec.plot(wave, model_flux, 'r-', alpha=0.8, linewidth=2, label='Model')
+                
+                # Use the model function from instrument_data
+                if self.current_instrument in self.instrument_data:
+                    model_func = self.instrument_data[self.current_instrument]['model']
+                    model_flux = model_func(current_theta, wave)
+                    self.ax_spec.plot(wave, model_flux, 'r-', alpha=0.8, linewidth=2, label='Model')
+                elif self.compiled_model:  # Legacy fallback
+                    model_flux = self.compiled_model.model_flux(current_theta, wave)
+                    self.ax_spec.plot(wave, model_flux, 'r-', alpha=0.8, linewidth=2, label='Model')
+                    
             except Exception as e:
                 print(f"Could not plot model: {e}")
                 
@@ -532,7 +611,7 @@ class FittingTab(QWidget):
         self.canvas.draw()
         
     def set_custom_range(self):
-        """Open range setting dialog"""
+        """Open range setting dialog - non-modal to prevent GUI freeze"""
         current_xlim = self.plot_ranges['xlim']
         current_ylim = self.plot_ranges['ylim']
         original_xlim = self.plot_ranges['original_xlim']
@@ -540,11 +619,20 @@ class FittingTab(QWidget):
         
         dialog = PlotRangeDialog(current_xlim, current_ylim, original_xlim, original_ylim, self)
         
-        if dialog.exec_() == QDialog.Accepted:
-            xlim, ylim = dialog.get_ranges()
-            self.plot_ranges['xlim'] = xlim
-            self.plot_ranges['ylim'] = ylim
-            self.plot_spectrum()
+        # Make it non-modal to prevent GUI freezing
+        dialog.setModal(False)
+        
+        # Connect accepted signal to handle result
+        def on_dialog_accepted():
+            if hasattr(dialog, 'get_ranges'):
+                xlim, ylim = dialog.get_ranges()
+                self.plot_ranges['xlim'] = xlim
+                self.plot_ranges['ylim'] = ylim
+                self.plot_spectrum()
+            dialog.deleteLater()
+        
+        dialog.accepted.connect(on_dialog_accepted)
+        dialog.show()  # Use show() instead of exec_() to prevent blocking
             
     def reset_range(self):
         """Reset to original auto ranges"""
@@ -553,44 +641,54 @@ class FittingTab(QWidget):
         self.plot_spectrum()
         
     def run_quick_fit(self):
-        """Run quick scipy optimization"""
-        if not self.compiled_model or not self.current_instrument:
-            QMessageBox.warning(self, "No Model", "No compiled model available")
+        """Run quick scipy optimization - single instrument only"""
+        if len(self.instrument_data) > 1:
+            QMessageBox.warning(self, "Multi-instrument", 
+                              "Quick fit not supported for multi-instrument data")
+            return
+            
+        if not self.current_instrument or not self.instrument_data:
+            QMessageBox.warning(self, "No Model", "No model data available")
             return
             
         try:
             # Get current parameters and bounds
             theta, lb, ub = self.param_bounds_table.get_parameters()
             
-            # Get spectrum data
-            spec_data = self.spectra_data[self.current_instrument]
-            wave = spec_data['wave']
-            flux = spec_data['flux']
-            error = spec_data.get('error', np.ones_like(flux) * 0.05)
+            # Get spectrum data for current instrument
+            inst_data = self.instrument_data[self.current_instrument]
+            wave = inst_data['wave']
+            flux = inst_data['flux']
+            error = inst_data['error']
+            model_func = inst_data['model']
             
-            # Create temporary fitter for quick fit
+            # Create temporary single-instrument fitter for quick fit
             self.status_text.append("Running quick fit...")
             
-            fitter = mc.vfit(
-                self.compiled_model.model_flux,
-                theta, lb, ub,
-                wave, flux, error
-            )
+            # Use scipy optimization directly
+            from scipy.optimize import minimize
             
-            # Run quick fit
-            fitter.fit_quick()
+            def chi2(params):
+                try:
+                    model = model_func(params, wave)
+                    return np.sum(((flux - model) / error) ** 2)
+                except:
+                    return 1e10  # Return large value if model evaluation fails
+            
+            result = minimize(chi2, theta, bounds=list(zip(lb, ub)), method='L-BFGS-B')
+            best_theta = result.x
             
             # Update table with optimized parameters
-            self.param_bounds_table.update_initial_values(fitter.theta_best)
+            self.param_bounds_table.update_initial_values(best_theta)
             
             # Update plot
             self.plot_spectrum()
             
             # Calculate chi-squared
             try:
-                model_flux = self.compiled_model.model_flux(fitter.theta_best, wave)
+                model_flux = model_func(best_theta, wave)
                 chi2 = np.sum(((flux - model_flux) / error) ** 2)
-                ndof = len(flux) - len(fitter.theta_best)
+                ndof = len(flux) - len(best_theta)
                 chi2_reduced = chi2 / ndof
                 
                 self.status_text.append(f"Quick fit completed: χ²/ν = {chi2_reduced:.3f}")
@@ -602,9 +700,9 @@ class FittingTab(QWidget):
             self.status_text.append(f"Quick fit error: {str(e)}")
             
     def start_fitting(self):
-        """Start MCMC fitting"""
-        if not self.compiled_model or not self.current_instrument:
-            QMessageBox.warning(self, "No Model", "No compiled model available")
+        """Start MCMC fitting using unified interface"""
+        if not self.instrument_data:
+            QMessageBox.warning(self, "No Model", "No model data available for fitting")
             return
             
         try:
@@ -617,12 +715,6 @@ class FittingTab(QWidget):
                                   "Initial values must be within bounds")
                 return
                 
-            # Get spectrum data
-            spec_data = self.spectra_data[self.current_instrument]
-            wave = spec_data['wave']
-            flux = spec_data['flux']
-            error = spec_data.get('error', np.ones_like(flux) * 0.05)
-            
             # Update MCMC parameters from GUI
             self.mcmc_params.update({
                 'sampler': self.sampler_combo.currentText(),
@@ -639,9 +731,9 @@ class FittingTab(QWidget):
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 0)  # Indeterminate
             
-            # Start MCMC thread
+            # Start MCMC thread with unified interface
             self.mcmc_thread = MCMCThread(
-                self.compiled_model, theta, lb, ub, wave, flux, error, self.mcmc_params
+                self.instrument_data, theta, lb, ub, self.mcmc_params
             )
             self.mcmc_thread.status_update.connect(self.on_status_update)
             self.mcmc_thread.fitting_completed.connect(self.on_fitting_completed)
@@ -649,6 +741,12 @@ class FittingTab(QWidget):
             self.mcmc_thread.start()
             
             self.fitting_started.emit(self.mcmc_params)
+            
+            self.status_text.append(f"Started MCMC fitting:")
+            self.status_text.append(f"  Instruments: {', '.join(self.instrument_data.keys())}")
+            self.status_text.append(f"  Sampler: {self.mcmc_params['sampler']}")
+            self.status_text.append(f"  Walkers: {self.mcmc_params['n_walkers']}")
+            self.status_text.append(f"  Steps: {self.mcmc_params['n_steps']}")
             
         except Exception as e:
             QMessageBox.critical(self, "Fitting Error", f"Failed to start fitting:\n{str(e)}")
@@ -665,19 +763,51 @@ class FittingTab(QWidget):
         self.reset_fitting_ui()
         
         # Update parameter table with best-fit values
-        self.param_bounds_table.update_initial_values(fitter.best_theta)
+        if hasattr(fitter, 'best_theta'):
+            best_theta = fitter.best_theta
+        elif hasattr(fitter, 'theta_best'):
+            best_theta = fitter.theta_best
+        else:
+            # Extract from samples
+            try:
+                samples = fitter.get_samples(flat=True, burn_in=0.5)
+                best_theta = np.median(samples, axis=0)
+            except:
+                best_theta = self.theta  # Fallback to original
+                
+        self.param_bounds_table.update_initial_values(best_theta)
         
         # Create results object
-        if hasattr(self.main_window, 'get_current_model'):
-            model = self.main_window.get_current_model()
-            if model:
-                results = fr.FitResults(fitter, model)
+        try:
+            if hasattr(self.main_window, 'get_current_model'):
+                model = self.main_window.get_current_model()
+                if model:
+                    results = fr.FitResults(fitter, model)
+                else:
+                    results = fitter  # Fallback
             else:
-                results = fitter  # Fallback
-        else:
-            results = fitter
+                results = fitter
+        except:
+            results = fitter  # Fallback if FitResults creation fails
             
         self.status_text.append("Fitting completed successfully")
+        
+        # Calculate basic statistics
+        try:
+            if hasattr(fitter, 'get_samples'):
+                samples = fitter.get_samples(flat=True, burn_in=0.5)
+                n_samples = len(samples)
+                acceptance_rate = getattr(fitter, 'acceptance_fraction', 'N/A')
+                self.status_text.append(f"Final samples: {n_samples}")
+                if acceptance_rate != 'N/A':
+                    if hasattr(acceptance_rate, '__len__'):
+                        acc_mean = np.mean(acceptance_rate)
+                        self.status_text.append(f"Acceptance rate: {acc_mean:.3f}")
+                    else:
+                        self.status_text.append(f"Acceptance rate: {acceptance_rate:.3f}")
+        except:
+            pass  # Skip stats if not available
+            
         self.fitting_completed.emit(results)
         
         # Update model display
@@ -693,7 +823,8 @@ class FittingTab(QWidget):
     def reset_fitting_ui(self):
         """Reset UI after fitting"""
         self.fit_btn.setEnabled(True)
-        self.quick_fit_btn.setEnabled(True)
+        # Re-enable quick fit only for single instrument
+        self.quick_fit_btn.setEnabled(len(self.instrument_data) == 1)
         self.progress_bar.setVisible(False)
         
     def get_current_theta(self):
@@ -701,7 +832,7 @@ class FittingTab(QWidget):
         if self.param_bounds_table.rowCount() > 0:
             theta, _, _ = self.param_bounds_table.get_parameters()
             return theta
-        return self.current_theta
+        return self.theta
         
     def refresh(self):
         """Refresh the tab"""

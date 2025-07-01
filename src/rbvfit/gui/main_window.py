@@ -198,9 +198,10 @@ class UpdatedRbvfitGUI(QMainWindow):
     def on_fitting_completed(self, fit_results):
         """Handle fitting completion from Tab 3"""
         self.fit_results = fit_results
-        
+
         # Pass to Results tab
         self.results_tab.set_results(fit_results)
+        
         
         # Enable Results tab
         self.tab_widget.setTabEnabled(3, True)

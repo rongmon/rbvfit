@@ -86,6 +86,12 @@ class ResultsTab(QWidget):
         self.save_plots_btn.setToolTip("Save all plots to files")
         control_layout.addWidget(self.save_plots_btn)
 
+        # NEW: Add save results button
+        self.save_results_btn = QPushButton("Save Results")
+        self.save_results_btn.setEnabled(False)
+        self.save_results_btn.setToolTip("Save complete fit results to HDF5 file for later analysis")
+        control_layout.addWidget(self.save_results_btn)        
+
         # NEW: Add trace plots button
         self.trace_plots_btn = QPushButton("Show Trace Plots")
         self.trace_plots_btn.setEnabled(False)
@@ -291,6 +297,7 @@ class ResultsTab(QWidget):
         self.export_latex_btn.clicked.connect(self.export_latex)
         self.save_plots_btn.clicked.connect(self.save_plots)
         self.trace_plots_btn.clicked.connect(self.show_trace_plots)
+        self.save_results_btn.clicked.connect(self.save_results)
 
         
         # Plot controls
@@ -334,6 +341,8 @@ class ResultsTab(QWidget):
         self.export_corner_btn.setEnabled(True)
         self.copy_table_btn.setEnabled(True)
         self.export_table_btn.setEnabled(True)
+        self.save_results_btn.setEnabled(True)
+
         
         # Update all displays
         self.update_statistics()
@@ -353,6 +362,7 @@ class ResultsTab(QWidget):
         self.export_corner_btn.setEnabled(False)
         self.copy_table_btn.setEnabled(False)
         self.export_table_btn.setEnabled(False)
+        self.save_results_btn.setEnabled(False)
 
         if hasattr(self, 'instrument_combo'):
             self.instrument_combo.clear()
@@ -372,7 +382,38 @@ class ResultsTab(QWidget):
             self.comparison_canvas.draw()
             self.velocity_canvas.draw()
             
-
+    def save_results(self):
+        """Save fit results with file dialog."""
+        if not hasattr(self, 'results') or self.results is None:
+            QMessageBox.warning(self, "No Results", "No fit results available to save.")
+            return
+        
+        
+        # Open file save dialog
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Fit Results",
+            "fit_results.h5",  # Default filename
+            "HDF5 files (*.h5 *.hdf5);;All files (*)"
+        )
+        
+        if filename:
+            try:
+                #
+                self.results.save(filename)
+                
+                QMessageBox.information(
+                    self, 
+                    "Save Successful", 
+                    f"Results saved successfully to:\n{filename}"
+                )
+            except Exception as e:
+                QMessageBox.critical(
+                    self, 
+                    "Save Failed", 
+                    f"Failed to save results:\n{str(e)}"
+                )
+    
     def populate_instrument_dropdown(self):
         """Populate instrument dropdown with available instruments/configurations"""
         self.instrument_combo.clear()

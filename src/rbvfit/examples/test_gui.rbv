@@ -1,0 +1,131 @@
+{
+  "version": "2.0",
+  "created": "2025-07-01 11:22:17.385901",
+  "configurations": {
+    "cos": {
+      "name": "cos",
+      "fwhm": 2.5,
+      "description": "",
+      "filename": "/Users/bordoloi/WORK/python/rbcodes/example-data/test.fits",
+      "has_data": true,
+      "data_points": 167,
+      "wavelength_range": [
+        1189.5239660704542,
+        1194.4856204756188
+      ],
+      "original_wavelength_range": [
+        1135.5634836239267,
+        1795.5297733561463
+      ],
+      "original_data_points": 19663,
+      "wavelength_selection": {
+        "mode": "simple",
+        "min": 1189.5,
+        "max": 1194.5
+      },
+      "is_trimmed": true
+    }
+  },
+  "config_systems": {
+    "cos": [
+      {
+        "z": 0.0,
+        "ion": "SiII",
+        "transitions": [
+          1190.5,
+          1193.5
+        ],
+        "id": "SiII_z0.000000"
+      },
+      {
+        "z": 0.1619,
+        "ion": "HI",
+        "transitions": [
+          1025.6
+        ],
+        "id": "HI_z0.161900"
+      }
+    ]
+  },
+  "config_parameters": {
+    "cos___SiII_z0.000000": {
+      "data": [
+        {
+          "Component": "1.0",
+          "N": 13.95,
+          "b": 22.0,
+          "v": -22.6
+        }
+      ],
+      "columns": [
+        "Component",
+        "N",
+        "b",
+        "v"
+      ]
+    },
+    "cos___HI_z0.161900": {
+      "data": [
+        {
+          "Component": "1.0",
+          "N": 13.66,
+          "b": 22.0,
+          "v": 21.0
+        }
+      ],
+      "columns": [
+        "Component",
+        "N",
+        "b",
+        "v"
+      ]
+    }
+  },
+  "current_config": "cos",
+  "current_system_id": "HI_z0.161900",
+  "master_theta": [
+    13.95,
+    13.66,
+    22.0,
+    22.0,
+    -22.6,
+    21.0
+  ],
+  "collection_result_info": {
+    "n_systems": 2,
+    "n_params": 6,
+    "n_instruments": 1,
+    "system_info": [
+      {
+        "z": 0.0,
+        "ion": "SiII",
+        "transitions": [
+          1190.5,
+          1193.5
+        ],
+        "components": 1,
+        "source_instrument": "cos"
+      },
+      {
+        "z": 0.1619,
+        "ion": "HI",
+        "transitions": [
+          1025.6
+        ],
+        "components": 1,
+        "source_instrument": "cos"
+      }
+    ]
+  },
+  "gui_state": {
+    "current_tab": 0,
+    "tab_enabled": [
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "saved_at": "2025-07-01T11:22:17.386497",
+  "rbvfit_version": "2.0"
+}

@@ -122,7 +122,11 @@ class EnhancedWavelengthTrimDialog(QDialog):
         # Buttons
         button_layout = QHBoxLayout()
         layout.addLayout(button_layout)
-        
+        #ADD: History button
+        self.history_btn = QPushButton("Show Selection Info")
+        self.history_btn.setToolTip("Show information about current selection")
+        button_layout.addWidget(self.history_btn)
+    
         reset_btn = QPushButton("Reset to Full Range")
         button_layout.addWidget(reset_btn)
         
@@ -134,6 +138,8 @@ class EnhancedWavelengthTrimDialog(QDialog):
         # Connect signals
         self.mode_group.buttonClicked.connect(self.on_mode_changed)
         self.validate_btn.clicked.connect(self.validate_expression)
+        self.history_btn.clicked.connect(self.show_selection_info)  # ADD THIS
+
         reset_btn.clicked.connect(self.reset_range)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
@@ -254,6 +260,78 @@ class EnhancedWavelengthTrimDialog(QDialog):
                     continue
                     
         return regions
+
+    def restore_previous_selection(self, last_selection):
+        """Restore the previous wavelength selection to the dialog"""
+        mode = last_selection.get('mode', 'simple')
+        
+        if mode == 'simple':
+            # Restore simple range
+            self.simple_mode.setChecked(True)
+            if 'min' in last_selection and 'max' in last_selection:
+                self.min_spin.setValue(last_selection['min'])
+                self.max_spin.setValue(last_selection['max'])
+                
+        elif mode == 'multi':
+            # Restore multiple regions
+            self.multi_mode.setChecked(True)
+            if 'regions' in last_selection:
+                # Convert regions back to text format
+                regions_text = '\n'.join([f"{r[0]}-{r[1]}" for r in last_selection['regions']])
+                self.regions_text.setPlainText(regions_text)
+                
+        elif mode == 'expression':
+            # Restore custom expression
+            self.expression_mode.setChecked(True)
+            if 'expression' in last_selection:
+                self.expression_text.setText(last_selection['expression'])
+        
+        # Update dialog display to show correct widgets
+        # Trigger the mode change to show/hide appropriate widgets
+        checked_button = None
+        if mode == 'simple':
+            checked_button = self.simple_mode
+        elif mode == 'multi':
+            checked_button = self.multi_mode
+        elif mode == 'expression':
+            checked_button = self.expression_mode
+        
+        if checked_button:
+            self.on_mode_changed(checked_button)
+    def show_selection_info(self):
+        """Show information about the current selection"""
+        # Get current selection data
+        selection_data = self.get_selection_data()
+        
+        info_text = f"Current Selection:\n"
+        info_text += f"Mode: {selection_data['mode']}\n\n"
+        
+        if selection_data['mode'] == 'simple':
+            info_text += f"Range: {selection_data['min']:.2f} - {selection_data['max']:.2f} Å\n"
+            info_text += f"Width: {selection_data['max'] - selection_data['min']:.2f} Å"
+        elif selection_data['mode'] == 'multi':
+            regions = selection_data.get('regions', [])
+            info_text += f"Regions: {len(regions)} ranges\n"
+            total_width = 0
+            for i, (min_val, max_val) in enumerate(regions):
+                width = max_val - min_val
+                total_width += width
+                info_text += f"  {i+1}: {min_val:.2f} - {max_val:.2f} Å (width: {width:.2f} Å)\n"
+            info_text += f"Total width: {total_width:.2f} Å"
+        elif selection_data['mode'] == 'expression':
+            info_text += f"Expression: {selection_data['expression']}\n"
+            # Try to evaluate and show how many points would be selected
+            try:
+                wave_test = np.linspace(self.wave_min, self.wave_max, 1000)
+                mask = self.evaluate_expression(selection_data['expression'], wave_test)
+                n_selected = np.sum(mask)
+                percentage = (n_selected / len(wave_test)) * 100
+                info_text += f"Would select ~{percentage:.1f}% of data points"
+            except:
+                info_text += "Cannot evaluate expression"
+        
+        QMessageBox.information(self, "Selection Information", info_text)
+
 
 
 class ConfigurationDialog(QDialog):
@@ -908,12 +986,11 @@ class ConfigurationDataTab(QWidget):
     # Enhanced trim_wavelengths method for ConfigurationDataTab
     def enhanced_trim_wavelengths(self):
         """Enhanced trim wavelengths method with multiple region support"""
-        current_item = self.config_list.currentItem()
-        if not current_item:
+        config_name = self.preview_selector.currentText()
+        if not config_name:
             QMessageBox.warning(self, "No Selection", "Please select a configuration")
             return
             
-        config_name = current_item.text().split(' - ')[0]
         config_data = self.configurations[config_name]
         
         if config_data['wave'] is None:
@@ -926,13 +1003,20 @@ class ConfigurationDataTab(QWidget):
         
         # Use enhanced dialog
         dialog = EnhancedWavelengthTrimDialog(orig_min, orig_max, current_min, current_max, parent=self)
+        # RESTORE PREVIOUS SELECTION if it exists
+        if '_last_selection' in config_data:
+            last_selection = config_data['_last_selection']
+            dialog.restore_previous_selection(last_selection)
+           
+
         if dialog.exec_() == QDialog.Accepted:
             selection_data = dialog.get_selection_data()
             
             # Apply enhanced trimming
             if self.enhanced_trim_configuration_data(config_name, selection_data):
                 self.update_config_display()
-                self.update_preview()
+                #self.update_preview()
+                self.update_preview_display() 
                 self.update_status()
                 
                 # Show summary
@@ -945,50 +1029,9 @@ class ConfigurationDataTab(QWidget):
                                       f"Result: {n_points} points, range {wave_range} Å")
     
 
-        
-    def trim_wavelengths(self):
-        """Trim wavelengths for selected configuration"""
-        current_item = self.config_list.currentItem()
-        if not current_item:
-            QMessageBox.warning(self, "No Selection", "Please select a configuration")
-            return
+
             
-        config_name = current_item.text().split(' - ')[0]
-        config_data = self.configurations[config_name]
-        
-        if config_data['wave'] is None:
-            QMessageBox.warning(self, "No Data", "Configuration has no assigned data")
-            return
-            
-        wave = config_data['wave']
-        current_min, current_max = wave.min(), wave.max()
-        orig_min, orig_max = config_data['wave_original'].min(), config_data['wave_original'].max()
-        
-        dialog = WavelengthTrimDialog(orig_min, orig_max, current_min, current_max, parent=self)
-        if dialog.exec_() == QDialog.Accepted:
-            new_min, new_max = dialog.get_range()
-            
-            # Apply trimming
-            self.trim_configuration_data(config_name, new_min, new_max)
-            self.update_config_display()
-            self.update_preview()
-            self.update_status()
-            
-    def trim_configuration_data(self, config_name, wave_min, wave_max):
-        """Apply wavelength trimming to configuration data"""
-        config_data = self.configurations[config_name]
-        
-        # Use original data for trimming
-        wave_orig = config_data['wave_original']
-        flux_orig = config_data['flux_original']
-        error_orig = config_data['error_original']
-        
-        # Apply mask
-        mask = (wave_orig >= wave_min) & (wave_orig <= wave_max)
-        
-        config_data['wave'] = wave_orig[mask]
-        config_data['flux'] = flux_orig[mask]
-        config_data['error'] = error_orig[mask]
+
         
     def build_unions(self):
         """Build unions of overlapping spectral regions"""
@@ -1154,3 +1197,221 @@ class ConfigurationDataTab(QWidget):
     def has_valid_configurations(self):
         """Check if there are valid configurations with data"""
         return any(config['wave'] is not None for config in self.configurations.values())
+
+    #File configuration restoration from saved files
+
+    def _restore_configurations(self, configurations):
+        """Restore configurations from project load with data and wavelength     processing"""
+        self.configurations = configurations
+        
+        # First update displays
+        self.update_config_display()
+        
+        # Try to reload spectrum data and apply selections
+        missing_files = []
+        restored_configs = []
+        failed_configs = []
+        
+        for config_name, config in configurations.items():
+            filename = config.get('filename', '')
+            
+            if filename:
+                success = self._restore_configuration_data(config_name, config)
+                if success:
+                    restored_configs.append(config_name)
+                    
+                    # POPULATE GUI CONTROLS - Add to loaded_spectra for GUI consistency
+                    basename = Path(filename).name
+                    self.loaded_spectra[filename] = {
+                        'wave': config['wave'],
+                        'flux': config['flux'], 
+                        'error': config['error'],
+                        'basename': basename,
+                        'wave_original': config['wave_original'],
+                        'flux_original': config['flux_original'],
+                        'error_original': config['error_original']
+                    }
+                    
+                    # Add to file list widget
+                    if basename not in [self.file_list.item(i).text() for i in range(    self.file_list.count())]:
+                        self.file_list.addItem(basename)
+                        
+                else:
+                    failed_configs.append(config_name)
+                    if not Path(filename).exists():
+                        missing_files.append(Path(filename).name)
+        
+        # Update GUI selectors AFTER populating loaded_spectra
+        self._update_file_selector()
+        self._update_config_selector()
+        
+        # Update displays after restoration
+        self.update_config_display()
+        self.update_preview_display()
+        self.update_status()
+        
+        # Show restoration summary
+        if restored_configs:
+            self.status_label.setText(f"✓ Restored {len(restored_configs)}     configurations with data")
+        elif failed_configs:
+            self.status_label.setText(f"⚠️ {len(failed_configs)} configurations need     data reassignment")
+        
+        # Emit signal if any configs exist
+        if configurations:
+            self.configurations_updated.emit(configurations)
+    
+    def _update_file_selector(self):
+        """Update file selector dropdown"""
+        self.file_selector.clear()
+        for filename in self.loaded_spectra.keys():
+            basename = Path(filename).name
+            self.file_selector.addItem(basename, filename)  # Display basename, store     full path
+    
+    def _update_config_selector(self):
+        """Update configuration selector dropdown"""
+        self.config_selector.clear()
+        for config_name in self.configurations.keys():
+            self.config_selector.addItem(config_name)
+    
+    # Also add these helper methods for the existing workflow:
+    
+    def update_file_selector(self):
+        """Public method to update file selector - for existing code compatibility"""
+        self._update_file_selector()
+    
+    def update_config_selector(self):
+        """Public method to update config selector - for existing code compatibility"""  
+        self._update_config_selector()    
+
+
+    
+    def _restore_configuration_data(self, config_name, config):
+        """Restore spectrum data and wavelength processing for a single configuration"""
+        filename = config.get('filename', '')
+        
+        if not filename:
+            return False
+            
+        if not Path(filename).exists():
+            return False
+        
+        try:
+            # Load the spectrum file
+            from rbvfit.gui.io import load_spectrum_file
+            wave, flux, error = load_spectrum_file(filename)
+            
+            # Store original data
+            config['wave_original'] = wave.copy()
+            config['flux_original'] = flux.copy() 
+            config['error_original'] = error.copy()
+            
+            # Apply wavelength selection if it was saved
+            if '_last_selection' in config:
+                selection_data = config['_last_selection']
+                success = self._apply_saved_wavelength_selection(config, selection_data)
+                if not success:
+                    # If selection fails, use full range
+                    config['wave'] = wave
+                    config['flux'] = flux
+                    config['error'] = error
+            else:
+                # No selection saved, use full range
+                config['wave'] = wave
+                config['flux'] = flux
+                config['error'] = error
+            
+            return True
+            
+        except Exception as e:
+            print(f"Failed to restore data for {config_name}: {e}")
+            return False
+    
+    def _apply_saved_wavelength_selection(self, config, selection_data):
+        """Re-apply saved wavelength selection to loaded data"""
+        try:
+            wave_orig = config['wave_original']
+            flux_orig = config['flux_original']
+            error_orig = config['error_original']
+            
+            # Create mask based on saved selection mode
+            if selection_data['mode'] == 'simple':
+                # Simple range
+                wave_min = selection_data['min']
+                wave_max = selection_data['max']
+                mask = (wave_orig >= wave_min) & (wave_orig <= wave_max)
+                
+            elif selection_data['mode'] == 'multi':
+                # Multiple regions
+                mask = np.zeros_like(wave_orig, dtype=bool)
+                for min_val, max_val in selection_data['regions']:
+                    region_mask = (wave_orig >= min_val) & (wave_orig <= max_val)
+                    mask |= region_mask
+                    
+            elif selection_data['mode'] == 'expression':
+                # Custom expression
+                expression = selection_data['expression']
+                if not expression:
+                    return False
+                
+                mask = self.evaluate_wavelength_expression(expression, wave_orig)
+                
+            else:
+                return False
+            
+            # Apply mask
+            if not np.any(mask):
+                return False
+                
+            config['wave'] = wave_orig[mask]
+            config['flux'] = flux_orig[mask]
+            config['error'] = error_orig[mask]
+            
+            return True
+            
+        except Exception as e:
+            print(f"Failed to apply wavelength selection: {e}")
+            return False
+    
+    def evaluate_wavelength_expression(self, expression, wave):
+        """Safely evaluate wavelength selection expression"""
+        # Replace common alternative operators
+        expression = expression.replace('*', '&')  # Convert * to & for logical AND
+        expression = expression.replace('+', '|')  # Convert + to | for logical OR
+        
+        # Create safe namespace
+        namespace = {
+            'wave': wave,
+            'np': np,
+            '__builtins__': {}
+        }
+        
+        try:
+            result = eval(expression, namespace)
+            if not isinstance(result, np.ndarray) or result.dtype != bool:
+                raise ValueError("Expression must return a boolean array")
+            return result
+        except Exception as e:
+            raise ValueError(f"Cannot evaluate expression: {str(e)}")
+    
+    def clear_state(self):
+        """Clear tab state for project loading"""
+        # Clear data structures
+        self.configurations = {}
+        self.loaded_spectra = {}
+        
+        # Clear UI elements
+        self.config_list.clear()
+        self.file_list.clear()
+        self.config_selector.clear()
+        self.file_selector.clear()
+        self.config_info.clear()
+        self.status_label.setText("Ready")
+        
+        # Clear preview plot
+        if hasattr(self, 'preview_figure'):
+            self.preview_figure.clear()
+            if hasattr(self, 'preview_canvas'):
+                self.preview_canvas.draw()
+        
+        # Reset button states
+        self.update_controls_state()    

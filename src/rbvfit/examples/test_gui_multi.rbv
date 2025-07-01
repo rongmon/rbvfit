@@ -1,0 +1,153 @@
+{
+  "version": "2.0",
+  "created": "2025-07-01 12:26:31.821259",
+  "configurations": {
+    "hires": {
+      "name": "hires",
+      "fwhm": 4.25,
+      "description": "",
+      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J1030_9089_HIRES_OI_air2vac_updated.json",
+      "has_data": true,
+      "data_points": 393,
+      "wavelength_range": [
+        1300.6678715972623,
+        1303.9931762908996
+      ],
+      "original_wavelength_range": [
+        1295.6543452672604,
+        1308.6758819508366
+      ],
+      "original_data_points": 1536,
+      "wavelength_selection": {
+        "mode": "simple",
+        "min": 1300.66,
+        "max": 1304.0
+      },
+      "is_trimmed": true
+    },
+    "xshooter": {
+      "name": "xshooter",
+      "fwhm": 2.5,
+      "description": "",
+      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J1030_9089_XShooter_OI1302.json",
+      "has_data": true,
+      "data_points": 65,
+      "wavelength_range": [
+        1300.7131836280475,
+        1303.9575932393261
+      ],
+      "original_wavelength_range": [
+        1295.6597969957677,
+        1308.6354622100391
+      ],
+      "original_data_points": 257,
+      "wavelength_selection": {
+        "mode": "simple",
+        "min": 1300.66,
+        "max": 1304.0
+      },
+      "is_trimmed": true
+    }
+  },
+  "config_systems": {
+    "hires": [
+      {
+        "z": 0.0,
+        "ion": "OI",
+        "transitions": [
+          1302.5
+        ],
+        "id": "OI_z0.000000"
+      }
+    ],
+    "xshooter": [
+      {
+        "z": 0.0,
+        "ion": "OI",
+        "transitions": [
+          1302.5
+        ],
+        "id": "OI_z0.000000"
+      }
+    ]
+  },
+  "config_parameters": {
+    "hires___OI_z0.000000": {
+      "data": [],
+      "columns": [
+        "Component",
+        "N",
+        "b",
+        "v"
+      ]
+    },
+    "xshooter___OI_z0.000000": {
+      "data": [
+        {
+          "Component": "1.0",
+          "N": 13.34,
+          "b": 22.0,
+          "v": -174.2
+        },
+        {
+          "Component": "2.0",
+          "N": 13.95,
+          "b": 22.0,
+          "v": -108.1
+        },
+        {
+          "Component": "3.0",
+          "N": 13.16,
+          "b": 22.0,
+          "v": -22.6
+        }
+      ],
+      "columns": [
+        "Component",
+        "N",
+        "b",
+        "v"
+      ]
+    }
+  },
+  "current_config": "xshooter",
+  "current_system_id": "OI_z0.000000",
+  "master_theta": [
+    13.34,
+    13.95,
+    13.16,
+    22.0,
+    22.0,
+    22.0,
+    -174.2,
+    -108.1,
+    -22.6
+  ],
+  "collection_result_info": {
+    "n_systems": 1,
+    "n_params": 9,
+    "n_instruments": 2,
+    "system_info": [
+      {
+        "z": 0.0,
+        "ion": "OI",
+        "transitions": [
+          1302.5
+        ],
+        "components": 3,
+        "source_instrument": "xshooter"
+      }
+    ]
+  },
+  "gui_state": {
+    "current_tab": 0,
+    "tab_enabled": [
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "saved_at": "2025-07-01T12:26:31.822066",
+  "rbvfit_version": "2.0"
+}

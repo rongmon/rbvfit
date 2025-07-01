@@ -447,7 +447,8 @@ class FittingTab(QWidget):
         # Enable controls
         self.fit_btn.setEnabled(True)
         # Quick fit disabled for multi-instrument
-        self.quick_fit_btn.setEnabled(len(instrument_data) == 1)
+        #self.quick_fit_btn.setEnabled(len(instrument_data) == 1)
+        self.quick_fit_btn.setEnabled(True)
         
         # Update status
         self.status_text.clear()
@@ -533,7 +534,7 @@ class FittingTab(QWidget):
         """Reset plot ranges when new data is loaded"""
         self.plot_ranges = {
             'xlim': None,
-            'ylim': None, 
+            'ylim': [-0.02,1.5], 
             'original_xlim': None,
             'original_ylim': None
         }
@@ -641,12 +642,7 @@ class FittingTab(QWidget):
         self.plot_spectrum()
         
     def run_quick_fit(self):
-        """Run quick scipy optimization - single instrument only"""
-        if len(self.instrument_data) > 1:
-            QMessageBox.warning(self, "Multi-instrument", 
-                              "Quick fit not supported for multi-instrument data")
-            return
-            
+        """Run quick scipy optimization - supports single and multi-instrument"""
         if not self.current_instrument or not self.instrument_data:
             QMessageBox.warning(self, "No Model", "No model data available")
             return
@@ -655,27 +651,40 @@ class FittingTab(QWidget):
             # Get current parameters and bounds
             theta, lb, ub = self.param_bounds_table.get_parameters()
             
-            # Get spectrum data for current instrument
-            inst_data = self.instrument_data[self.current_instrument]
-            wave = inst_data['wave']
-            flux = inst_data['flux']
-            error = inst_data['error']
-            model_func = inst_data['model']
-            
-            # Create temporary single-instrument fitter for quick fit
             self.status_text.append("Running quick fit...")
             
             # Use scipy optimization directly
             from scipy.optimize import minimize
             
-            def chi2(params):
+            def chi2_multi_instrument(params):
+                """Chi-squared for all instruments combined"""
                 try:
-                    model = model_func(params, wave)
-                    return np.sum(((flux - model) / error) ** 2)
+                    total_chi2 = 0.0
+                    
+                    # Sum chi-squared across all instruments
+                    for name, inst_data in self.instrument_data.items():
+                        wave = inst_data['wave']
+                        flux = inst_data['flux']
+                        error = inst_data['error']
+                        model_func = inst_data['model']
+                        
+                        model = model_func(params, wave)
+                        chi2_contrib = np.sum(((flux - model) / error) ** 2)
+                        total_chi2 += chi2_contrib
+                    
+                    return total_chi2
                 except:
                     return 1e10  # Return large value if model evaluation fails
             
-            result = minimize(chi2, theta, bounds=list(zip(lb, ub)), method='L-BFGS-B')
+            # Show info about optimization
+            n_instruments = len(self.instrument_data)
+            if n_instruments == 1:
+                self.status_text.append(f"Optimizing single instrument: {self.current_instrument}")
+            else:
+                self.status_text.append(f"Optimizing {n_instruments} instruments jointly")
+            
+            # Run scipy optimization
+            result = minimize(chi2_multi_instrument, theta, bounds=list(zip(lb, ub)), method='L-BFGS-B')
             best_theta = result.x
             
             # Update table with optimized parameters
@@ -684,21 +693,42 @@ class FittingTab(QWidget):
             # Update plot
             self.plot_spectrum()
             
-            # Calculate chi-squared
+            # Calculate and display chi-squared breakdown
             try:
-                model_flux = model_func(best_theta, wave)
-                chi2 = np.sum(((flux - model_flux) / error) ** 2)
-                ndof = len(flux) - len(best_theta)
-                chi2_reduced = chi2 / ndof
+                total_chi2 = 0.0
+                total_points = 0
                 
-                self.status_text.append(f"Quick fit completed: χ²/ν = {chi2_reduced:.3f}")
-            except Exception:
-                self.status_text.append("Quick fit completed")
+                self.status_text.append("Chi-squared breakdown:")
+                
+                for name, inst_data in self.instrument_data.items():
+                    wave = inst_data['wave']
+                    flux = inst_data['flux']
+                    error = inst_data['error']
+                    model_func = inst_data['model']
+                    
+                    model_flux = model_func(best_theta, wave)
+                    chi2_inst = np.sum(((flux - model_flux) / error) ** 2)
+                    ndof_inst = len(flux)
+                    chi2_reduced_inst = chi2_inst / ndof_inst
+                    
+                    total_chi2 += chi2_inst
+                    total_points += ndof_inst
+                    
+                    self.status_text.append(f"  {name}: χ²/N = {chi2_reduced_inst:.3f}")
+                
+                # Overall chi-squared
+                total_ndof = total_points - len(best_theta)
+                total_chi2_reduced = total_chi2 / total_ndof if total_ndof > 0 else total_chi2
+                
+                self.status_text.append(f"✅ Quick fit completed: Total χ²/ν = {total_chi2_reduced:.3f}")
+                
+            except Exception as e:
+                self.status_text.append(f"✅ Quick fit completed (chi2 calculation failed: {str(e)})")
                 
         except Exception as e:
             QMessageBox.critical(self, "Quick Fit Error", f"Quick fit failed:\n{str(e)}")
-            self.status_text.append(f"Quick fit error: {str(e)}")
-            
+            self.status_text.append(f"❌ Quick fit error: {str(e)}")
+                
     def start_fitting(self):
         """Start MCMC fitting using unified interface"""
         if not self.instrument_data:
@@ -824,7 +854,8 @@ class FittingTab(QWidget):
         """Reset UI after fitting"""
         self.fit_btn.setEnabled(True)
         # Re-enable quick fit only for single instrument
-        self.quick_fit_btn.setEnabled(len(self.instrument_data) == 1)
+        self.quick_fit_btn.setEnabled(True)
+        #self.quick_fit_btn.setEnabled(len(self.instrument_data) == 1)        
         self.progress_bar.setVisible(False)
         
     def get_current_theta(self):

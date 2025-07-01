@@ -47,7 +47,7 @@ def _get_default_b_from_transition(transition_name: str) -> float:
         default_b = 22.0
     elif 'II ' in transition_name or transition_name.endswith('II'):
         # Singly ionized (II) 
-        default_b = 18.0
+        default_b = 15.0
     elif 'III ' in transition_name or transition_name.endswith('III'):
         # Doubly ionized (III)
         default_b = 25.0
@@ -571,9 +571,9 @@ class InteractiveParameterDialog(QDialog):
             vel_mask = (vel >= vel_guess - 10.0) & (vel <= vel_guess + 10.0)
             if np.any(vel_mask):
                 # Sum column density in this velocity range
-                n_total = np.sum(nv[vel_mask])
-                n_estimate = np.log10(np.maximum(n_total, 1e12))  # Avoid log(0)
-                n_estimates.append(np.clip(n_estimate, 12.0, 16.0))
+                
+                n_estimate = np.log10(np.nansum(nv[vel_mask]) + 1e-20) # Avoid log(0)
+                n_estimates.append(n_estimate)
             else:
                 # Fallback if no data in range
                 n_estimates.append(13.5)

@@ -25,6 +25,62 @@ from rbvfit.gui.interactive_param_dialog import InteractiveParameterDialog
 # Import the parameter manager
 from multi_instrument_parameter_manager import MultiInstrumentParameterManager
 
+
+ION_TEMPLATES = {
+    "Custom (manual entry)": {
+        "ion": "",
+        "transitions": []
+    },
+    "CIV": {
+        "ion": "CIV", 
+        "transitions": [1548.2, 1550.8]
+    },
+    "SiIV": {
+        "ion": "SiIV",
+        "transitions": [1393.8, 1402.8]
+    },
+    "OI": {
+        "ion": "OI",
+        "transitions": [1302.2]
+    },
+    "SiII": {
+        "ion": "SiII", 
+        "transitions": [1260.4, 1304.4, 1526.7]
+    },
+    "FeII": {
+        "ion": "FeII",
+        "transitions": [1608.5, 2374.5, 2382.8, 2586.7, 2600.2]
+    },
+    "MgII": {
+        "ion": "MgII",
+        "transitions": [2796.4, 2803.5]
+    },
+    "AlIII": {
+        "ion": "AlIII",
+        "transitions": [1854.7, 1862.8]
+    },
+    "CIII": {
+        "ion": "CIII",
+        "transitions": [977.0]
+    },
+    "NV": {
+        "ion": "NV", 
+        "transitions": [1238.8, 1242.8]
+    },
+    "OVI": {
+        "ion": "OVI",
+        "transitions": [1031.9, 1037.6]
+    },
+    "Lyman-α": {
+        "ion": "HI",
+        "transitions": [1215.7]
+    },
+    "Lyman-β": {
+        "ion": "HI", 
+        "transitions": [1025.7]
+    }
+}
+
 class ModelFunc:
     def __init__(self, compiled_model, instrument_name):
         self.compiled_model = compiled_model
@@ -34,37 +90,51 @@ class ModelFunc:
         return self.compiled_model.model_flux(theta, wave, instrument=self.instrument_name)
 
 
+
+
+
 class SystemDialog(QDialog):
-    """Dialog for adding/editing ion systems"""
+    """Dialog for adding/editing ion systems with templates"""
     
     def __init__(self, system_data=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Ion System Configuration")
         self.setModal(True)
-        self.resize(400, 300)
+        self.resize(450, 350)  # Slightly larger for template dropdown
         
         self.system_data = system_data or {}
         self.setup_ui()
         
     def setup_ui(self):
-        """Create dialog interface"""
+        """Create dialog interface with ion templates"""
         layout = QFormLayout()
         self.setLayout(layout)
         
-        # Redshift
+        # NEW: Ion Template Dropdown
+        self.template_combo = QComboBox()
+        self.template_combo.setToolTip("Select predefined ion template or custom entry")
+        for template_name in ION_TEMPLATES.keys():
+            self.template_combo.addItem(template_name)
+        self.template_combo.setCurrentText("Custom (manual entry)")
+        layout.addRow("Ion Template:", self.template_combo)
+        
+        # Add a separator line
+        layout.addRow("", QLabel("─" * 40))
+        
+        # Redshift (existing)
         self.z_spin = QDoubleSpinBox()
         self.z_spin.setRange(-0.1, 20.0)
         self.z_spin.setDecimals(6)
         self.z_spin.setValue(self.system_data.get('z', 0.0))
         layout.addRow("Redshift (z):", self.z_spin)
         
-        # Ion name
+        # Ion name (existing, but will be populated by template)
         self.ion_edit = QLineEdit()
         self.ion_edit.setText(self.system_data.get('ion', ''))
         self.ion_edit.setPlaceholderText("e.g., CIV, OI, SiII")
         layout.addRow("Ion:", self.ion_edit)
         
-        # Transitions
+        # Transitions (existing, but will be populated by template)
         self.transitions_edit = QLineEdit()
         transitions = self.system_data.get('transitions', [])
         if transitions:
@@ -72,42 +142,96 @@ class SystemDialog(QDialog):
         self.transitions_edit.setPlaceholderText("e.g., 1548.2, 1550.3")
         layout.addRow("Transitions (Å):", self.transitions_edit)
         
-        # Buttons
+        # Components (existing)
+        self.components_spin = QSpinBox()
+        self.components_spin.setRange(1, 10)
+        self.components_spin.setValue(self.system_data.get('components', 1))
+        layout.addRow("Components:", self.components_spin)
+        
+        # Buttons (existing)
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
         
+        # NEW: Connect template dropdown
+        self.template_combo.currentTextChanged.connect(self.on_template_changed)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        
+        # If editing existing system, try to match template
+        if self.system_data:
+            self.match_existing_template()
+    
+    def on_template_changed(self, template_name):
+        """Handle template selection change"""
+        if template_name not in ION_TEMPLATES:
+            return
+            
+        template = ION_TEMPLATES[template_name]
+        
+        if template_name == "Custom (manual entry)":
+            # Clear fields for manual entry
+            if not self.system_data:  # Only clear if not editing existing
+                self.ion_edit.clear()
+                self.transitions_edit.clear()
+        else:
+            # Populate fields from template
+            self.ion_edit.setText(template["ion"])
+            
+            if template["transitions"]:
+                transitions_str = ', '.join(map(str, template["transitions"]))
+                self.transitions_edit.setText(transitions_str)
+            else:
+                self.transitions_edit.clear()
+    
+    def match_existing_template(self):
+        """Try to match existing system data to a template"""
+        if not self.system_data:
+            return
+            
+        existing_ion = self.system_data.get('ion', '').strip()
+        existing_transitions = set(self.system_data.get('transitions', []))
+        
+        # Look for matching template
+        for template_name, template in ION_TEMPLATES.items():
+            if template_name == "Custom (manual entry)":
+                continue
+                
+            template_ion = template["ion"]
+            template_transitions = set(template["transitions"])
+            
+            # Check for exact match (ion name and transitions)
+            if (existing_ion.upper() == template_ion.upper() and 
+                existing_transitions == template_transitions):
+                self.template_combo.setCurrentText(template_name)
+                return
+                
+            # Check for partial match (ion name and subset of transitions)
+            if (existing_ion.upper() == template_ion.upper() and 
+                existing_transitions.issubset(template_transitions)):
+                self.template_combo.setCurrentText(template_name)
+                return
+        
+        # No match found, keep "Custom"
+        self.template_combo.setCurrentText("Custom (manual entry)")
+    
     def get_system_data(self):
-        """Return system data as dict"""
+        """Get system data from dialog (existing method, unchanged)"""
         transitions_text = self.transitions_edit.text().strip()
         transitions = []
+        
         if transitions_text:
             try:
-                transitions = [float(x.strip()) for x in transitions_text.split(',') if x.strip()]
+                transitions = [float(w.strip()) for w in transitions_text.split(',')]
             except ValueError:
                 pass
         
-        ion_name = self.ion_edit.text().strip()
-        
-        # Auto-detect ion name if empty
-        if not ion_name and transitions:
-            try:
-                from rbvfit import rb_setline as rb
-                line_info = rb.rb_setline(transitions[0], 'closest')
-                if 'name' in line_info and line_info['name']:
-                    detected_name = line_info['name'][0]
-                    ion_name = detected_name.split()[0] if ' ' in detected_name else detected_name
-                    print(f"Auto-detected ion name: {ion_name} from transition {transitions[0]}")
-            except Exception as e:
-                print(f"Could not auto-detect ion name: {e}")
-                ion_name = "Unknown"
-        
         return {
             'z': self.z_spin.value(),
-            'ion': ion_name,
-            'transitions': transitions
+            'ion': self.ion_edit.text().strip(),
+            'transitions': transitions,
+            'components': self.components_spin.value()
         }
+
 
 
 class MasterThetaDialog(QDialog):
@@ -116,6 +240,8 @@ class MasterThetaDialog(QDialog):
     def __init__(self, collection_result=None, parent=None):
         super().__init__(parent)
         self.collection_result = collection_result
+        self.parent_tab = parent  # Store reference to ModelSetupTab
+
         self.setWindowTitle("Master Theta Parameters")
         self.setModal(True)
         self.resize(800, 600)
@@ -198,6 +324,23 @@ class MasterThetaDialog(QDialog):
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(0, QHeaderView.Stretch)  # Parameter name
+
+    def accept(self):
+        """Handle OK button - update master theta and re-emit"""
+        if self.parent_tab and hasattr(self.parent_tab, 'current_collection_result'):
+            updated_theta = self.get_updated_theta()
+            
+            # Update the collection result
+            self.parent_tab.current_collection_result = self.parent_tab.param_manager.update_master_theta(
+                self.parent_tab.current_collection_result, 
+                updated_theta
+            )
+            
+            # Re-emit the model signal
+            self.parent_tab.recompile_and_emit()
+            
+        super().accept()
+
         
     def get_updated_theta(self):
         """Get updated theta array from table"""
@@ -428,6 +571,8 @@ class ModelSetupTab(QWidget):
         self.clear_params_btn.clicked.connect(self.clear_params)
         self.add_component_btn.clicked.connect(self.add_component)
         self.delete_component_btn.clicked.connect(self.delete_component)
+        self.params_table.itemChanged.connect(self.on_parameter_table_edited)
+
         
         # Compilation
         self.compile_btn.clicked.connect(self.compile_models)
@@ -462,6 +607,73 @@ class ModelSetupTab(QWidget):
                 
                 self.config_tree.addTopLevelItem(item)
                 self.current_config_combo.addItem(config_name)
+
+    def on_parameter_table_edited(self, item):
+        """Handle parameter table cell edits"""
+        if not self.current_config or not self.current_system_id:
+            return
+            
+        # Update the stored DataFrame
+        row = item.row()
+        col = item.column()
+        
+        key = (self.current_config, self.current_system_id)
+        if key not in self.config_parameters:
+            return
+            
+        df = self.config_parameters[key]
+        if row >= len(df):
+            return
+            
+        # Map column to DataFrame column
+        col_names = ['Component', 'N', 'b', 'v']
+        if col < len(col_names):
+            try:
+                if col == 0:  # Component (string)
+                    df.iloc[row, col] = str(item.text())
+                else:  # N, b, v (float)
+                    df.iloc[row, col] = float(item.text())
+                    
+                # If we have a compiled model, re-emit the signal
+                if self.current_collection_result is not None:
+                    self.recompile_and_emit()
+                else:
+                    self.update_status("Parameter updated (compile models to propagate changes)")
+        
+                    
+            except ValueError:
+                # Invalid input - revert to original value
+                self.load_parameter_table()
+                self.update_status("Invalid parameter value - reverted to original")
+
+
+    def recompile_and_emit(self):
+        """Recompile and emit model_updated signal with current parameters"""
+        if self.current_collection_result is None:
+            return
+            
+        try:
+            # Rebuild instrument data with updated parameters
+            instrument_data = self.build_instrument_data(self.current_collection_result)
+            
+            # Rebuild bounds
+            n_params = len(self.current_collection_result.master_theta)
+            n_comp = n_params // 3
+            
+            nguess = self.current_collection_result.master_theta[:n_comp].tolist()
+            bguess = self.current_collection_result.master_theta[n_comp:2*n_comp].tolist()
+            vguess = self.current_collection_result.master_theta[2*n_comp:3*n_comp].tolist()
+            
+            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+            
+            # Re-emit signal
+            theta_dict = {'theta': self.current_collection_result.master_theta}
+            self.model_updated.emit(instrument_data, theta_dict, bounds)
+            
+            self.update_status("Parameters updated - changes propagated to fitting tab")
+            
+        except Exception as e:
+            self.update_status(f"Error updating parameters: {str(e)}")
                 
     def on_config_tree_selection_changed(self):
         """Handle configuration tree selection change"""
@@ -943,3 +1155,125 @@ class ModelSetupTab(QWidget):
             'flux': config_data['flux'],
             'error': config_data['error']
         }
+
+    
+    def _restore_master_theta(self, master_theta_list, collection_info):
+        """Restore master theta and create minimal collection result"""
+        import numpy as np
+        
+        # Convert list back to numpy array
+        master_theta = np.array(master_theta_list)
+        
+        # Create a minimal collection result for GUI purposes
+        # This won't be fully functional for compilation, but allows viewing/editing
+        from types import SimpleNamespace
+        
+        # Create minimal master systems from saved info
+        master_systems = []
+        for sys_info in collection_info.get('system_info', []):
+            system = SimpleNamespace(
+                z=sys_info['z'],
+                ion=sys_info['ion'], 
+                transitions=sys_info['transitions'],
+                components=sys_info['components'],
+                source_instrument=sys_info['source_instrument']
+            )
+            master_systems.append(system)
+        
+        # Create minimal collection result
+        minimal_result = SimpleNamespace(
+            master_theta=master_theta,
+            master_systems=master_systems,
+            instrument_mappings=[],  # Empty for now
+            master_config=None,
+            collection_log=[f"Restored from project file ({len(master_theta)} parameters)"]
+        )
+        
+        self.current_collection_result = minimal_result
+        
+        self.update_status(f"Master theta restored ({len(master_theta)} parameters)")
+
+
+    def _restore_model_setup(self, config_systems, config_parameters, current_config, current_system_id):
+        """Restore model setup state from project load"""
+        self.config_systems = config_systems
+        self.config_parameters = config_parameters
+        self.current_config = current_config
+        self.current_system_id = current_system_id
+        
+        # Update displays
+        self.update_config_display()
+        self.update_systems_display()
+        self.update_system_combo()
+        
+        # Set current selections if they exist
+        if current_config:
+            # Find and select the current config in combo
+            index = self.current_config_combo.findText(current_config)
+            if index >= 0:
+                self.current_config_combo.setCurrentIndex(index)
+        
+        if current_system_id:
+            # Find and select the current system in combo
+            index = self.system_combo.findData(current_system_id)
+            if index >= 0:
+                self.system_combo.setCurrentIndex(index)
+        
+        # Load parameter table for current system
+        if current_config and current_system_id:
+            self.load_parameter_table()
+        
+        self.update_status("Model setup restored from project")
+
+    def _restore_master_theta(self, master_theta, collection_info):
+        """Restore master theta and create minimal collection result"""
+        import numpy as np
+        from types import SimpleNamespace
+        
+        # Create minimal master systems from saved info
+        master_systems = []
+        for sys_info in collection_info.get('system_info', []):
+            system = SimpleNamespace(
+                z=sys_info['z'],
+                ion=sys_info['ion'], 
+                transitions=sys_info['transitions'],
+                components=sys_info['components'],
+                source_instrument=sys_info['source_instrument']
+            )
+            master_systems.append(system)
+        
+        # Create minimal collection result
+        minimal_result = SimpleNamespace(
+            master_theta=master_theta,
+            master_systems=master_systems,
+            instrument_mappings=[],  # Empty for now
+            master_config=None,
+            collection_log=[f"Restored from project file ({len(master_theta)} parameters)"]
+        )
+        
+        self.current_collection_result = minimal_result
+        
+        self.update_status(f"Master theta restored ({len(master_theta)} parameters)")
+    
+    def clear_state(self):
+        """Clear tab state for project loading"""
+        # Clear data structures
+        self.config_systems = {}
+        self.config_parameters = {}
+        self.current_config = None
+        self.current_system_id = None
+        self.current_collection_result = None
+        
+        # Clear UI elements
+        self.config_tree.clear()
+        self.current_config_combo.clear()
+        self.systems_tree.clear()
+        self.system_combo.clear()
+        self.params_table.setRowCount(0)
+        self.config_info.clear()
+        self.status_display.clear()
+        
+        # Reset button states
+        self.edit_system_btn.setEnabled(False)
+        self.delete_system_btn.setEnabled(False)
+            

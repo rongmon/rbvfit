@@ -5,6 +5,8 @@ Updated rbvfit 2.0 Main GUI Window - 4-Tab Redesign
 
 import sys
 from pathlib import Path
+import pandas as pd
+import json
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QVBoxLayout, 
                             QWidget, QMenuBar, QStatusBar, QFileDialog,
                             QMessageBox, QAction)
@@ -14,9 +16,10 @@ from PyQt5.QtGui import QIcon
 sys.path.append(str(Path(__file__).parent.parent))
 
 from rbvfit.gui.config_data_tab import ConfigurationDataTab
-from rbvfit.gui.model_setup_tab import ModelSetupTab  # Use new file name
+from rbvfit.gui.model_setup_tab import ModelSetupTab
 from rbvfit.gui.fitting_tab import FittingTab  
 from rbvfit.gui.results_tab import ResultsTab
+from rbvfit.gui import io
 
 
 class GuiSignals(QObject):
@@ -236,75 +239,234 @@ class UpdatedRbvfitGUI(QMainWindow):
         if hasattr(self.model_setup_tab, 'voigt_model'):
             return self.model_setup_tab.voigt_model  # Return the original VoigtModel
         return None
+
+    # ==================== PROJECT SAVE/LOAD IMPLEMENTATION ====================
                 
     def save_project(self):
         """Save complete project state"""
         filename, _ = QFileDialog.getSaveFileName(
             self, "Save Project", "",
-            "rbvfit Projects (*.rbv);;All files (*.*)")
+            "rbvfit Projects (*.rbv);;JSON files (*.json);;All files (*.*)")
         
         if filename:
             try:
-                import json
-                import pickle
-                from pathlib import Path
+                # Collect all project state
+                project_data = self._collect_project_data()
                 
-                # Prepare project data
-                project_data = {
-                    'version': '2.0',
-                    'configurations': self.configurations,
-                    'config_systems': getattr(self.model_setup_tab, 'config_systems', {}),
-                    'config_parameters': {}  # Convert DataFrame to dict
-                }
+                # Use io module to save
+                io.save_project_data(project_data, filename)
                 
-                # Convert parameter DataFrames to serializable format
-                for key, df in getattr(self.model_setup_tab, 'config_parameters', {}).items():
-                    project_data['config_parameters'][f"{key[0]}_{key[1]}"] = df.to_dict()
-                
-                # Save project
-                with open(filename, 'w') as f:
-                    json.dump(project_data, f, indent=2, default=str)
-                    
+                # Show success message
+                summary = io.create_project_summary(project_data)
                 self.status_bar.showMessage(f"Project saved: {Path(filename).name}")
                 QMessageBox.information(self, "Project Saved", 
-                                      f"Project saved successfully to {Path(filename).name}")
+                                      f"Project saved successfully!\n\n{summary}")
                 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 QMessageBox.critical(self, "Save Error", f"Failed to save project:\n{str(e)}")
                 
     def load_project(self):
         """Load complete project state"""
         filename, _ = QFileDialog.getOpenFileName(
             self, "Load Project", "",
-            "rbvfit Projects (*.rbv);;All files (*.*)")
+            "rbvfit Projects (*.rbv);;JSON files (*.json);;All files (*.*)")
         
         if filename:
             try:
-                import json
-                import pandas as pd
+                # Validate file first
+                file_info = io.validate_project_file(filename)
                 
-                with open(filename, 'r') as f:
-                    project_data = json.load(f)
-                    
-                # Validate version
-                if project_data.get('version') != '2.0':
-                    QMessageBox.warning(self, "Version Mismatch", 
-                                      "Project file may be from different rbvfit version")
+                if not file_info['valid']:
+                    QMessageBox.critical(self, "Invalid File", 
+                                       f"Cannot load project file:\n{file_info['error']}")
+                    return
                 
-                # Restore configurations
-                configurations = project_data.get('configurations', {})
+                # Check version compatibility
+                if file_info['version'] != '2.0':
+                    reply = QMessageBox.question(self, "Version Mismatch", 
+                                               f"Project file version: {file_info['version']}\n"
+                                               f"Current rbvfit version: 2.0\n\n"
+                                               f"Continue loading? (may cause issues)",
+                                               QMessageBox.Yes | QMessageBox.No)
+                    if reply != QMessageBox.Yes:
+                        return
                 
-                # Note: This is a simplified loading - in practice, you'd need to:
-                # 1. Reload the actual spectrum data files
-                # 2. Restore the complete state of all tabs
-                # 3. Handle missing files gracefully
+                # Load project data using io module
+                project_data = io.load_project_data(filename)
                 
-                QMessageBox.information(self, "Load Project", 
-                                      f"Project loading functionality needs full implementation.\n"
-                                      f"Found {len(configurations)} configurations in project.")
+                # Clear current state and restore
+                self._clear_all_tabs()
+                self._restore_project_data(project_data)
+                
+                # Show success message with summary
+                summary = io.create_project_summary(project_data)
+                missing_files = io.check_missing_files(project_data)
+                
+                message = f"Project loaded successfully!\n\n{summary}"
+                if missing_files:
+                    message += f"\n⚠️ Note: {len(missing_files)} data files need to be reassigned in the Configuration & Data tab."
+                
+                self.status_bar.showMessage(f"Project loaded: {Path(filename).name}")
+                QMessageBox.information(self, "Project Loaded", message)
                 
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
+
+    def _collect_project_data(self) -> dict:
+        """Collect complete project state from all tabs"""
+        project_data = {
+            'version': '2.0',
+            'created': getattr(self, '_project_created', None) or str(pd.Timestamp.now()),
+            
+            # Tab 1: Configuration & Data
+            'configurations': io.serialize_configurations(self.configurations),
+            
+            # Tab 2: Model Setup
+            'config_systems': getattr(self.model_setup_tab, 'config_systems', {}),
+            'config_parameters': io.serialize_parameters(
+                getattr(self.model_setup_tab, 'config_parameters', {})
+            ),
+            'current_config': getattr(self.model_setup_tab, 'current_config', None),
+            'current_system_id': getattr(self.model_setup_tab, 'current_system_id', None),
+            
+            # Master theta (if compiled)
+            'master_theta': io.serialize_master_theta(
+                getattr(self.model_setup_tab.current_collection_result, 'master_theta', None)
+                if hasattr(self.model_setup_tab, 'current_collection_result') and 
+                   self.model_setup_tab.current_collection_result else None
+            ),
+            'collection_result_info': io.serialize_collection_info(
+                getattr(self.model_setup_tab, 'current_collection_result', None)
+            ),
+            
+            # GUI state
+            'gui_state': {
+                'current_tab': self.tab_widget.currentIndex(),
+                'tab_enabled': [self.tab_widget.isTabEnabled(i) for i in range(4)]
+            }
+        }
+        
+        return project_data
+
+    def _restore_project_data(self, project_data: dict) -> None:
+        """Restore complete project state to all tabs"""
+        import pandas as pd
+        
+        # Restore Tab 1: Configurations
+        configurations = io.deserialize_configurations(project_data.get('configurations', {}))
+        if hasattr(self.config_data_tab, '_restore_configurations'):
+            self.config_data_tab._restore_configurations(configurations)
+        else:
+            # Fallback: set configurations directly
+            self.configurations = configurations
+            self.config_data_tab.configurations = configurations
+            if hasattr(self.config_data_tab, 'update_config_display'):
+                self.config_data_tab.update_config_display()
+                self.config_data_tab.update_status()
+        
+        # Restore Tab 2: Model Setup
+        config_systems = project_data.get('config_systems', {})
+        config_parameters = io.deserialize_parameters(project_data.get('config_parameters', {}))
+        current_config = project_data.get('current_config')
+        current_system_id = project_data.get('current_system_id')
+        
+        if hasattr(self.model_setup_tab, '_restore_model_setup'):
+            self.model_setup_tab._restore_model_setup(
+                config_systems, config_parameters, current_config, current_system_id
+            )
+        else:
+            # Fallback: set attributes directly
+            self.model_setup_tab.config_systems = config_systems
+            self.model_setup_tab.config_parameters = config_parameters
+            self.model_setup_tab.current_config = current_config
+            self.model_setup_tab.current_system_id = current_system_id
+        
+        # Restore master theta if available
+        master_theta_data = project_data.get('master_theta')
+        collection_info = project_data.get('collection_result_info')
+        
+        if master_theta_data and collection_info:
+            master_theta = io.deserialize_master_theta(master_theta_data)
+            if hasattr(self.model_setup_tab, '_restore_master_theta'):
+                self.model_setup_tab._restore_master_theta(master_theta, collection_info)
+            else:
+                # Create minimal collection result for viewing
+                self._create_minimal_collection_result(master_theta, collection_info)
+        
+        # Restore GUI state
+        gui_state = project_data.get('gui_state', {})
+        tab_enabled = gui_state.get('tab_enabled', [True, False, False, False])
+        for i, enabled in enumerate(tab_enabled):
+            if i < self.tab_widget.count():
+                self.tab_widget.setTabEnabled(i, enabled)
+                
+        current_tab = gui_state.get('current_tab', 0)
+        if current_tab < self.tab_widget.count():
+            self.tab_widget.setCurrentIndex(current_tab)
+        
+        # Update main window state
+        self.configurations = configurations
+        
+        # Emit signals to update dependent tabs
+        if configurations:
+            self.config_data_tab.configurations_updated.emit(configurations)
+
+    def _clear_all_tabs(self) -> None:
+        """Clear state in all tabs"""
+        # Clear main window state
+        self.configurations = {}
+        self.instrument_data = None
+        self.theta = None
+        self.bounds = None
+        self.fit_results = None
+        
+        # Clear tab states if they have clear methods
+        for tab in [self.config_data_tab, self.model_setup_tab, self.fitting_tab, self.results_tab]:
+            if hasattr(tab, 'clear_state'):
+                tab.clear_state()
+        
+        # Reset tab enablement
+        self.tab_widget.setTabEnabled(1, False)  # Model Setup
+        self.tab_widget.setTabEnabled(2, False)  # Fitting  
+        self.tab_widget.setTabEnabled(3, False)  # Results
+        self.tab_widget.setCurrentIndex(0)       # Go to first tab
+        
+        # Clear status
+        self.status_bar.showMessage("Project cleared - Ready to load new project or start fresh")
+
+    def _create_minimal_collection_result(self, master_theta, collection_info) -> None:
+        """Create minimal collection result for restored master theta"""
+        from types import SimpleNamespace
+        import numpy as np
+        
+        # Create minimal master systems from saved info
+        master_systems = []
+        for sys_info in collection_info.get('system_info', []):
+            system = SimpleNamespace(
+                z=sys_info['z'],
+                ion=sys_info['ion'], 
+                transitions=sys_info['transitions'],
+                components=sys_info['components'],
+                source_instrument=sys_info['source_instrument']
+            )
+            master_systems.append(system)
+        
+        # Create minimal collection result
+        minimal_result = SimpleNamespace(
+            master_theta=master_theta,
+            master_systems=master_systems,
+            instrument_mappings=[],  # Empty for now
+            master_config=None,
+            collection_log=[f"Restored from project file ({len(master_theta)} parameters)"]
+        )
+        
+        self.model_setup_tab.current_collection_result = minimal_result
+
+    # ==================== EXISTING EXPORT METHODS ====================
                 
     def export_configuration(self):
         """Export configuration to file"""
@@ -318,8 +480,6 @@ class UpdatedRbvfitGUI(QMainWindow):
         
         if filename:
             try:
-                import json
-                
                 # Export configurations (without the actual data arrays)
                 export_data = {}
                 for name, config in self.configurations.items():
@@ -384,6 +544,12 @@ KEY FEATURES:
 • Interactive parameter estimation
 • Unified vfit_mcmc interface
 • Configuration-aware workflow
+
+PROJECT SAVE/LOAD:
+• Save Project (Ctrl+S): Save configuration, systems, and parameters
+• Load Project (Ctrl+O): Restore your complete setup
+• Lightweight: Only saves setup, not raw data or fit results
+• Smart file handling: Checks for missing data files on load
         """
         
         QMessageBox.information(self, "Workflow Guide", guide_text)
@@ -405,6 +571,7 @@ Features:
 • MCMC fitting with emcee and zeus samplers
 • Comprehensive results analysis
 • Modern PyQt5 interface
+• Project save/load functionality
 
 For documentation and updates, visit:
 https://github.com/rbvfit/rbvfit

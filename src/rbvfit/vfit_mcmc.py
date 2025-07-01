@@ -712,6 +712,8 @@ class vfit:
         """
         Quick deterministic fitting using scipy optimization.
         
+        Supports both single and multi-instrument datasets automatically.
+        
         Parameters
         ----------
         verbose : bool, optional
@@ -724,21 +726,26 @@ class vfit:
         theta_best_error : np.ndarray
             Parameter uncertainties (1-sigma)
         """
-        self.mcmc_flag=False
+        self.mcmc_flag = False
         try:
             from rbvfit.core.quick_fit_interface import quick_fit_vfit
         except ImportError as e:
             raise ImportError("Quick fitting requires scipy") from e
         
-        # Multi-instrument warning
+        # Print instrument info
         if self.multi_instrument and verbose:
-            print("⚠️  Multi-instrument mode: Uses primary dataset only")
+            n_instruments = len(self.instrument_data)
+            instrument_names = ', '.join(self.instrument_data.keys())
+            print(f"🔗 Multi-instrument mode: {n_instruments} instruments ({instrument_names})")
+        elif verbose:
+            print("📊 Single instrument mode")
         
-        # Validate required attributes
-        required_attrs = ['model', 'theta', 'wave_obs', 'fnorm', 'enorm']
-        for attr in required_attrs:
-            if not hasattr(self, attr):
-                raise AttributeError(f"Missing: {attr}")
+        # Validate required attributes for legacy interface
+        if not hasattr(self, 'instrument_data') or self.instrument_data is None:
+            required_attrs = ['model', 'theta', 'wave_obs', 'fnorm', 'enorm']
+            for attr in required_attrs:
+                if not hasattr(self, attr):
+                    raise AttributeError(f"Missing: {attr}")
         
         if verbose:
             print("🚀 Starting quick fit...")
@@ -749,15 +756,18 @@ class vfit:
             if verbose:
                 print("✅ Quick fit completed")
                 if np.any(np.isnan(theta_best_error)):
-                    print("⚠️  Some uncertainties are NaN")
+                    print("⚠️  Some parameter uncertainties are NaN")
             
-            self.theta_best=theta_best
-            self.theta_best_error=theta_best_error
+            self.theta_best = theta_best
+            self.theta_best_error = theta_best_error
+            
+            return theta_best, theta_best_error
+            
         except Exception as e:
             if verbose:
                 print(f"❌ Quick fit failed: {str(e)}")
             raise RuntimeError("Quick fitting failed") from e
-
+    
     def compute_best_theta(self, burntime=100):
         """Compute best-fit parameters and their uncertainties from MCMC samples."""
         if not hasattr(self, 'samples') or self.samples is None:

@@ -786,7 +786,7 @@ class UnifiedResults:
     def _print_convergence_diagnostics(self, diagnostics):
         """Print formatted convergence diagnostics with sampler-aware recommendations."""
         status = diagnostics['overall_status']
-        status_symbols = {"GOOD": "✅", "MARGINAL": "⚠️", "POOR": "❌", "UNKNOWN": "❓"}
+        status_symbols = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
         
         print("\n" + "=" * 70)
         print("CONVERGENCE DIAGNOSTICS")

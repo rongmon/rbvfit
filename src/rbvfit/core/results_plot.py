@@ -117,9 +117,9 @@ def chain_trace_plot(results, figure=None, show=True, **kwargs):
     try:
         convergence = results.convergence_diagnostics(verbose=False)
         status = convergence['overall_status']
-        status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
+        status_symbols = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
         fig.suptitle(
-            f'Chain Trace Plots - {status_symbol.get(status, "?")} {status} Convergence\n'
+            f'Chain Trace Plots - {status_symbols.get(status, "?")} {status} Convergence\n'
             f'{results.sampler_name} sampler: {n_walkers} walkers × {n_steps} steps',
             fontsize=14, y=0.98)
     except:
@@ -187,7 +187,7 @@ def corner_plot(results, **kwargs) -> plt.Figure:
     except:
         pass
     
-    status_symbol = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
+    status_symbols = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
 
     fig.suptitle(f'Parameter Posterior Distributions - {status_symbols.get(conv_status, "?")} {conv_status} Convergence\n'
                  f'{results.sampler_name} sampler, {results.n_walkers} walkers, {results.n_steps} steps', 

@@ -771,7 +771,7 @@ class ResultsTab(QWidget):
             selected_instrument = self.instrument_combo.currentText() if hasattr(self, 'instrument_combo') else None
             
             # Update corner plot (instrument-independent)
-            self.update_corner_plot()  # Uncommented per original
+            #self.update_corner_plot()  # Uncommented per original
             
             # Update model comparison plot with selected instrument
             self.update_model_comparison_with_instrument(selected_instrument)

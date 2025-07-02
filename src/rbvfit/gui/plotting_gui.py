@@ -17,7 +17,7 @@ except ImportError:
     HAS_CORNER = False
 
 
-def plot_corner_custom(figure, results, fitter, param_filter="all"):
+def plot_corner_custom(figure, results, param_filter="all"):
     """
     Custom corner plot that works with Qt canvas.
     
@@ -27,8 +27,7 @@ def plot_corner_custom(figure, results, fitter, param_filter="all"):
         The Qt figure to plot on
     results : FitResults or None
         Results object 
-    fitter : vfit
-        MCMC fitter object with samples
+
     param_filter : str
         "all", "N", "b", or "v" to filter parameters
     """

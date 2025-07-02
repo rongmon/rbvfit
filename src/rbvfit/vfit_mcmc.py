@@ -452,27 +452,29 @@ class vfit:
             # emcee
             return sampler.acceptance_fraction
         elif hasattr(sampler, 'get_chain') and self.sampler_name == 'zeus':
-            # Zeus doesn't have acceptance_fraction, estimate from chain
             try:
-                chain = sampler.get_chain()
-                # Simple estimate: count unique consecutive steps
+                chain = sampler.get_chain()  # shape: (nsteps, nwalkers, ndim)
                 n_accepted = 0
                 n_total = 0
-                for walker_chain in chain.T:  # Iterate over walkers
-                    for i in range(1, len(walker_chain)):
+                nsteps, nwalkers, _ = chain.shape
+                for w in range(nwalkers):
+                    walker_chain = chain[:, w, :]
+                    for i in range(1, nsteps):
                         n_total += 1
-                        if not np.array_equal(walker_chain[i], walker_chain[i-1]):
+                        if np.any(walker_chain[i] != walker_chain[i-1]):
                             n_accepted += 1
                 return n_accepted / n_total if n_total > 0 else 0.0
             except Exception:
-                print("Could not calculate Gelman-Rubin diagnostic")
+                print("Could not calculate acceptance fraction for Zeus")
+                return None
+        else:
+            raise NotImplementedError("Acceptance fraction not implemented for this sampler.")
 
-        if verbose == True:
-            self._print_parameter_summary(sampler, burntime)
 
-        self.sampler = sampler
-        self.ndim = len(self.lb)
-        self.nwalkers = no_of_Chain
+
+
+ 
+
 
 
     def _print_parameter_summary(self, sampler, burntime):
@@ -689,13 +691,39 @@ class vfit:
                 chain = sampler.get_chain().transpose(1, 0, 2)
                 # Then compute Gelman-Rubin diagnostic
                 rhat = zeus.diagnostics.gelman_rubin(chain)
-                print(f"Gelman-Rubin R-hat: {np.max(r_hat):.3f}")
-                if np.max(r_hat) > 1.1:
+                print(f"Gelman-Rubin R-hat: {np.max(rhat):.3f}")
+            except Exception:
+                #print("Could not calculate Gelman-Rubin diagnostic")
+                # Implement simple R-hat calculation (fallback)
+                chain = sampler.get_chain()  # (n_steps, n_walkers, n_params)
+                    
+                if len(chain.shape) == 3 and chain.shape[0] >= 100:
+                    n_steps, n_walkers, n_params = chain.shape
+                    r_hat_values = []
+                    
+                    for param_idx in range(n_params):
+                        param_chains = chain[:, :, param_idx]  # (n_steps, n_walkers)
+                        
+                        # Between-chain variance
+                        chain_means = np.mean(param_chains, axis=0)  # Mean for each walker
+                        grand_mean = np.mean(chain_means)
+                        B = n_steps * np.var(chain_means, ddof=1)
+                        
+                        # Within-chain variance  
+                        chain_variances = np.var(param_chains, axis=0, ddof=1)
+                        W = np.mean(chain_variances)
+                        
+                        # R-hat calculation
+                        var_plus = ((n_steps - 1) * W + B) / n_steps
+                        r_hat = np.sqrt(var_plus / W) if W > 0 else np.inf
+                        r_hat_values.append(r_hat)
+                    
+                    rhat = np.array(r_hat_values)
+
+                if np.max(rhat) > 1.1:
                     print("⚠ Warning: R-hat > 1.1, chains may not have converged")
                 else:
                     print("✓ Good convergence (R-hat < 1.1)")
-            except Exception:
-                print("Could not calculate Gelman-Rubin diagnostic")
     
         # Detailed parameter summary only if verbose
         if verbose:

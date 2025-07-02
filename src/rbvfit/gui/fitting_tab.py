@@ -190,7 +190,7 @@ class FittingTab(QWidget):
         self.mcmc_params = {
             'n_walkers': 20,
             'n_steps': 1000,
-            'sampler': 'emcee',
+            'sampler': 'zeus',
             'perturbation': 1e-4,
             'optimize': True,
             'use_pool': True

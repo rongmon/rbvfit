@@ -121,6 +121,10 @@ class FitResults:
         self.component_evaluations = {}
         self.config_metadata = None
         
+        self.model_evaluations = {}
+        self.component_evaluations = {}
+        self.config_metadata = None
+
         if model is not None:
             self._compute_model_evaluations()
             self._extract_config_metadata()        
@@ -203,6 +207,17 @@ class FitResults:
                     
         except Exception as e:
             print(f"Warning: Model evaluation failed: {e}")
+
+    @property
+    def instrument_names(self) -> List[str]:
+        """Get list of available instrument names."""
+        if self.is_multi_instrument and self.instrument_data:
+            # Remove 'main' from the list - it's redundant
+            names = [name for name in self.instrument_data.keys() if name != 'main']
+            return names if names else ['primary']
+        else:
+            return ['primary']
+
     
     def _extract_config_metadata(self):
         """Extract configuration metadata for model reconstruction."""
@@ -228,13 +243,13 @@ class FitResults:
                 # Extract ion systems
                 for system in config.systems:
                     system_data = {
-                        'redshift': system.z,
+                        'redshift': system.redshift,
                         'ion_groups': []
                     }
                     
                     for ion_group in system.ion_groups:
                         ion_data = {
-                            'ion': ion_group.ion,
+                            'ion': ion_group.ion_name,
                             'transitions': list(ion_group.transitions),
                             'components': ion_group.components,
                             'tied_params': getattr(ion_group, 'tied_params', None)
@@ -434,24 +449,17 @@ class FitResults:
             'component_info': comp_data.get('component_info', [])
         }
     
-    def reconstruct_model_evaluation(self, theta: np.ndarray = None, instrument_name:     str = None) -> np.ndarray:
+
+    def reconstruct_model(self) -> Dict[str, 'VoigtModel']:
         """
-        Reconstruct model evaluation from saved configuration metadata.
+        Reconstruct VoigtModel objects from saved configuration metadata.
         
-        This method attempts to rebuild a VoigtModel from saved metadata
-        and evaluate it at the given parameters.
-        
-        Parameters
-        ----------
-        theta : np.ndarray, optional
-            Parameter array. If None, uses best-fit parameters.
-        instrument_name : str, optional
-            Instrument name for multi-instrument cases.
-            
         Returns
         -------
-        np.ndarray
-            Model flux array
+        Dict[str, VoigtModel]
+            Dictionary mapping instrument names to VoigtModel objects.
+            For single instrument: {'primary': model}
+            For multi-instrument: {'hires': model_hires, 'xshooter': model_xshooter, ...}
             
         Raises
         ------
@@ -460,9 +468,6 @@ class FitResults:
         """
         if self.config_metadata is None:
             raise ValueError("No configuration metadata available for reconstruction")
-        
-        if theta is None:
-            theta = self.best_theta
         
         try:
             # Only works for rbvfit 2.0 models
@@ -473,43 +478,109 @@ class FitResults:
             from rbvfit.core.fit_configuration import FitConfiguration
             from rbvfit.core.voigt_model import VoigtModel
             
-            # Reconstruct FitConfiguration
-            config = FitConfiguration()
+            models = {}
             
-            for system_data in self.config_metadata['systems']:
-                z = system_data['redshift']
+            if self.is_multi_instrument:
+                # Multi-instrument: create separate model for each instrument
+                instr_params = self.config_metadata.get('instrument_params', {})
                 
-                for ion_data in system_data['ion_groups']:
-                    config.add_system(
-                        z=z,
-                        ion=ion_data['ion'],
-                        transitions=ion_data['transitions'],
-                        components=ion_data['components']
-                    )
+                for instrument_name in self.instrument_names:
+                    # Get instrument-specific FWHM
+                    inst_fwhm = instr_params.get(instrument_name, {}).get('FWHM')
+                    if inst_fwhm is None:
+                        # Fallback to global FWHM
+                        inst_fwhm = self.config_metadata.get('instrumental_params', {}).get('FWHM')
+                    
+                    # Create configuration for this instrument
+                    config = FitConfiguration(FWHM=inst_fwhm)
+                    
+                    for system_data in self.config_metadata['systems']:
+                        z = system_data['redshift']
+                        
+                        for ion_data in system_data['ion_groups']:
+                            config.add_system(
+                                z=z,
+                                ion=ion_data['ion'],
+                                transitions=ion_data['transitions'],
+                                components=ion_data['components']
+                            )
+                    
+                    models[instrument_name] = VoigtModel(config)
+            else:
+                # Single instrument
+                instr_params = self.config_metadata['instrumental_params']
+                config = FitConfiguration(FWHM=instr_params.get('FWHM'))
+                
+                for system_data in self.config_metadata['systems']:
+                    z = system_data['redshift']
+                    
+                    for ion_data in system_data['ion_groups']:
+                        config.add_system(
+                            z=z,
+                            ion=ion_data['ion'],
+                            transitions=ion_data['transitions'],
+                            components=ion_data['components']
+                        )
+                
+                models['primary'] = VoigtModel(config)
             
-            # Reconstruct VoigtModel
-            instr_params = self.config_metadata['instrumental_params']
-            model = VoigtModel(config, FWHM=instr_params.get('FWHM'))
+            return models
             
-            # Get wavelength array
-            if instrument_name is None:
-                # Use primary dataset
+        except Exception as e:
+            raise ValueError(f"Model reconstruction failed: {e}")
+
+    def reconstruct_model_flux(self, theta: np.ndarray = None) -> Dict[str, np.ndarray]:
+        """
+        Reconstruct model flux evaluations for all instruments.
+        
+        Parameters
+        ----------
+        theta : np.ndarray, optional
+            Parameter array. If None, uses best-fit parameters.
+            
+        Returns
+        -------
+        Dict[str, np.ndarray]
+            Dictionary mapping instrument names to flux arrays.
+            For single instrument: {'primary': flux_array}
+            For multi-instrument: {'hires': flux_hires, 'xshooter': flux_xshooter, ...}
+            
+        Raises
+        ------
+        ValueError
+            If model reconstruction fails
+        """
+        if theta is None:
+            theta = self.best_theta
+        
+        # Get reconstructed models
+        models = self.reconstruct_model()
+        
+        fluxes = {}
+        
+        for instrument_name, model in models.items():
+            # Get wavelength array for this instrument
+            if instrument_name == 'primary':
+                # Single instrument case
                 wave = self.fitter.wave_obs
             else:
+                # Multi-instrument case
                 if instrument_name in self.model_evaluations:
                     wave = self.model_evaluations[instrument_name]['wave']
                 elif self.instrument_data and instrument_name in self.instrument_data:
                     wave = self.instrument_data[instrument_name]['wave']
                 else:
-                    raise ValueError(f"Cannot find wavelength data for instrument     '{instrument_name}'")
+                    raise ValueError(f"Cannot find wavelength data for instrument '{instrument_name}'")
             
             # Evaluate model
-            flux = model.evaluate(theta, wave)
-            return flux
-            
-        except Exception as e:
-            raise ValueError(f"Model reconstruction failed: {e}")
-    
+            try:
+                flux = model.evaluate(theta, wave)
+                fluxes[instrument_name] = flux
+            except Exception as e:
+                raise ValueError(f"Model evaluation failed for {instrument_name}: {e}")
+        
+        return fluxes
+        
     def has_model_evaluations(self) -> bool:
         """Check if pre-computed model evaluations are available."""
         return len(self.model_evaluations) > 0
@@ -656,6 +727,9 @@ class FitResults:
         # Create a minimal fitter-like object for compatibility
         class MockFitter:
             def __init__(self):
+                self.wave_obs = None
+                self.fnorm = None  
+                self.enorm = None
                 self.sampler = None
                 
         results = cls.__new__(cls)  # Create without calling __init__

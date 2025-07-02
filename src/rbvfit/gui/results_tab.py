@@ -29,6 +29,7 @@ except ImportError:
     HAS_CORNER = False
 
 from rbvfit.gui.io import export_results_csv, export_results_latex
+from rbvfit.gui import plotting_gui
 
 
 class ResultsTab(QWidget):
@@ -221,11 +222,11 @@ class ResultsTab(QWidget):
         vel_controls = QHBoxLayout()
         velocity_layout.addLayout(vel_controls)
         
-        vel_controls.addWidget(QLabel("Velocity Range:"))
-        self.vel_range_combo = QComboBox()
-        self.vel_range_combo.addItems(["Auto", "±200 km/s", "±500 km/s", "±1000 km/s"])
-        vel_controls.addWidget(self.vel_range_combo)
+        self.set_velocity_ranges_btn = QPushButton("Set Velocity Ranges")
+        self.set_velocity_ranges_btn.setToolTip("Set custom velocity plot ranges")
+        vel_controls.addWidget(self.set_velocity_ranges_btn)
         vel_controls.addStretch()
+
         
         # Velocity plot canvas
         self.velocity_figure = Figure(figsize=(12, 8))
@@ -304,7 +305,7 @@ class ResultsTab(QWidget):
         self.show_components_check.toggled.connect(self.update_plots)
         self.show_residuals_check.toggled.connect(self.update_plots)
         self.param_selector.currentTextChanged.connect(self.update_corner_plot)
-        self.vel_range_combo.currentTextChanged.connect(self.update_velocity_plot)
+        self.set_velocity_ranges_btn.clicked.connect(self.set_velocity_plot_ranges)
         self.set_ranges_btn.clicked.connect(self.set_plot_ranges)
         self.instrument_combo.currentTextChanged.connect(self.on_instrument_changed)
 
@@ -316,7 +317,48 @@ class ResultsTab(QWidget):
         # Table controls
         self.copy_table_btn.clicked.connect(self.copy_table_to_clipboard)
         self.export_table_btn.clicked.connect(self.export_parameter_table)
+
+
+
+    def set_velocity_plot_ranges(self):
+        """Set plot ranges specifically for velocity plots"""
         
+        # Get current ranges from the velocity figure if it exists and has axes
+        current_xlim = None
+        current_ylim = None
+        
+        if self.velocity_figure and self.velocity_figure.get_axes():
+            # Get the first (main) axes from the figure
+            ax = self.velocity_figure.get_axes()[0]
+            current_xlim = ax.get_xlim()
+            current_ylim = ax.get_ylim()
+        
+        # If no current figure or ranges, use defaults
+        if current_xlim is None:
+            current_xlim = (-600, 600)
+        if current_ylim is None:
+            current_ylim = (-0.05, 1.5)
+        
+        # Default ranges for velocity plots
+        original_xlim = (-600, 600)  # Default velocity range
+        original_ylim = (-0.02, 1.5)  # Default flux range
+        
+        dialog = PlotRangeDialog(
+            current_xlim=current_xlim,
+            current_ylim=current_ylim, 
+            original_xlim=original_xlim,
+            original_ylim=original_ylim,
+            parent=self
+        )
+        
+        # Use blocking dialog
+        if dialog.exec_() == QDialog.Accepted:
+            xlim, ylim = dialog.get_ranges()
+        
+            self.update_velocity_plot(velocity_range=xlim,yrange=ylim)  # Refresh plot with new ranges
+    
+        
+
     def set_results(self, results):
         """Set results - compatibility method for main window"""
         self.update_results(results)
@@ -531,7 +573,7 @@ class ResultsTab(QWidget):
                 
             self.update_model_comparison()  # Refresh plot with new ranges    
     def update_statistics(self):
-        """Update fit statistics display with real data"""
+        """Update fit statistics display with UnifiedResults data"""
         self.stats_text.clear()
         
         if self.results is None:
@@ -539,92 +581,84 @@ class ResultsTab(QWidget):
             return
             
         try:
-            # Extract real statistics from FitResults object
-            if hasattr(self.results, 'fitter') and self.results.fitter:
-                fitter = self.results.fitter
-                
-                # Get basic info
-                n_samples = len(getattr(fitter, 'samples', []))
-                n_params = len(getattr(fitter, 'best_theta', []))
-                n_data_points = len(getattr(fitter, 'fnorm', []))
-                
-                # Calculate chi-squared
-                try:
-                    chi2 = self.results.chi_squared()
-                    chi2_reduced = chi2['reduced_chi2']
-                except Exception:
-                    chi2_reduced = None
-                
-                # Get convergence diagnostics
-                if hasattr(self.results, 'convergence_diagnostics'):
-                    c = self.results.convergence_diagnostics()
-                    conv_status = c['overall_status']
-                    acceptance_rate = c['acceptance_fraction']['mean']
+            # Get basic info from UnifiedResults
+            n_samples = len(self.results.samples)
+            n_params = len(self.results.best_fit)
+            n_data_points = sum(len(data['wave']) for data in self.results.instrument_data.values())
+            
+            # Calculate chi-squared
+            try:
+                chi2 = self.results.chi_squared()
+                chi2_reduced = chi2['reduced_chi2']
+            except Exception:
+                chi2_reduced = None
+            
+            # Get convergence diagnostics
+            c = self.results.convergence_diagnostics(verbose=False)
+            conv_status = c['overall_status']
+            acceptance_rate = c['acceptance_fraction']['mean']
                     
-                    # Safe extraction for Zeus-specific metrics
-                    if 'gelman_rubin' in c and c['gelman_rubin'] is not None:
-                        rhat_max = c['gelman_rubin']['max_r_hat']
-                    else:
-                        rhat_max = None
-                    
-                    # Safe extraction for effective sample size
-                    if 'effective_sample_size' in c and c['effective_sample_size'] is not None:
-                        min_eff_size = c['effective_sample_size']['min_n_eff']
-                    else:
-                        min_eff_size = None
-                    
-                    # Safe extraction for Emcee-specific metrics
-                    if 'autocorr_time' in c and c['autocorr_time'] is not None:
-                        mean_autocorr = c['autocorr_time']['mean_tau']
-                    else:
-                        mean_autocorr = None
-                    
-                else:
-                    # Fallback to fitter object
-                    conv_status = 'Unknown'
-                    rhat_max = None
-                    acceptance_rate = getattr(fitter, 'acceptance_rate', None)
-                    min_eff_size = None
-                    mean_autocorr = None
-                
-                # Safe formatting function
-                def safe_format(value, format_spec):
-                    if value is None or (isinstance(value, float) and np.isnan(value)):
-                        return "N/A"
-                    try:
-                        return f"{value:{format_spec}}"
-                    except:
-                        return "N/A"
-                
-                # Create HTML statistics display
-                stats_html = f"""
-                <h4>Convergence</h4>
-                <p style="color: {'green' if conv_status == 'GOOD' else 'orange' if conv_status == 'MARGINAL' else 'red'};"><b>{conv_status} convergence</b></p>
-                <h4>Fit Quality</h4>
-                <table>
-                <tr><td><b>χ²/ν:</b></td><td>{safe_format(chi2_reduced, '.3f')}</td></tr>
-                <tr><td><b>Parameters:</b></td><td>{n_params}</td></tr>
-                <tr><td><b>Data points:</b></td><td>{n_data_points}</td></tr>
-                </table>
-                
-                <h4>MCMC Diagnostics</h4>
-                <table>
-                <tr><td><b>Samples:</b></td><td>{n_samples}</td></tr>
-                <tr><td><b>Chains:</b></td><td>{getattr(fitter, 'no_of_Chain', 'N/A')}</td></tr>
-                <tr><td><b>Acceptance:</b></td><td>{safe_format(acceptance_rate, '.3f')}</td></tr>
-                <tr><td><b>R̂ (max):</b></td><td>{safe_format(rhat_max, '.3f')}</td></tr>
-                <tr><td><b>Min N_eff:</b></td><td>{safe_format(min_eff_size, '.0f')}</td></tr>
-                <tr><td><b>Mean τ_autocorr:</b></td><td>{safe_format(mean_autocorr, '.1f')}</td></tr>
-                </table>                
-                """
-                
-                self.stats_text.setHtml(stats_html)
-                
+            # Safe extraction for Zeus-specific metrics
+            if 'gelman_rubin' in c and c['gelman_rubin'] is not None:
+                rhat_max = c['gelman_rubin']['max_r_hat']
             else:
-                self.stats_text.append("Results object missing fitter data")
+                rhat_max = None
+                    
+            # Safe extraction for effective sample size
+            if 'effective_sample_size' in c and c['effective_sample_size'] is not None:
+                min_eff_size = c['effective_sample_size']['min_n_eff']
+            else:
+                min_eff_size = None
+                    
+            # Safe extraction for Emcee-specific metrics
+            if 'autocorr_time' in c and c['autocorr_time'] is not None:
+                mean_autocorr = c['autocorr_time']['mean_tau']
+            else:
+                mean_autocorr = None
                 
         except Exception as e:
+            # Fallback if convergence diagnostics fail
             self.stats_text.append(f"Error extracting statistics: {str(e)}")
+            return
+        
+        # Color code convergence status
+        if conv_status == "GOOD":
+            conv_color = "green"
+        elif conv_status == "MARGINAL":
+            conv_color = "orange"
+        elif conv_status == "POOR":
+            conv_color = "red"
+        else:
+            conv_color = "gray"
+        
+        # Generate HTML stats display
+        stats_html = f"""
+        <h3>Fit Statistics</h3>
+        <table border="1" cellpadding="4" style="border-collapse: collapse;">
+        <tr><td><b>Convergence</b></td><td style="color: {conv_color}; font-weight:     bold;">{conv_status}</td></tr>
+        <tr><td><b>Samples</b></td><td>{n_samples:,}</td></tr>
+        <tr><td><b>Parameters</b></td><td>{n_params}</td></tr>
+        <tr><td><b>Data Points</b></td><td>{n_data_points:,}</td></tr>
+        <tr><td><b>Acceptance Rate</b></td><td>{acceptance_rate:.3f}</td></tr>
+        """
+        
+        if chi2_reduced is not None:
+            stats_html += f"<tr><td><b>χ²/ν</b></td><td>{chi2_reduced:.3f}</td></tr>"
+        else:
+            stats_html += f"<tr><td><b>χ²/ν</b></td><td>N/A</td></tr>"
+        
+        if rhat_max is not None:
+            stats_html += f"<tr><td><b>Max R-hat</b></td><td>{rhat_max:.3f}</td></tr>"
+        
+        if min_eff_size is not None:
+            stats_html += f"<tr><td><b>Min N_eff</b></td><td>{min_eff_size:.0f}</td></tr>"
+        
+        if mean_autocorr is not None:
+            stats_html += f"<tr><td><b>Mean τ</b></td><td>{mean_autocorr:.1f}</td></tr>"
+        
+        stats_html += "</table>"
+        
+        self.stats_text.setHtml(stats_html)    
 
     def update_parameter_table(self):
         """Update parameter table with real results"""
@@ -638,7 +672,7 @@ class ResultsTab(QWidget):
         try:
             # Get parameter summary from results
             if hasattr(self.results, 'parameter_summary'):
-                param_summary = self.results.parameter_summary(verbose=False)
+                param_summary = self.results.parameter_summary()
                 
                 # Populate table with real parameters
                 for i, name in enumerate(param_summary.names):
@@ -646,7 +680,7 @@ class ResultsTab(QWidget):
                     error = param_summary.errors[i]
                     
                     # Determine units based on parameter type
-                    if name.startswith('N_'):
+                    if name.startswith('logN_'):
                         units = "log cm⁻²"
                         best_fit_str = f"{best_fit:.3f}"
                         error_str = f"{error:.3f}"
@@ -737,7 +771,7 @@ class ResultsTab(QWidget):
             selected_instrument = self.instrument_combo.currentText() if hasattr(self, 'instrument_combo') else None
             
             # Update corner plot (instrument-independent)
-            #self.update_corner_plot()  # Uncommented per original
+            self.update_corner_plot()  # Uncommented per original
             
             # Update model comparison plot with selected instrument
             self.update_model_comparison_with_instrument(selected_instrument)
@@ -750,201 +784,74 @@ class ResultsTab(QWidget):
             
     def update_corner_plot(self):
         """Update corner plot with real MCMC samples"""
-        if not HAS_MATPLOTLIB:
+        if not HAS_MATPLOTLIB or self.results is None:
             return
-            
-        self.corner_figure.clear()
         
-        if self.results is None:
-            ax = self.corner_figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'No results to display', 
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
-            ax.set_xticks([])
-            ax.set_yticks([])
+        # Get parameter filter
+        param_filter = self.param_selector.currentText()
+        if "N parameters" in param_filter:
+            filter_type = "N"
+        elif "b parameters" in param_filter:
+            filter_type = "b"
+        elif "v parameters" in param_filter:
+            filter_type = "v"
         else:
-            try:
-                # Get MCMC samples
-                if hasattr(self.results, 'get_samples'):
-                    samples = self.results.get_samples()
-                elif hasattr(self.results, 'fitter') and hasattr(self.results.fitter, 'samples'):
-                    samples = self.results.fitter.samples
-                else:
-                    samples = None
-                
-                if samples is not None and len(samples) > 0:
-                    # Get parameter names
-                    if hasattr(self.results, 'parameter_summary'):
-                        param_summary = self.results.parameter_summary(verbose=False)
-                        param_names = param_summary.names
-                    else:
-                        # Generic names
-                        n_params = samples.shape[1]
-                        param_names = [f"θ_{i+1}" for i in range(n_params)]
-                    
-                    # Filter parameters based on selection
-                    selected_params = self.param_selector.currentText()
-                    if "N parameters" in selected_params:
-                        indices = [i for i, name in enumerate(param_names) if name.startswith('N_')]
-                    elif "b parameters" in selected_params:
-                        indices = [i for i, name in enumerate(param_names) if name.startswith('b_')]
-                    elif "v parameters" in selected_params:
-                        indices = [i for i, name in enumerate(param_names) if name.startswith('v_')]
-                    else:  # All parameters
-                        indices = list(range(len(param_names)))
-                    
-                    if indices and HAS_CORNER:
-                        # Create corner plot with real data
-                        filtered_samples = samples[:, indices]
-                        filtered_names = [param_names[i] for i in indices]
-                        
-                        corner.corner(filtered_samples, labels=filtered_names, 
-                                    fig=self.corner_figure, 
-                                    show_titles=True, title_kwargs={"fontsize": 10})
-                    else:
-                        # Fallback if corner not available
-                        ax = self.corner_figure.add_subplot(111)
-                        ax.text(0.5, 0.5, 'Corner plot package not available\nInstall with: pip install corner', 
-                               ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                        ax.set_xticks([])
-                        ax.set_yticks([])
-                else:
-                    ax = self.corner_figure.add_subplot(111)
-                    ax.text(0.5, 0.5, 'No MCMC samples available', 
-                           ha='center', va='center', transform=ax.transAxes, fontsize=14)
-                    ax.set_xticks([])
-                    ax.set_yticks([])
-                    
-            except Exception as e:
-                ax = self.corner_figure.add_subplot(111)
-                ax.text(0.5, 0.5, f'Error creating corner plot:\n{str(e)}', 
-                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                ax.set_xticks([])
-                ax.set_yticks([])
-                
+            filter_type = "all"
+        
+        # Use plotting_gui function
+        plotting_gui.plot_corner_custom(self.corner_figure, self.results, filter_type)
         self.corner_canvas.draw()
-        
+
     def update_model_comparison(self):
-        """Update model vs data comparison plot with real data"""
-        if not HAS_MATPLOTLIB:
+        """Update model vs data comparison plot"""
+        if not HAS_MATPLOTLIB or self.results is None:
             return
-            
-        self.comparison_figure.clear()
         
-        if self.results is None:
-            ax = self.comparison_figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'No results to display',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
-        else:
-            try:
-                # Get data and model from results
-                fitter = self.results.fitter
-                wave = fitter.wave_obs
-                flux = fitter.fnorm
-                error = fitter.enorm
-                
-                # Calculate best-fit model
-                if hasattr(self.results, 'model'):
-                    model_flux = self.results.model.evaluate(fitter.best_theta, wave)
-                else:
-                    model_flux = np.ones_like(flux)  # Fallback
-                
-                # Create subplots
-                show_residuals = self.show_residuals_check.isChecked()
-                if show_residuals:
-                    ax1 = self.comparison_figure.add_subplot(211)
-                    ax2 = self.comparison_figure.add_subplot(212, sharex=ax1)
-                else:
-                    ax1 = self.comparison_figure.add_subplot(111)
-                    ax2 = None
-                
-                # Main plot: data vs model
-                ax1.step(wave, flux, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
-                ax1.fill_between(wave, flux - error, flux + error, 
-                               alpha=0.3, color='gray', label='Error')
-                ax1.plot(wave, model_flux, 'r-', linewidth=2, label='Best-fit Model')
-                
-                # Add components if requested
-                if self.show_components_check.isChecked():
-                    # TODO: Add individual component plotting if model supports it
-                    pass
-                
-                ax1.set_ylabel('Normalized Flux')
-                ax1.legend(loc='upper right')
-                ax1.grid(True, alpha=0.3)
-                ax1.set_title('Model vs Data Comparison')
-                
-                if not show_residuals:
-                    ax1.set_xlabel('Wavelength (Å)')
-                
-                # Residuals subplot
-                if show_residuals and ax2:
-                    residuals = (flux - model_flux) / error
-                    ax2.step(wave, residuals, 'k-', where='mid', linewidth=1, alpha=0.8)
-                    ax2.axhline(0, color='r', linestyle='-', alpha=0.7)
-                    ax2.fill_between(wave, -1, 1, alpha=0.3, color='gray', label='±1σ')
-                    ax2.set_xlabel('Wavelength (Å)')
-                    ax2.set_ylabel('Residuals (σ)')
-                    ax2.legend()
-                    ax2.grid(True, alpha=0.3)
-                    
-            except Exception as e:
-                ax = self.comparison_figure.add_subplot(111)
-                ax.text(0.5, 0.5, f'Error creating model plot:\n{str(e)}',
-                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                
-        self.comparison_figure.tight_layout()
+        show_components = self.show_components_check.isChecked()
+        show_residuals = self.show_residuals_check.isChecked()
+        selected_instrument = self.instrument_combo.currentText()
+
+        
+        # Use plotting_gui function
+        plotting_gui.plot_model_comparison_custom(
+            self.comparison_figure, 
+            self.results, 
+            show_components, 
+            show_residuals,
+            self.plot_ranges,
+            selected_instrument
+        )
         self.comparison_canvas.draw()
-        
-    def update_velocity_plot(self):
-        """Update velocity space plot with real data"""
-        if not HAS_MATPLOTLIB:
+
+
+    def update_velocity_plot(self,velocity_range=None,yrange=None):
+        """Update velocity space plot with custom ranges"""
+        if not HAS_MATPLOTLIB or self.results is None:
             return
-            
-        self.velocity_figure.clear()
         
-        if self.results is None:
-            ax = self.velocity_figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'No results to display',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        # Get velocity range from stored values
+        if velocity_range:
+            velocity_range = velocity_range
         else:
-            try:
-                # Use FitResults velocity plotting method if available
-                if hasattr(self.results, 'plot_velocity_fits'):
-                    # Clear figure and use FitResults plotting
-                    self.velocity_figure.clear()
-                    
-                    # Get velocity range setting
-                    vel_range_text = self.vel_range_combo.currentText()
-                    if vel_range_text == "±200 km/s":
-                        velocity_range = (-200, 200)
-                    elif vel_range_text == "±500 km/s":
-                        velocity_range = (-500, 500)
-                    elif vel_range_text == "±1000 km/s":
-                        velocity_range = (-1000, 1000)
-                    else:
-                        velocity_range = None  # Auto
-                    
-                    # Create velocity plots
-                    show_components = self.show_components_check.isChecked()
-                    
-                    # Call the FitResults plotting method
-                    fig = self.results.plot_velocity_fits(
-                        show_components=show_components,
-                        velocity_range=velocity_range,
-                        show_rail_system=True,
-                        figure=self.velocity_figure
-                    )
-                else:
-                    # Fallback: basic velocity plot
-                    ax = self.velocity_figure.add_subplot(111)
-                    ax.text(0.5, 0.5, 'Velocity plotting not available in results object',
-                           ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                    
-            except Exception as e:
-                ax = self.velocity_figure.add_subplot(111)
-                ax.text(0.5, 0.5, f'Error creating velocity plot:\n{str(e)}',
-                       ha='center', va='center', transform=ax.transAxes, fontsize=12)
-                
+            velocity_range = (-600, 600)  # Default range
+        if yrange:
+            yrange=yrange
+        else:
+            yrange=(-0.02,1.5)
+        
+        show_components = self.show_components_check.isChecked()
+        selected_instrument = self.instrument_combo.currentText()
+        
+        # Use simplified plotting function
+        plotting_gui.plot_velocity_space_custom(
+            self.velocity_figure,
+            self.results,
+            velocity_range,
+            show_components,
+            True,  # show_rail
+            selected_instrument,
+            yrange=yrange
+        )
         self.velocity_canvas.draw()
 
 

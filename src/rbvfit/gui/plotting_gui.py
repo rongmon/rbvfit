@@ -36,8 +36,9 @@ def plot_corner_custom(figure, results, fitter, param_filter="all"):
     
     try:
         # Get MCMC samples
-        if hasattr(fitter, 'samples') and len(fitter.samples) > 0:
-            samples = fitter.samples
+        if hasattr(results, 'samples') and len(results.samples) > 0:
+            samples = results.samples
+            param_names = results.parameter_names
         else:
             ax = figure.add_subplot(111)
             ax.text(0.5, 0.5, 'No MCMC samples available', 
@@ -47,28 +48,50 @@ def plot_corner_custom(figure, results, fitter, param_filter="all"):
             return
             
         # Get parameter names
-        n_params = samples.shape[1]
-        n_comp = n_params // 3
+        #n_params = samples.shape[1]
+        #n_comp = n_params // 3
         
-        # Generate parameter names
-        param_names = []
-        for i in range(n_comp):
-            param_names.extend([f'N_{i+1}', f'b_{i+1}', f'v_{i+1}'])
             
         # Apply parameter filter
+        #if param_filter == "N":
+        #    indices = [i for i in range(0, n_comp)]
+        #    filtered_names = [f'N_{i+1}' for i in range(n_comp)]
+        #elif param_filter == "b":
+        #    indices = [i for i in range(n_comp, 2*n_comp)]
+        #    filtered_names = [f'b_{i+1}' for i in range(n_comp)]
+        #elif param_filter == "v":
+        #    indices = [i for i in range(2*n_comp, 3*n_comp)]
+        #    filtered_names = [f'v_{i+1}' for i in range(n_comp)]
+        #else:  # all
+        #    indices = list(range(n_params))
+        #   filtered_names = param_names
+        
+        # Fix the parameter filtering logic
         if param_filter == "N":
-            indices = [i for i in range(0, n_comp)]
-            filtered_names = [f'N_{i+1}' for i in range(n_comp)]
+            # Find parameters that start with 'N' or 'logN'
+            indices = [i for i, name in enumerate(param_names) 
+                      if name.startswith('N_') or name.startswith('logN')]
+            filtered_names = [param_names[i] for i in indices]
         elif param_filter == "b":
-            indices = [i for i in range(n_comp, 2*n_comp)]
-            filtered_names = [f'b_{i+1}' for i in range(n_comp)]
+            indices = [i for i, name in enumerate(param_names) 
+                      if name.startswith('b_')]
+            filtered_names = [param_names[i] for i in indices]
         elif param_filter == "v":
-            indices = [i for i in range(2*n_comp, 3*n_comp)]
-            filtered_names = [f'v_{i+1}' for i in range(n_comp)]
+            indices = [i for i, name in enumerate(param_names) 
+                      if name.startswith('v_')]
+            filtered_names = [param_names[i] for i in indices]
         else:  # all
-            indices = list(range(n_params))
+            indices = list(range(len(param_names)))
             filtered_names = param_names
-            
+
+        # Only proceed if we found matching parameters
+        if not indices:
+            ax = figure.add_subplot(111)
+            ax.text(0.5, 0.5, f'No {param_filter} parameters found', 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            return
+
+
         # Filter samples
         filtered_samples = samples[:, indices]
         
@@ -107,7 +130,7 @@ def plot_corner_custom(figure, results, fitter, param_filter="all"):
         ax.set_yticks([])
 
 
-def plot_model_comparison_custom(figure, results, fitter, model, show_components=True, show_residuals=True):
+def plot_model_comparison_custom(figure, results, show_components=True, show_residuals=True,plot_ranges=None, instrument_name=None):
     """
     Custom model vs data comparison plot.
     
@@ -129,15 +152,30 @@ def plot_model_comparison_custom(figure, results, fitter, model, show_components
     figure.clear()
     
     try:
-        # Get data from fitter
-        wave = fitter.wave_obs
-        flux = fitter.fnorm
-        error = fitter.enorm
-        best_theta = fitter.best_theta
+        # Use selected instrument or default to first
+        if instrument_name and instrument_name in results.instrument_data:
+            inst_data = results.instrument_data[instrument_name]
+        else:
+            # Default to first instrument
+            primary_inst = results.instrument_names[0]
+            inst_data = results.instrument_data[primary_inst]
+            instrument_name = primary_inst
         
-        # Calculate best-fit model
-        model_flux = model.evaluate(best_theta, wave)
+        wave = inst_data['wave']
+        flux = inst_data['flux']
+        error = inst_data['error']
+        best_theta = results.best_fit
         
+        # Get model for this instrument
+        if results.config_metadata:
+            if results.is_multi_instrument:
+                model = results.reconstruct_model(instrument_name)
+            else:
+                model = results.reconstruct_model()
+            model_flux = model.evaluate(best_theta, wave)
+        else:
+            model_flux = np.ones_like(flux)
+                
         # Create subplots
         if show_residuals:
             ax1 = figure.add_subplot(211)
@@ -194,145 +232,82 @@ def plot_model_comparison_custom(figure, results, fitter, model, show_components
         ax.set_xticks([])
         ax.set_yticks([])
 
+    if plot_ranges:
+        if hasattr(figure, 'get_axes') and figure.get_axes():
+            ax = figure.get_axes()[0]  # Main plot axis
+            
+            # Apply x-axis limits
+            if plot_ranges.get('x_min') is not None and plot_ranges.get('x_max') is not None:
+                ax.set_xlim(plot_ranges['x_min'], plot_ranges['x_max'])
+            
+            # Apply y-axis limits  
+            if plot_ranges.get('y_min') is not None and plot_ranges.get('y_max') is not None:
+                ax.set_ylim(plot_ranges['y_min'], plot_ranges['y_max'])
 
-def plot_velocity_space_custom(figure, results, fitter, model, velocity_range=None, 
-                              show_components=True, show_rail=True):
-    """
-    Custom velocity space plotting that works with Qt canvas.
-    
-    Parameters
-    ----------
-    figure : matplotlib.Figure
-        The Qt figure to plot on
-    results : FitResults or None
-        Results object (can be None)
-    fitter : vfit
-        MCMC fitter object with data and best-fit parameters
-    model : VoigtModel  
-        Model object for evaluation
-    velocity_range : tuple, optional
-        (vmin, vmax) in km/s
-    show_components : bool
-        Whether to show individual components
-    show_rail : bool
-        Whether to show component position markers
-    """
+
+
+
+def plot_velocity_space_custom(figure, results, velocity_range=None, show_components=True, show_rail=True, instrument_name=None,yrange=None):
+    """Simplified velocity space plotting"""
     figure.clear()
     
     try:
-        # Get data from fitter
-        wave_obs = fitter.wave_obs
-        flux_obs = fitter.fnorm
-        error_obs = fitter.enorm
-        best_theta = fitter.best_theta
-        
-        # Get system information from model
-        if hasattr(model, 'config') and hasattr(model.config, 'systems'):
-            systems = model.config.systems
+        # Get instrument data
+        if instrument_name and instrument_name in results.instrument_data:
+            inst_data = results.instrument_data[instrument_name]
         else:
-            # Fallback: create generic system info
-            ax = figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'Model configuration not available for velocity plotting',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
-            return
+            primary_inst = results.instrument_names[0]
+            inst_data = results.instrument_data[primary_inst]
+            instrument_name = primary_inst
+        
+        wave_obs = inst_data['wave']
+        flux_obs = inst_data['flux']
+        error_obs = inst_data['error']
+        best_theta = results.best_fit
+        
+        # Try to get model
+        if results.config_metadata:
+            if results.is_multi_instrument:
+                model = results.reconstruct_model(instrument_name)
+            else:
+                model = results.reconstruct_model()
             
-        if not systems:
-            ax = figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'No absorption systems found in model',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
-            return
+            # Simple velocity conversion using center wavelength
+            center_wave = np.median(wave_obs)
+            c_kms = 299792.458
+            velocity = c_kms * (wave_obs / center_wave - 1)
             
-        # Count total ion groups for subplot layout
-        total_ion_groups = sum(len(system.ion_groups) for system in systems)
-        
-        if total_ion_groups == 0:
-            ax = figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'No ion groups found in model',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
-            return
+            # Evaluate model
+            model_flux = model.evaluate(best_theta, wave_obs)
             
-        # Create subplot grid
-        n_cols = min(2, total_ion_groups)
-        n_rows = (total_ion_groups + n_cols - 1) // n_cols
-        
-        subplot_idx = 1
-        
-        # Extract parameter values for rail plotting
-        n_params = len(best_theta)
-        n_comp = n_params // 3
-        v_components = best_theta[2*n_comp:] if n_comp > 0 else []
-        
-        for system in systems:
-            for ion_group in system.ion_groups:
-                ax = figure.add_subplot(n_rows, n_cols, subplot_idx)
-                
-                # Use the first transition for this ion group for velocity calculation
-                if ion_group.transitions:
-                    transition = ion_group.transitions[0]
-                    
-                    # Convert to velocity space
-                    c_kms = 299792.458
-                    lambda_sys = transition * (1 + system.redshift)
-                    velocity = c_kms * (wave_obs / lambda_sys - 1)
-                    
-                    # Plot data
-                    ax.step(velocity, flux_obs, 'k-', where='mid', linewidth=1, 
-                           alpha=0.8, label='Data')
-                    ax.fill_between(velocity, flux_obs - error_obs, flux_obs + error_obs,
-                                   alpha=0.3, color='gray', label='1σ Error')
-                    
-                    # Plot best-fit model
-                    try:
-                        model_flux = model.evaluate(best_theta, wave_obs)
-                        ax.plot(velocity, model_flux, 'r-', linewidth=2, label='Best Fit')
-                    except Exception as e:
-                        print(f"Could not evaluate model: {e}")
-                    
-                    # Add component rail markers if requested
-                    if show_rail and len(v_components) > 0:
-                        ylim = ax.get_ylim()
-                        for i, v_comp in enumerate(v_components):
-                            ax.axvline(v_comp, color='red', linestyle='--', alpha=0.7, linewidth=1)
-                            ax.text(v_comp, ylim[1] * 0.95, f'C{i+1}', 
-                                   ha='center', va='top', color='red', fontsize=8)
-                    
-                    # Add zero velocity reference
-                    ax.axvline(0, color='gray', linestyle=':', alpha=0.5, linewidth=1)
-                    
-                    # Set velocity range
-                    if velocity_range:
-                        ax.set_xlim(velocity_range)
-                    else:
-                        # Auto range around components
-                        if len(v_components) > 0:
-                            v_center = np.mean(v_components)
-                            v_span = max(200, np.ptp(v_components) * 2) if len(v_components) > 1 else 200
-                            ax.set_xlim(v_center - v_span, v_center + v_span)
-                        else:
-                            ax.set_xlim(-300, 300)
-                    
-                    # Formatting
-                    ax.set_ylabel('Normalized Flux')
-                    ax.set_xlabel('Velocity (km/s)')
-                    ax.set_title(f'{ion_group.ion_name} {transition:.1f}Å (z={system.redshift:.3f})')
-                    ax.grid(True, alpha=0.3)
-                    ax.set_ylim(0, 1.2)
-                    
-                    if subplot_idx == 1:  # Only show legend on first subplot
-                        ax.legend(fontsize=8, loc='upper right')
-                        
-                subplot_idx += 1
-                
-        figure.suptitle('Velocity Space Analysis', fontsize=14)
-        figure.tight_layout()
-        
+            # Create plot
+            ax = figure.add_subplot(111)
+            ax.step(velocity, flux_obs, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
+            ax.fill_between(velocity, flux_obs - error_obs, flux_obs + error_obs,
+                           alpha=0.3, color='gray', label='1σ Error')
+            ax.plot(velocity, model_flux, 'r-', linewidth=2, label='Best Fit')
+            
+            # Set velocity range
+            if velocity_range:
+                ax.set_xlim(velocity_range)
+            if yrange:
+                ax.set_ylim(yrange)
+            
+            ax.set_xlabel('Velocity (km/s)')
+            ax.set_ylabel('Normalized Flux')
+            ax.set_title(f'Velocity Space - {instrument_name}')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            
+        else:
+            ax = figure.add_subplot(111)
+            ax.text(0.5, 0.5, 'Model reconstruction not available',
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            
     except Exception as e:
         ax = figure.add_subplot(111)
         ax.text(0.5, 0.5, f'Error creating velocity plot:\n{str(e)}',
                ha='center', va='center', transform=ax.transAxes, fontsize=12)
-        ax.set_xticks([])
-        ax.set_yticks([])
-
 
 def plot_chain_traces_custom(figure, fitter):
     """
@@ -390,20 +365,10 @@ def plot_chain_traces_custom(figure, fitter):
                ha='center', va='center', transform=ax.transAxes, fontsize=12)
 
 
-def update_results_plots_custom(results_tab, results, fitter, model):
+def update_results_plots_custom(results_tab, results):
     """
     Update all plots in results tab with custom plotting functions.
     
-    Parameters
-    ----------
-    results_tab : ResultsTab
-        The results tab widget
-    results : FitResults or None
-        Results object
-    fitter : vfit
-        MCMC fitter object
-    model : VoigtModel
-        Model object
     """
     try:
         # Update corner plot
@@ -417,30 +382,26 @@ def update_results_plots_custom(results_tab, results, fitter, model):
         else:
             filter_type = "all"
             
-        plot_corner_custom(results_tab.corner_figure, results, fitter, filter_type)
+        plot_corner_custom(results_tab.corner_figure, results, filter_type)
         results_tab.corner_canvas.draw()
         
         # Update model comparison
         show_components = results_tab.show_components_check.isChecked()
         show_residuals = results_tab.show_residuals_check.isChecked()
         
-        plot_model_comparison_custom(results_tab.comparison_figure, results, fitter, model,
-                                   show_components, show_residuals)
+        plot_model_comparison_custom(results_tab.comparison_figure, results, show_components, show_residuals)
         results_tab.comparison_canvas.draw()
         
-        # Update velocity plot
-        vel_range_text = results_tab.vel_range_combo.currentText()
-        if vel_range_text == "±200 km/s":
-            velocity_range = (-200, 200)
-        elif vel_range_text == "±500 km/s":
-            velocity_range = (-500, 500)
-        elif vel_range_text == "±1000 km/s":
-            velocity_range = (-1000, 1000)
+        # Update velocity plot with custom ranges
+        if hasattr(results_tab, 'velocity_range_min') and hasattr(results_tab, 'velocity_range_max'):
+            if results_tab.velocity_range_min is not None and results_tab.velocity_range_max is not None:
+                velocity_range = (results_tab.velocity_range_min, results_tab.velocity_range_max)
+            else:
+                velocity_range = None  # Auto range
         else:
-            velocity_range = None
+            velocity_range = (-600, 600)  # Default range
             
-        plot_velocity_space_custom(results_tab.velocity_figure, results, fitter, model,
-                                 velocity_range, show_components, True)
+        plot_velocity_space_custom(results_tab.velocity_figure, results, velocity_range, show_components, True)
         results_tab.velocity_canvas.draw()
         
     except Exception as e:

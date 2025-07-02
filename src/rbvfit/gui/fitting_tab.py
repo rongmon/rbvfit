@@ -19,7 +19,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 import rbvfit.vfit_mcmc as mc
-from rbvfit.core import fit_results as fr
+from rbvfit.core.unified_results import UnifiedResults
 
 # Import shared dialog
 from rbvfit.gui.shared_plot_range_dialog import PlotRangeDialog
@@ -812,7 +812,9 @@ class FittingTab(QWidget):
             if hasattr(self.main_window, 'get_current_model'):
                 model = self.main_window.get_current_model()
                 if model:
-                    results = fr.FitResults(fitter, model)
+                    #results = fr.FitResults(fitter, model)
+                    results = UnifiedResults(fitter, model)  # ← NEW LINE
+
                 else:
                     results = fitter  # Fallback
             else:

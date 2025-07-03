@@ -60,7 +60,7 @@ error=error[q]
 print("\n✓ Data loading complete")
 
 # ============================================================================
-# PART 2: PHYSICAL SYSTEM CONFIGURATION
+# PART 1: PHYSICAL SYSTEM CONFIGURATION
 # ============================================================================
 
 print("\n" + "=" * 60)
@@ -72,8 +72,10 @@ print("=" * 60)
 
 
 
+# Define instrumental resolutions (Full Width at Half Maximum in pixels)
+FWHM_XShooter = '2.2' # XShooter
 
-config_A = FitConfiguration()
+config_A = FitConfiguration(FWHM=FWHM_XShooter)
 config_A.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=3)
 
 
@@ -87,12 +89,10 @@ print("\n" + "=" * 60)
 print("SETTING UP INSTRUMENTAL PARAMETERS")
 print("=" * 60)
 
-# Define instrumental resolutions (Full Width at Half Maximum in pixels)
-FWHM_XShooter = '2.2' # XShooter
 
 
 # Create instrument-specific models
-model_A = VoigtModel(config_A, FWHM=FWHM_XShooter)  
+model_A = VoigtModel(config_A)  
 
 
 
@@ -127,22 +127,14 @@ nguess = [13.15, 13.58, 13.5]  # log10(column density in cm^-2)
 bguess = [23.0,25.,30.]  # Doppler parameter in km/s - thermal + turbulent broadening
 vguess = [-67.,0.,10.] # Velocity offset in km/s - relative to systemic redshift
 
-print("Initial parameter guesses:")
-print(f"  N (log column density): {nguess[0]:.1f} [log cm^-2]")
-print(f"  b (Doppler parameter):  {bguess[0]:.1f} km/s")
-print(f"  v (velocity offset):    {vguess[0]:.1f} km/s")
 
 # Create theta array for MCMC (concatenated parameter vector)
 theta = np.concatenate([nguess, bguess, vguess])
-print(f"\nTheta array structure: {theta}")
-print("  theta[0] = N, theta[1] = b, theta[2] = v")
+
+
 
 # Set parameter bounds using rbvfit's bound-setting utility
 bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
-print(f"\nParameter bounds:")
-print(f"  N: [{lb[0]:.1f}, {ub[0]:.1f}] [log cm^-2]")
-print(f"  b: [{lb[1]:.1f}, {ub[1]:.1f}] km/s") 
-print(f"  v: [{lb[2]:.1f}, {ub[2]:.1f}] km/s")
 
 print("\n✓ MCMC parameters configured")
 
@@ -156,16 +148,31 @@ print("=" * 60)
 
 print("Setting up mcmc fitter...")
 
-# Create vfit_mcmc object with multi-instrument support
+# Define instrument setup outside the call - For multi instrument we just keep adding to this
+instrument_data = {
+    'XS': {
+        'model': compiled.model_flux,
+        'wave': wave_obs,
+        'flux': flux,
+        'error': error
+    }
+}
+
+
+# MCMC settings
+n_steps = 500
+n_walkers = 20
+
+
+# Clean call
 fitter = mc.vfit(
-    compiled.model_flux,           # Primary model function (XShooter)
-    theta, lb, ub,            # Parameters and bounds
-    wave_obs, flux, error,        # Primary dataset (XShooter data)
-    no_of_Chain=50,
-    no_of_steps=500,
-    perturbation=1e-4,
-    sampler='zeus'
-    )
+    instrument_data, theta, lb, ub,
+    no_of_Chain=n_walkers, 
+    no_of_steps=n_steps,
+    sampler='zeus',
+    perturbation=1e-4
+)
+
 
 
 
@@ -224,3 +231,4 @@ velocity_plots = results.plot_velocity_fits(
 
 # For single ion systems, also try velocity range control:
 results.plot_velocity_fits(velocity_range=(-600, 600))
+

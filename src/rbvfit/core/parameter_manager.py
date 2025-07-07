@@ -1,9 +1,9 @@
 """
-Parameter management system for rbvfit 2.0 with multi-instrument support.
+Parameter management system for rbvfit 2.0 - Clean elegant approach.
 
 This module handles the mapping between the hierarchical configuration structure
-and the flat theta parameter array used for optimization, including parameter
-mapping for multi-instrument scenarios.
+and the flat theta parameter array used for optimization. No multi-instrument
+complexity - focuses purely on physics parameter organization.
 """
 
 from __future__ import annotations
@@ -64,7 +64,8 @@ class ParameterManager:
     - Mapping theta values back to individual line parameters
     - Generating appropriate bounds for parameters
     - Providing parameter names for output
-    - Multi-instrument parameter mapping
+    
+    Focus: Pure physics parameter management with no instrument awareness.
     """
     
     def __init__(self, config: FitConfiguration):
@@ -90,95 +91,6 @@ class ParameterManager:
             Structure information including total parameters and mapping
         """
         return self.structure
-    
-    def compute_instrument_mapping(self, instrument_config: FitConfiguration, 
-                                 master_config: FitConfiguration) -> List[int]:
-        """
-        Compute parameter index mapping for a specific instrument config.
-        
-        Parameters
-        ----------
-        instrument_config : FitConfiguration
-            Configuration for this specific instrument
-        master_config : FitConfiguration
-            Master configuration containing all parameters
-            
-        Returns
-        -------
-        List[int]
-            List of theta indices that this instrument uses
-        """
-        # Get structures for both configs
-        instrument_structure = instrument_config.get_parameter_structure()
-        master_structure = master_config.get_parameter_structure()
-        
-        # Build mapping of (z, ion, component) -> parameter indices for both configs
-        instrument_param_map = self._build_parameter_location_map(instrument_structure)
-        master_param_map = self._build_parameter_location_map(master_structure)
-        
-        # Find which master parameters correspond to instrument parameters
-        mapping = []
-        
-        # Process N, b, v sections separately
-        for param_type in ['N', 'b', 'v']:
-            for (z, ion, comp) in instrument_param_map[param_type]:
-                key = (z, ion, comp)
-                if key not in master_param_map[param_type]:
-                    raise ValueError(
-                        f"Instrument parameter {param_type}_{ion}_z{z:.3f}_c{comp} "
-                        f"not found in master configuration"
-                    )
-                
-                master_idx = master_param_map[param_type][key]
-                mapping.append(master_idx)
-        
-        return mapping
-    
-    def _build_parameter_location_map(self, structure: Dict[str, Any]) -> Dict[str, Dict[Tuple, int]]:
-        """
-        Build mapping from (z, ion, component) to theta index for each parameter type.
-        
-        Parameters
-        ----------
-        structure : dict
-            Parameter structure from get_parameter_structure()
-            
-        Returns
-        -------
-        dict
-            Mapping with keys 'N', 'b', 'v' containing location mappings
-        """
-        param_map = {'N': {}, 'b': {}, 'v': {}}
-        
-        # Calculate total components for offset calculations
-        total_components = 0
-        for sys_info in structure['systems']:
-            for ion_info in sys_info['ion_groups']:
-                total_components += ion_info['components']
-        
-        # Track global component index
-        global_comp_idx = 0
-        
-        for sys_info in structure['systems']:
-            z = sys_info['redshift']
-            
-            for ion_info in sys_info['ion_groups']:
-                ion = ion_info['ion']
-                n_comp = ion_info['components']
-                
-                # Map each component
-                for comp_idx in range(n_comp):
-                    key = (z, ion, comp_idx)
-                    
-                    # Parameter indices in theta array
-                    param_map['N'][key] = global_comp_idx + comp_idx
-                    param_map['b'][key] = total_components + global_comp_idx + comp_idx
-                    param_map['v'][key] = 2 * total_components + global_comp_idx + comp_idx
-                
-                # Advance global component index
-                global_comp_idx += n_comp
-        
-        return param_map
     
     def theta_to_parameters(self, theta: np.ndarray) -> Dict[Tuple[int, str, int], ParameterSet]:
         """
@@ -340,105 +252,6 @@ class ParameterManager:
         
         return line_params
     
-    def generate_parameter_bounds(self, custom_bounds: Optional[Dict[str, Dict[str, Tuple[float, float]]]] = None) -> ParameterBounds:
-        """
-        Generate parameter bounds based on configuration.
-        
-        Parameters
-        ----------
-        custom_bounds : dict, optional
-            Custom bounds per ion and parameter type. Format:
-            {
-                'ion_name': {
-                    'N': (lower, upper),
-                    'b': (lower, upper),
-                    'v': (lower, upper)
-                }
-            }
-            
-        Returns
-        -------
-        ParameterBounds
-            Object containing lower and upper bound arrays
-        """
-        n_params = self.structure['total_parameters']
-        lower = np.zeros(n_params)
-        upper = np.zeros(n_params)
-        
-        # Default bounds
-        default_bounds = {
-            'N': (10.0, 22.0),      # log column density
-            'b': (2.0, 200.0),      # Doppler parameter km/s
-            'v': (-500.0, 500.0)    # velocity km/s
-        }
-        
-        # Ion-specific default bounds
-        ion_defaults = {
-            'HI': {'N': (12.0, 22.0), 'b': (10.0, 200.0)},
-            'MgII': {'N': (11.0, 18.0), 'b': (3.0, 100.0)},
-            'FeII': {'N': (11.0, 17.0), 'b': (3.0, 100.0)},
-            'OVI': {'N': (12.0, 16.0), 'b': (10.0, 150.0)},
-            'CIV': {'N': (12.0, 16.0), 'b': (5.0, 150.0)},
-            'SiII': {'N': (11.0, 17.0), 'b': (3.0, 100.0)},
-            'CII': {'N': (12.0, 18.0), 'b': (3.0, 100.0)},
-            'AlII': {'N': (10.0, 15.0), 'b': (3.0, 100.0)},
-            'NV': {'N': (12.0, 16.0), 'b': (10.0, 150.0)},
-            'SiIV': {'N': (12.0, 16.0), 'b': (5.0, 150.0)},
-        }
-        
-        # Calculate total components across all ion groups
-        total_components = 0
-        for sys_info in self.structure['systems']:
-            for ion_info in sys_info['ion_groups']:
-                total_components += ion_info['components']
-        
-        # Track global component index
-        global_comp_idx = 0
-        
-        # Apply bounds for each ion group using global indexing
-        for sys_idx, sys_info in enumerate(self.structure['systems']):
-            for ion_info in sys_info['ion_groups']:
-                ion_name = ion_info['ion']
-                n_comp = ion_info['components']
-                
-                # Get bounds for this ion
-                if custom_bounds and ion_name in custom_bounds:
-                    ion_bounds = custom_bounds[ion_name]
-                elif ion_name in ion_defaults:
-                    ion_bounds = ion_defaults[ion_name]
-                else:
-                    ion_bounds = default_bounds
-                
-                # Set bounds using global indexing
-                # N bounds
-                if 'N' in ion_bounds:
-                    lo, hi = ion_bounds['N']
-                else:
-                    lo, hi = default_bounds['N']
-                lower[global_comp_idx:global_comp_idx+n_comp] = lo
-                upper[global_comp_idx:global_comp_idx+n_comp] = hi
-                
-                # b bounds
-                if 'b' in ion_bounds:
-                    lo, hi = ion_bounds['b']
-                else:
-                    lo, hi = default_bounds['b']
-                lower[total_components+global_comp_idx:total_components+global_comp_idx+n_comp] = lo
-                upper[total_components+global_comp_idx:total_components+global_comp_idx+n_comp] = hi
-                
-                # v bounds
-                if 'v' in ion_bounds:
-                    lo, hi = ion_bounds['v']
-                else:
-                    lo, hi = default_bounds['v']
-                lower[2*total_components+global_comp_idx:2*total_components+global_comp_idx+n_comp] = lo
-                upper[2*total_components+global_comp_idx:2*total_components+global_comp_idx+n_comp] = hi
-                
-                # Advance global component index
-                global_comp_idx += n_comp
-        
-        return ParameterBounds(lower, upper)
-    
     def get_parameter_names(self) -> List[str]:
         """
         Get human-readable names for each parameter.
@@ -457,7 +270,7 @@ class ParameterManager:
                 ion_name = ion_info['ion']
                 n_comp = ion_info['components']
                 for comp in range(n_comp):
-                    names.append(f"N_{ion_name}_z{z:.3f}_c{comp}")
+                    names.append(f"N_{ion_name}_z{z:.3f}_c{comp+1}")
         
         # Then all b names
         for sys_idx, sys_info in enumerate(self.structure['systems']):
@@ -466,7 +279,7 @@ class ParameterManager:
                 ion_name = ion_info['ion']
                 n_comp = ion_info['components']
                 for comp in range(n_comp):
-                    names.append(f"b_{ion_name}_z{z:.3f}_c{comp}")
+                    names.append(f"b_{ion_name}_z{z:.3f}_c{comp+1}")
         
         # Finally all v names
         for sys_idx, sys_info in enumerate(self.structure['systems']):
@@ -475,7 +288,7 @@ class ParameterManager:
                 ion_name = ion_info['ion']
                 n_comp = ion_info['components']
                 for comp in range(n_comp):
-                    names.append(f"v_{ion_name}_z{z:.3f}_c{comp}")
+                    names.append(f"v_{ion_name}_z{z:.3f}_c{comp+1}")
         
         return names
     
@@ -547,6 +360,80 @@ class ParameterManager:
         
         return names
     
+    def generate_theta_bounds(self, ion_specific: bool = True) -> ParameterBounds:
+        """
+        Generate reasonable parameter bounds based on configuration.
+        
+        Parameters
+        ----------
+        ion_specific : bool, optional
+            Whether to use ion-specific bounds (default: True)
+            
+        Returns
+        -------
+        ParameterBounds
+            Parameter bounds object
+        """
+        n_params = self.structure['total_parameters']
+        total_components = n_params // 3
+        
+        lower_bounds = np.zeros(n_params)
+        upper_bounds = np.zeros(n_params)
+        
+        # Ion-specific bounds lookup table
+        ion_bounds = {
+            'HI': {'N': (12.0, 22.0), 'b': (5.0, 100.0), 'v': (-500.0, 500.0)},
+            'CIV': {'N': (12.0, 16.0), 'b': (5.0, 80.0), 'v': (-200.0, 200.0)},
+            'OVI': {'N': (13.0, 16.0), 'b': (10.0, 100.0), 'v': (-300.0, 300.0)},
+            'SiIV': {'N': (11.0, 15.0), 'b': (5.0, 60.0), 'v': (-150.0, 150.0)},
+            'MgII': {'N': (11.0, 16.0), 'b': (5.0, 80.0), 'v': (-100.0, 100.0)},
+            'FeII': {'N': (11.0, 16.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'AlIII': {'N': (11.0, 15.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'NV': {'N': (12.0, 15.0), 'b': (10.0, 80.0), 'v': (-200.0, 200.0)},
+            'OI': {'N': (13.0, 16.0), 'b': (5.0, 50.0), 'v': (-100.0, 100.0)},
+            'SiII': {'N': (11.0, 16.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'AlII': {'N': (11.0, 15.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'CII': {'N': (13.0, 17.0), 'b': (5.0, 50.0), 'v': (-100.0, 100.0)},
+            'NII': {'N': (13.0, 16.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'SiIII': {'N': (11.0, 15.0), 'b': (5.0, 60.0), 'v': (-100.0, 100.0)},
+            'CIII': {'N': (13.0, 16.0), 'b': (5.0, 80.0), 'v': (-150.0, 150.0)},
+        }
+        
+        # Default bounds for unknown ions
+        default_bounds = {'N': (10.0, 18.0), 'b': (5.0, 100.0), 'v': (-300.0, 300.0)}
+        
+        # Build bounds for each parameter type
+        comp_idx = 0
+        
+        for sys_info in self.structure['systems']:
+            for ion_info in sys_info['ion_groups']:
+                ion_name = ion_info['ion']
+                n_comp = ion_info['components']
+                
+                # Get bounds for this ion
+                if ion_specific and ion_name in ion_bounds:
+                    bounds = ion_bounds[ion_name]
+                else:
+                    bounds = default_bounds
+                
+                # Set bounds for each component of this ion
+                for i in range(n_comp):
+                    # N bounds
+                    lower_bounds[comp_idx + i] = bounds['N'][0]
+                    upper_bounds[comp_idx + i] = bounds['N'][1]
+                    
+                    # b bounds
+                    lower_bounds[total_components + comp_idx + i] = bounds['b'][0]
+                    upper_bounds[total_components + comp_idx + i] = bounds['b'][1]
+                    
+                    # v bounds
+                    lower_bounds[2 * total_components + comp_idx + i] = bounds['v'][0]
+                    upper_bounds[2 * total_components + comp_idx + i] = bounds['v'][1]
+                
+                comp_idx += n_comp
+        
+        return ParameterBounds(lower_bounds, upper_bounds)
+    
     def validate_theta(self, theta: np.ndarray) -> bool:
         """
         Validate that theta array matches expected structure.
@@ -607,3 +494,80 @@ class ParameterManager:
                     )
         
         return "\n".join(lines)
+    
+    def get_component_count(self) -> int:
+        """
+        Get total number of velocity components across all systems.
+        
+        Returns
+        -------
+        int
+            Total number of components
+        """
+        return self.structure['total_parameters'] // 3
+    
+    def get_parameter_info(self, param_idx: int) -> Dict[str, Any]:
+        """
+        Get information about a specific parameter.
+        
+        Parameters
+        ----------
+        param_idx : int
+            Index in theta array
+            
+        Returns
+        -------
+        dict
+            Parameter information including type, system, ion, component
+        """
+        total_params = self.structure['total_parameters']
+        total_components = total_params // 3
+        
+        if param_idx < 0 or param_idx >= total_params:
+            raise ValueError(f"Parameter index {param_idx} out of range [0, {total_params})")
+        
+        # Determine parameter type
+        if param_idx < total_components:
+            param_type = 'N'
+            comp_idx = param_idx
+        elif param_idx < 2 * total_components:
+            param_type = 'b'
+            comp_idx = param_idx - total_components
+        else:
+            param_type = 'v'
+            comp_idx = param_idx - 2 * total_components
+        
+        # Find which system/ion/component this corresponds to
+        global_comp_idx = 0
+        
+        for sys_idx, sys_info in enumerate(self.structure['systems']):
+            for ion_info in sys_info['ion_groups']:
+                n_comp = ion_info['components']
+                
+                if comp_idx < global_comp_idx + n_comp:
+                    # This is the ion group
+                    local_comp_idx = comp_idx - global_comp_idx
+                    
+                    return {
+                        'type': param_type,
+                        'system_idx': sys_idx,
+                        'redshift': sys_info['redshift'],
+                        'ion': ion_info['ion'],
+                        'component_idx': local_comp_idx,
+                        'global_component_idx': comp_idx,
+                        'theta_idx': param_idx
+                    }
+                
+                global_comp_idx += n_comp
+        
+        raise ValueError(f"Could not find parameter info for index {param_idx}")
+
+
+if __name__ == "__main__":
+    print("rbvfit 2.0 ParameterManager - Clean Physics-Only Implementation")
+    print("Usage:")
+    print("  config = FitConfiguration()")
+    print("  config.add_system(z=0.5, ion='MgII', transitions=[2796.35, 2803.53], components=1)")
+    print("  param_manager = ParameterManager(config)")
+    print("  names = param_manager.get_parameter_names()")
+    print("Happy fitting! 🎉")

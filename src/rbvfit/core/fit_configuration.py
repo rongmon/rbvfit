@@ -1,8 +1,9 @@
 """
-Configuration system for rbvfit 2.0 with master config creation for multi-instrument support.
+Configuration system for rbvfit 2.0 - Clean elegant approach.
 
-This extends the existing FitConfiguration with methods to create master configurations
-from multiple instrument configurations.
+This defines the physics of absorption systems with no multi-instrument complexity.
+For multi-instrument fitting, the same FitConfiguration is shared across
+multiple VoigtModel instances with different FWHM values.
 """
 
 from __future__ import annotations
@@ -50,6 +51,19 @@ class IonGroup:
         if self.components <= 0:
             raise ValueError(f"Number of components must be positive, got {self.components}")
         self.validate_transitions()
+    
+    def set_components(self, new_components: int) -> None:
+        """
+        Update the number of components for this ion group.
+        
+        Parameters
+        ----------
+        new_components : int
+            New number of velocity components
+        """
+        if new_components <= 0:
+            raise ValueError(f"Number of components must be positive, got {new_components}")
+        self.components = new_components
         
     def get_parameter_count(self) -> int:
         """
@@ -61,7 +75,6 @@ class IonGroup:
             Number of parameters (3 * components for N, b, v)
         """
         return 3 * self.components  # N, b, v for each component
-    
 
     def validate_transitions(self) -> None:
         """
@@ -118,7 +131,6 @@ class IonGroup:
                 f"Mixed ion transitions detected: {set(detected_ions)}. "
                 f"All transitions in an ion group must belong to the same ion."
             )
-    
     
     @staticmethod
     def _extract_ion_name(line_name: str) -> str:
@@ -245,48 +257,23 @@ class AbsorptionSystem:
         ion_group = IonGroup(ion_name, transitions, components, self.redshift, validate_ion)
         self.ion_groups.append(ion_group)
     
-    def merge_system(self, other_system: 'AbsorptionSystem') -> None:
+    def update_ion_components(self, ion_name: str, new_components: int) -> None:
         """
-        Merge another absorption system into this one.
+        Update the number of components for an existing ion.
         
         Parameters
         ----------
-        other_system : AbsorptionSystem
-            System to merge (must have same redshift)
+        ion_name : str
+            Name of the ion to update
+        new_components : int
+            New number of velocity components
         """
-        z_tol = 1e-6
-        if abs(self.redshift - other_system.redshift) > z_tol:
-            raise ValueError(
-                f"Cannot merge systems with different redshifts: "
-                f"{self.redshift} vs {other_system.redshift}"
-            )
+        for group in self.ion_groups:
+            if group.ion_name == ion_name:
+                group.set_components(new_components)
+                return
         
-        for other_group in other_system.ion_groups:
-            # Check if we already have this ion
-            existing_group = None
-            for group in self.ion_groups:
-                if group.ion_name == other_group.ion_name:
-                    existing_group = group
-                    break
-            
-            if existing_group is not None:
-                # Merge the ion groups
-                if existing_group.components != other_group.components:
-                    raise ValueError(
-                        f"Cannot merge ion {other_group.ion_name}: component mismatch "
-                        f"(existing: {existing_group.components}, "
-                        f"other: {other_group.components})"
-                    )
-                existing_group.merge_transitions(other_group.transitions)
-            else:
-                # Add new ion group
-                new_group = IonGroup(
-                    other_group.ion_name,
-                    other_group.transitions.copy(),
-                    other_group.components,
-                    self.redshift
-                )
-                self.ion_groups.append(new_group)
+        raise ValueError(f"Ion {ion_name} not found in system at z={self.redshift}")
     
     def get_parameter_count(self) -> int:
         """Get total parameter count for this system."""
@@ -301,8 +288,9 @@ class FitConfiguration:
     """
     Main configuration class for rbvfit 2.0 fitting.
     
-    This class manages the entire fitting configuration including multiple
-    absorption systems, automatic ion detection, and parameter organization.
+    This class defines the physics of absorption systems only.
+    For multi-instrument fitting, the same FitConfiguration is shared
+    across multiple VoigtModel instances with different FWHM values.
     
     Examples
     --------
@@ -361,6 +349,33 @@ class FitConfiguration:
         
         system.add_ion(ion, transitions, components, merge, validate_ion)
         self._validated = False
+    
+    def update_system_components(self, z: float, ion: str, new_components: int) -> None:
+        """
+        Update the number of components for an existing ion in a system.
+        
+        Parameters
+        ----------
+        z : float
+            Redshift of the absorption system
+        ion : str
+            Name of the ion to update
+        new_components : int
+            New number of velocity components
+        """
+        # Find the system
+        system = None
+        z_tol = 1e-6
+        for sys in self.systems:
+            if abs(sys.redshift - z) < z_tol:
+                system = sys
+                break
+        
+        if system is None:
+            raise ValueError(f"No system found at redshift z={z}")
+        
+        system.update_ion_components(ion, new_components)
+        self._validated = False
             
     def _get_or_create_system(self, z: float) -> AbsorptionSystem:
         """Get existing system at redshift z or create new one."""
@@ -394,53 +409,6 @@ class FitConfiguration:
             
         line_info = rb.rb_setline(wavelength, 'closest')
         return IonGroup._extract_ion_name(line_info['name'][0])
-    
-    @classmethod
-    def create_master_config(cls, instrument_configs: Dict[str, 'FitConfiguration']) -> 'FitConfiguration':
-        """
-        Create master configuration from union of all instrument configurations.
-        
-        Parameters
-        ----------
-        instrument_configs : Dict[str, FitConfiguration]
-            Dictionary mapping instrument names to their configurations
-            
-        Returns
-        -------
-        FitConfiguration
-            Master configuration containing union of all instruments
-        """
-        master = cls()
-        
-        # Collect all systems across instruments, organized by redshift
-        all_systems = {}
-        
-        for instrument_name, config in instrument_configs.items():
-            config.validate()  # Ensure each config is valid
-            
-            for system in config.systems:
-                z_key = system.redshift
-                
-                if z_key not in all_systems:
-                    # Create new system with deep copy of ion groups
-                    new_system = AbsorptionSystem(system.redshift)
-                    for ion_group in system.ion_groups:
-                        new_group = IonGroup(
-                            ion_group.ion_name,
-                            ion_group.transitions.copy(),
-                            ion_group.components,
-                            ion_group.redshift
-                        )
-                        new_system.ion_groups.append(new_group)
-                    all_systems[z_key] = new_system
-                else:
-                    # Merge with existing system
-                    all_systems[z_key].merge_system(system)
-        
-        master.systems = list(all_systems.values())
-        master.validate()
-        
-        return master
     
     def get_parameter_structure(self) -> Dict[str, Any]:
         """
@@ -604,40 +572,6 @@ class FitConfiguration:
         filepath = Path(filepath)
         return cls.deserialize(filepath.read_text())
     
-    def __repr__(self) -> str:
-        n_systems = len(self.systems)
-        n_ions = sum(len(s.ion_groups) for s in self.systems)
-        n_params = sum(s.get_parameter_count() for s in self.systems)
-        return (f"FitConfiguration({n_systems} systems, {n_ions} ion groups, "
-                f"{n_params} parameters)")
-    
-    def summary(self) -> str:
-        """
-        Generate a human-readable summary of the configuration.
-        
-        Returns
-        -------
-        str
-            Formatted summary string
-        """
-        self.validate()
-        
-        lines = ["FitConfiguration Summary", "=" * 50]
-        
-        for i, system in enumerate(self.systems):
-            lines.append(f"\nSystem {i+1} (z={system.redshift:.6f}):")
-            
-            for ion_group in system.ion_groups:
-                trans_str = ", ".join(f"{w:.1f}" for w in ion_group.transitions)
-                lines.append(
-                    f"  {ion_group.ion_name}: [{trans_str}] Å, "
-                    f"{ion_group.components} components"
-                )
-        
-        lines.append(f"\nTotal parameters: {sum(s.get_parameter_count() for s in self.systems)}")
-        
-        return "\n".join(lines)
-    
     def append_transitions(self, z: float, ion: str, transitions: List[float], 
                           validate_ion: bool = True) -> None:
         """
@@ -677,4 +611,48 @@ class FitConfiguration:
         
         # Use add_system with merge=True
         self.add_system(z, ion, transitions, ion_group.components, 
-                       merge=True, validate_ion=validate_ion)    
+                       merge=True, validate_ion=validate_ion)
+    
+    def __repr__(self) -> str:
+        n_systems = len(self.systems)
+        n_ions = sum(len(s.ion_groups) for s in self.systems)
+        n_params = sum(s.get_parameter_count() for s in self.systems)
+        return (f"FitConfiguration({n_systems} systems, {n_ions} ion groups, "
+                f"{n_params} parameters)")
+    
+    def summary(self) -> str:
+        """
+        Generate a human-readable summary of the configuration.
+        
+        Returns
+        -------
+        str
+            Formatted summary string
+        """
+        self.validate()
+        
+        lines = ["FitConfiguration Summary", "=" * 50]
+        
+        for i, system in enumerate(self.systems):
+            lines.append(f"\nSystem {i+1} (z={system.redshift:.6f}):")
+            
+            for ion_group in system.ion_groups:
+                trans_str = ", ".join(f"{w:.1f}" for w in ion_group.transitions)
+                lines.append(
+                    f"  {ion_group.ion_name}: [{trans_str}] Å, "
+                    f"{ion_group.components} components"
+                )
+        
+        lines.append(f"\nTotal parameters: {sum(s.get_parameter_count() for s in self.systems)}")
+        
+        return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    print("rbvfit 2.0 FitConfiguration - Clean Physics-Only Implementation")
+    print("Usage:")
+    print("  config = FitConfiguration()")
+    print("  config.add_system(z=0.5, ion='MgII', transitions=[2796.35, 2803.53], components=1)")
+    print("  model1 = VoigtModel(config, FWHM='2.2')  # Instrument 1")
+    print("  model2 = VoigtModel(config, FWHM='4.0')  # Instrument 2")
+    print("Happy fitting! 🎉")

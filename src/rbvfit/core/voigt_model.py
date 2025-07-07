@@ -1,5 +1,9 @@
 """
-Picklable VoigtModel implementation with multi-instrument support and performance optimizations.
+Clean VoigtModel implementation for rbvfit 2.0 - Elegant single-model approach.
+
+Each VoigtModel represents a single instrument with specific FWHM.
+Multi-instrument fitting achieved by using multiple VoigtModel instances
+with shared FitConfiguration.
 """
 
 from __future__ import annotations
@@ -23,7 +27,8 @@ try:
 except ImportError:
     HAS_LINETOOLS = False
 
-def mean_fwhm_pixels(FWHM_vel_kms:float, wave_obs_grid:np.ndarray) -> float:
+
+def mean_fwhm_pixels(FWHM_vel_kms: float, wave_obs_grid: np.ndarray) -> float:
     """
     Convert FWHM from velocity units (km/s) to pixels.
     
@@ -44,12 +49,12 @@ def mean_fwhm_pixels(FWHM_vel_kms:float, wave_obs_grid:np.ndarray) -> float:
     if len(wave_obs_grid) < 2:
         raise ValueError("Wavelength grid must have at least two points.")
 
-
     c_kms = 299792.458  # Speed of light in km/s
     delta_lambda = np.gradient(wave_obs_grid)
     fwhm_lambda = wave_obs_grid * FWHM_vel_kms / c_kms
     fwhm_pixels = fwhm_lambda / delta_lambda
     return np.mean(fwhm_pixels)
+
 
 def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float, 
               wv: np.ndarray) -> np.ndarray:
@@ -84,7 +89,6 @@ def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float,
     a = gamma / (4 * np.pi * b_f)
     x = (freq - freq0) / b_f
     
-    #H = np.real(wofz(x + 1j * a))
     H = wofz(x + 1j * a).real
     tau = N * f * constant * H
     return tau
@@ -141,9 +145,7 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     z = x + 1j * a
     
     # Vectorized wofz calculation - handles complex arrays natively
-    #H = np.real(wofz(z))
-    H = wofz(x + 1j * a).real
-
+    H = wofz(z).real
     
     # Vectorized final calculation
     tau_all = N_bc * f_bc * constant * H
@@ -151,10 +153,9 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     return tau_all
 
 
-def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelength: np.ndarray, 
-                                    line_filter=None, instrument: str = None) -> np.ndarray:
+def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
     """
-    Global function to evaluate compiled Voigt model with optional line filtering.
+    Global function to evaluate compiled Voigt model.
     
     Parameters
     ----------
@@ -164,10 +165,6 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
         Parameter array
     wavelength : np.ndarray
         Wavelength array for evaluation
-    line_filter : np.ndarray, optional
-        Boolean array to select subset of lines
-    instrument : str, optional
-        Instrument name for multi-instrument mode
         
     Returns
     -------
@@ -182,17 +179,6 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
     b_indices = data_container.b_indices
     v_indices = data_container.v_indices
     n_lines = data_container.n_lines
-
-    # Apply line filter if provided
-    if line_filter is not None:
-        atomic_lambda0 = atomic_lambda0[line_filter]
-        atomic_gamma = atomic_gamma[line_filter]
-        atomic_f = atomic_f[line_filter]
-        z_factors = z_factors[line_filter]
-        N_indices = N_indices[line_filter]
-        b_indices = b_indices[line_filter]
-        v_indices = v_indices[line_filter]
-        n_lines = np.sum(line_filter)
 
     # Extract parameters
     N_linear = 10**theta[N_indices]
@@ -221,41 +207,13 @@ def _evaluate_compiled_model_filtered(data_container, theta: np.ndarray, wavelen
     # Convert to flux
     flux = np.exp(-tau_total)
 
-    # NEW: Select correct kernel based on instrument
-    if data_container.is_multi_instrument and instrument is not None:
-        # Multi-instrument mode - use instrument-specific kernel
-        kernel = data_container.instrument_kernels.get(instrument) if data_container.instrument_kernels else None
-    else:
-        # Single instrument mode - use the main kernel
-        kernel = data_container.kernel
-
     # Apply convolution if kernel exists
+    kernel = data_container.kernel
     if kernel is not None:
         flux = astropy_convolve(flux, kernel, boundary="extend")
 
     return flux
 
-def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray, instrument: str = None) -> np.ndarray:
-    """
-    Global function to evaluate compiled Voigt model. This function is picklable.
-    
-    Parameters
-    ----------
-    data_container : CompiledModelData
-        Container with all model data
-    theta : np.ndarray
-        Parameter array
-    wavelength : np.ndarray
-        Wavelength array for evaluation
-    instrument : str, optional
-        Instrument name for multi-instrument mode. If None, uses single instrument kernel.
-        
-    Returns
-    -------
-    np.ndarray
-        Model flux array
-    """
-    return _evaluate_compiled_model_filtered(data_container, theta, wavelength, line_filter=None, instrument=instrument)
 
 @dataclass
 class CompiledModelData:
@@ -272,12 +230,6 @@ class CompiledModelData:
     kernel: Optional[Any]
     n_lines: int
     total_components: int
-    # Multi-instrument support - ALL these need defaults since they come after non-default fields
-    instrument_kernels: Optional[Dict[str, Any]] = None  # NEW: For multi-instrument
-    is_multi_instrument: bool = False
-    instrument_param_indices: Optional[Dict[str, np.ndarray]] = None
-    instrument_line_filters: Optional[Dict[str, np.ndarray]] = None
-    master_config_info: Optional[Dict] = None
 
 
 class CompiledVoigtModel:
@@ -291,30 +243,10 @@ class CompiledVoigtModel:
     def __init__(self, data_container: CompiledModelData):
         """Initialize with data container."""
         self.data = data_container
-        # Create instrument wrappers if multi-instrument
-        if self.data.is_multi_instrument:
-            self.wrappers = self._create_instrument_wrappers()
-        else:
-            self.wrappers = None
     
-    def _create_instrument_wrappers(self) -> Dict[str, callable]:
-        """Create simple lambda wrapper functions."""
-        if not self.data.master_config_info:
-            return {}
-        
-        wrappers = {}
-        
-        for instrument_name in self.data.master_config_info['instruments']:
-            # Simple lambda - no closures, no fancy stuff
-            wrappers[instrument_name] = lambda theta, wave, inst=instrument_name: self.model_flux(theta, wave, instrument=inst)
-        
-        return wrappers
-
-
-    def model_flux(self, theta: np.ndarray, wavelength: np.ndarray, 
-                   instrument: Optional[str] = None) -> np.ndarray:
+    def model_flux(self, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
         """
-        Evaluate model flux. Compatible with v1 interface.
+        Evaluate model flux.
         
         Parameters
         ----------
@@ -322,87 +254,47 @@ class CompiledVoigtModel:
             Parameter array
         wavelength : np.ndarray
             Wavelength array
-        instrument : str, optional
-            Instrument name for multi-instrument models
             
         Returns
         -------
         np.ndarray
             Model flux
         """
-        if self.data.is_multi_instrument:
-            if instrument is None:
-                raise ValueError(
-                    "Multi-instrument model requires 'instrument' parameter. "
-                    "Use compiled.model_flux(theta, wave, instrument='A')"
-                )
-            return self._evaluate_instrument(theta, wavelength, instrument)
-        else:
-            if instrument is not None:
-                raise ValueError(
-                    "Single instrument model does not accept 'instrument' parameter"
-                )
-            return _evaluate_compiled_model(self.data, theta, wavelength)
+        return _evaluate_compiled_model(self.data, theta, wavelength)
     
-    def _evaluate_instrument(self, theta: np.ndarray, wavelength: np.ndarray, 
-                           instrument: str) -> np.ndarray:
-        """Evaluate model for specific instrument using parameter mapping"""
-        if not self.data.is_multi_instrument:
-            # Single instrument - use full theta
-            return _evaluate_compiled_model(self.data, theta, wavelength)
-        else:
-            # Multi-instrument - theta is the full master theta array
-            # Get the line filter for this instrument
-            line_filter = self.data.instrument_line_filters[instrument]
-            
-            # Verify theta is the right size for master config
-            total_master_params = self.data.master_config_info['total_parameters']
-            if len(theta) != total_master_params:
-                raise ValueError(
-                    f"Expected master theta array of length {total_master_params}, "
-                    f"got {len(theta)}. For multi-instrument models, pass the full "
-                    f"master parameter array to all model functions."
-                )
-            
-            # Use the filtered evaluation function
-            return _evaluate_compiled_model_filtered(self.data, theta, wavelength, line_filter)
-    
-    def __call__(self, theta: np.ndarray, wavelength: np.ndarray, 
-                 instrument: Optional[str] = None) -> np.ndarray:
+    def __call__(self, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
         """Make the object callable for convenience."""
-        return self.model_flux(theta, wavelength, instrument)
+        return self.model_flux(theta, wavelength)
     
     def __getstate__(self):
         """Custom pickling - only pickle the data."""
         return {'data': self.data}
     
     def __setstate__(self, state):
-        """Custom unpickling - restore from data."""
+        """Custom unpickling."""
         self.data = state['data']
-        # Recreate wrappers after unpickling
-        if self.data.is_multi_instrument:
-            self.wrappers = self._create_instrument_wrappers()
-        else:
-            self.wrappers = None
 
 
 class VoigtModel:
     """
-    Enhanced Voigt profile model with multi-instrument support and performance optimizations.
+    Clean Voigt profile model for single instrument.
+    
+    For multi-instrument fitting, create multiple VoigtModel instances
+    with the same FitConfiguration but different FWHM values.
     """
     
     def __init__(self, config: FitConfiguration, FWHM: Union[str, float] = '6.5',
-             grating: str = 'G130M', life_position: str = '1', 
-             cen_wave: str = '1300A'):
+                 grating: str = 'G130M', life_position: str = '1', 
+                 cen_wave: str = '1300A'):
         """
         Initialize the Voigt model.
         
         Parameters
         ----------
         config : FitConfiguration
-            Fitting configuration
+            Fitting configuration (defines physics)
         FWHM : str or float, optional
-            FWHM for convolution kernel
+            FWHM for convolution kernel (defines instrumental response)
         grating : str, optional
             HST grating for COS LSF
         life_position : str, optional
@@ -429,117 +321,6 @@ class VoigtModel:
         
         # Compilation state
         self._compiled = False
-
-    def _create_master_config(self, instrument_configs: Dict[str, FitConfiguration]) -> FitConfiguration:
-        """Create master configuration from union of all instrument configs"""
-        return FitConfiguration.create_master_config(instrument_configs)
-    
-    def _validate_instrument_configs(self, instrument_configs: Dict[str, FitConfiguration], 
-                                   master_config: FitConfiguration) -> None:
-        """Validate that all instrument configs have compatible parameter structures"""
-        master_structure = master_config.get_parameter_structure()
-        master_param_count = master_structure['total_parameters']
-        
-        for instrument_name, config in instrument_configs.items():
-            config_structure = config.get_parameter_structure()
-            
-            # Check that this config is a subset of master config
-            if config_structure['total_parameters'] > master_param_count:
-                raise ValueError(
-                    f"Instrument '{instrument_name}' has more parameters "
-                    f"({config_structure['total_parameters']}) than master config "
-                    f"({master_param_count}). This should not happen."
-                )
-            
-            # Validate ion compatibility
-            self._validate_ion_compatibility(config, master_config, instrument_name)
-    
-    def _validate_ion_compatibility(self, config: FitConfiguration, 
-                                  master_config: FitConfiguration, 
-                                  instrument_name: str) -> None:
-        """Validate that ion groups are compatible between configs"""
-        # Build mapping of (z, ion) -> components for both configs
-        config_ions = {}
-        for system in config.systems:
-            for ion_group in system.ion_groups:
-                key = (system.redshift, ion_group.ion_name)
-                config_ions[key] = ion_group.components
-        
-        master_ions = {}
-        for system in master_config.systems:
-            for ion_group in system.ion_groups:
-                key = (system.redshift, ion_group.ion_name)
-                master_ions[key] = ion_group.components
-        
-        # Check that all config ions exist in master with same component count
-        for (z, ion), components in config_ions.items():
-            if (z, ion) not in master_ions:
-                raise ValueError(
-                    f"Instrument '{instrument_name}' has ion {ion} at z={z:.6f} "
-                    f"that doesn't exist in other instrument configs"
-                )
-            
-            if master_ions[(z, ion)] != components:
-                raise ValueError(
-                    f"Instrument '{instrument_name}' has {components} components "
-                    f"for {ion} at z={z:.6f}, but master config has "
-                    f"{master_ions[(z, ion)]} components. All instruments must "
-                    f"use the same number of components for shared ions."
-                )
-    
-    def _compute_instrument_mappings(self, instrument_configs: Dict[str, FitConfiguration],
-                                   master_config: FitConfiguration) -> Dict[str, np.ndarray]:
-        """Compute parameter index mappings for each instrument"""
-        mappings = {}
-        
-        for instrument_name, config in instrument_configs.items():
-            # Use parameter manager to compute mapping
-            mapping = self.param_manager.compute_instrument_mapping(config, master_config)
-            mappings[instrument_name] = np.array(mapping)
-        
-        return mappings
-    
-    def _compute_instrument_line_filters(self, instrument_configs: Dict[str, FitConfiguration],
-                                       master_config: FitConfiguration) -> Dict[str, np.ndarray]:
-        """
-        Compute line filters for each instrument.
-        
-        Parameters
-        ----------
-        instrument_configs : dict
-            Dictionary of instrument configurations
-        master_config : FitConfiguration
-            Master configuration
-            
-        Returns
-        -------
-        dict
-            Dictionary mapping instrument names to boolean line filter arrays
-        """
-        filters = {}
-        
-        # Build a mapping of transitions in master config to line indices
-        master_transitions = []
-        for system in master_config.systems:
-            for ion_group in system.ion_groups:
-                for wavelength in ion_group.transitions:
-                    for comp_idx in range(ion_group.components):
-                        master_transitions.append((system.redshift, ion_group.ion_name, wavelength, comp_idx))
-        
-        for instrument_name, config in instrument_configs.items():
-            # Build list of transitions this instrument sees
-            instrument_transitions = []
-            for system in config.systems:
-                for ion_group in system.ion_groups:
-                    for wavelength in ion_group.transitions:
-                        for comp_idx in range(ion_group.components):
-                            instrument_transitions.append((system.redshift, ion_group.ion_name, wavelength, comp_idx))
-            
-            # Create boolean filter
-            line_filter = np.array([trans in instrument_transitions for trans in master_transitions])
-            filters[instrument_name] = line_filter
-        
-        return filters
     
     def _cache_atomic_parameters(self):
         """Cache all atomic parameters as flat arrays during initialization."""
@@ -621,17 +402,12 @@ class VoigtModel:
             sigma = fwhm_pixels / 2.355
             self.kernel = Gaussian1DKernel(stddev=sigma)
 
-
-    def compile(self, instrument_configs: Optional[Dict[str, FitConfiguration]] = None,
-               verbose: bool = False) -> CompiledVoigtModel:
+    def compile(self, verbose: bool = False) -> CompiledVoigtModel:
         """
         Compile the model for fast evaluation. Returns a picklable object.
         
         Parameters
         ----------
-        instrument_configs : dict, optional
-            Dictionary mapping instrument names to their configurations.
-            If None, single instrument mode.
         verbose : bool, optional
             Whether to print compilation information
             
@@ -640,86 +416,10 @@ class VoigtModel:
         CompiledVoigtModel
             Compiled model that can be pickled and used with multiprocessing
         """
-        # Detect multi-instrument mode
-        is_multi_instrument = instrument_configs is not None
-        
-        if is_multi_instrument:
-            if verbose:
-                print(f"Compiling multi-instrument model with {len(instrument_configs)} instruments:")
-                for name in instrument_configs.keys():
-                    print(f"  - {name}")
-            
-            # Create master config from union of all instruments
-            master_config = self._create_master_config(instrument_configs)
-            
-            if verbose:
-                master_structure = master_config.get_parameter_structure()
-                print(f"Master configuration: {master_structure['total_parameters']} parameters")
-            
-            # Validate all configs have compatible parameter structure  
-            self._validate_instrument_configs(instrument_configs, master_config)
-            
-            # NEW: Extract instrumental parameters and create kernels for each instrument
-            instrument_kernels = {}
-            for name, config in instrument_configs.items():
-                # Get FWHM from config, fallback to default
-                fwhm = config.instrumental_params.get('FWHM', '6.5')
-                grating = config.instrumental_params.get('grating', 'G130M')
-                life_position = config.instrumental_params.get('life_position', '1')
-                cen_wave = config.instrumental_params.get('cen_wave', '1300A')
-                
-                # Create kernel for this instrument
-                if fwhm == 'COS':
-                    if not HAS_LINETOOLS:
-                        raise ImportError("COS LSF requires linetools package")
-                    instr_config = dict(
-                        name='COS',
-                        grating=grating,
-                        life_position=life_position,
-                        cen_wave=cen_wave
-                    )
-                    coslsf = LSF(instr_config)
-                    _, data = coslsf.load_COS_data()
-                    instrument_kernels[name] = CustomKernel(data[cen_wave].data)
-                elif fwhm is None:
-                    instrument_kernels[name] = None  # No convolution
-                else:
-                    fwhm_pixels = float(fwhm)
-                    sigma = fwhm_pixels / 2.355
-                    instrument_kernels[name] = Gaussian1DKernel(stddev=sigma)
-                
-                if verbose:
-                    print(f"  {name}: FWHM={fwhm}")
-            
-            # Pre-compute parameter mappings and line filters
-            param_indices = self._compute_instrument_mappings(instrument_configs, master_config)
-            line_filters = self._compute_instrument_line_filters(instrument_configs, master_config)
-            
-            if verbose:
-                print("Parameter mappings:")
-                for name, indices in param_indices.items():
-                    print(f"  {name}: {len(indices)} parameters (indices: {indices[:5]}...)")
-            
-            # Use master config for atomic parameter caching
-            original_config = self.config
-            self.config = master_config
-            self._cache_atomic_parameters()
-            self._setup_fast_mapping()
-            self.config = original_config  # Restore original
-            
-            master_config_info = {
-                'total_parameters': master_config.get_parameter_structure()['total_parameters'],
-                'instruments': list(instrument_configs.keys())
-            }
-        else:
-            if verbose:
-                structure = self.config.get_parameter_structure()
-                print(f"Compiling single instrument model: {structure['total_parameters']} parameters")
-            
-            param_indices = None
-            line_filters = None
-            master_config_info = None
-            instrument_kernels = None  # NEW: Single instrument uses self.kernel
+        if verbose:
+            structure = self.config.get_parameter_structure()
+            print(f"Compiling VoigtModel: {structure['total_parameters']} parameters, {self.n_lines} lines")
+            print(f"FWHM: {self.FWHM}")
         
         # Create data container with all necessary information
         data_container = CompiledModelData(
@@ -730,14 +430,9 @@ class VoigtModel:
             N_indices=self.N_indices.copy(),
             b_indices=self.b_indices.copy(),
             v_indices=self.v_indices.copy(),
-            kernel=copy.deepcopy(self.kernel),  # For single instrument
-            instrument_kernels=instrument_kernels,  # NEW: For multi-instrument
+            kernel=copy.deepcopy(self.kernel),
             n_lines=self.n_lines,
-            total_components=self.total_components,
-            is_multi_instrument=is_multi_instrument,
-            instrument_param_indices=param_indices,
-            instrument_line_filters=line_filters,
-            master_config_info=master_config_info
+            total_components=self.total_components
         )
         
         # Return compiled model
@@ -745,11 +440,7 @@ class VoigtModel:
         self._compiled = True
         
         if verbose:
-            if is_multi_instrument:
-                print(f"✓ Multi-instrument model compiled successfully")
-                print(f"Available instruments: {', '.join(instrument_configs.keys())}")
-            else:
-                print(f"✓ Single instrument model compiled successfully")
+            print(f"✓ VoigtModel compiled successfully")
         
         return compiled_model    
     
@@ -758,6 +449,24 @@ class VoigtModel:
                  validate_theta: bool = False) -> Union[np.ndarray, Dict[str, Any]]:
         """
         Evaluate the Voigt model - flexible version for analysis.
+        
+        Parameters
+        ----------
+        theta : np.ndarray
+            Parameter array
+        wavelength : np.ndarray
+            Wavelength array for evaluation
+        return_components : bool, optional
+            Return component breakdown (default: False)
+        return_unconvolved : bool, optional
+            Return unconvolved profile (default: False)
+        validate_theta : bool, optional
+            Validate parameter array (default: False)
+            
+        Returns
+        -------
+        np.ndarray or dict
+            Model flux or detailed results if return_components=True
         """
         if validate_theta:
             self.param_manager.validate_theta(theta)
@@ -809,105 +518,108 @@ class VoigtModel:
             
         return "\n".join(lines)
 
-    def print_info(self) -> str:
-        """print model configuration summary."""
+    def print_info(self) -> None:
+        """Print model configuration summary."""
         print(self.get_info())
 
     def show_structure(self) -> None:
-       """Display ASCII diagram of model parameter structure."""
-       lines = []
-       lines.append("Model Structure Diagram")
-       lines.append("=" * 50)
-       
-       # Get parameter structure
-       structure = self.param_manager.config_to_theta_structure()
-       
-       # Header with totals
-       lines.append(f"📊 Total: {structure['total_parameters']} parameters, {self.n_lines} lines, {len(self.config.systems)} system(s)")
-       lines.append("")
-       
-       # Track global parameter indices
-       global_param_idx = 0
-       
-       for sys_idx, system in enumerate(self.config.systems):
-           # System header
-           lines.append(f"🌌 System {sys_idx + 1} (z = {system.redshift:.6f})")
-           lines.append("│")
-           
-           system_params = 0
-           system_lines = 0
-           
-           for ion_idx, ion_group in enumerate(system.ion_groups):
-               is_last_ion = (ion_idx == len(system.ion_groups) - 1)
-               ion_prefix = "└── " if is_last_ion else "├── "
-               
-               # Ion group header
-               ion_params = ion_group.components * 3  # N, b, v for each component
-               ion_lines = len(ion_group.transitions) * ion_group.components
-               
-               lines.append(f"│{ion_prefix}🧪 {ion_group.ion_name} ({ion_group.components} components)")
-               
-               # Transitions
-               transition_str = ", ".join([f"{w:.1f}Å" for w in ion_group.transitions])
-               lines.append(f"│{'    ' if is_last_ion else '│   '}📡 Transitions: [{transition_str}]")
-               
-               # Parameter structure
-               lines.append(f"│{'    ' if is_last_ion else '│   '}📋 Parameters ({ion_params} total):")
-               
-               # Show parameter indices for each component
-               for comp in range(ion_group.components):
-                   comp_suffix = "" if is_last_ion else "│   "
-                   
-                   # Parameter indices
-                   N_idx = global_param_idx + comp
-                   b_idx = global_param_idx + comp + self.total_components
-                   v_idx = global_param_idx + comp + 2 * self.total_components
-                   
-                   lines.append(f"│{'    ' if is_last_ion else '│   '}  • Component {comp + 1}: "
-                              f"θ[{N_idx}]=N, θ[{b_idx}]=b, θ[{v_idx}]=v")
-               
-               # Ion tying indicator
-               if len(ion_group.transitions) > 1:
-                   lines.append(f"│{'    ' if is_last_ion else '│   '}🔗 TIED: All {len(ion_group.transitions)} transitions share parameters")
-               
-               # Line count
-               lines.append(f"│{'    ' if is_last_ion else '│   '}📈 Lines: {ion_lines} ({len(ion_group.transitions)} trans × {ion_group.components} comp)")
-               
-               if not is_last_ion:
-                   lines.append("│")
-               
-               # Update counters
-               global_param_idx += ion_group.components
-               system_params += ion_params
-               system_lines += ion_lines
-           
-           # System summary
-           lines.append("│")
-           lines.append(f"└── 📊 System {sys_idx + 1} totals: {system_params} parameters, {system_lines} lines")
-           
-           if sys_idx < len(self.config.systems) - 1:
-               lines.append("")
-       
-       lines.append("")
-       lines.append("Legend:")
-       lines.append("🌌 = Absorption system    🧪 = Ion group")
-       lines.append("📡 = Transitions          📋 = Parameters")
-       lines.append("📈 = Model lines          🔗 = Parameter tying")
-       lines.append("θ[i] = Parameter index in theta array")
-       
-       # Parameter array structure
-       lines.append("")
-       lines.append("Parameter Array Structure:")
-       lines.append("-" * 30)
-       lines.append(f"θ[0:{self.total_components}]     = All N values")
-       lines.append(f"θ[{self.total_components}:{2*self.total_components}]    = All b values")
-       lines.append(f"θ[{2*self.total_components}:{3*self.total_components}]    = All v values")
-       
-       print("\n".join(lines))
-
-
+        """Display ASCII diagram of model parameter structure."""
+        lines = []
+        lines.append("Model Structure Diagram")
+        lines.append("=" * 50)
+        
+        # Get parameter structure
+        structure = self.param_manager.config_to_theta_structure()
+        
+        # Header with totals
+        lines.append(f"📊 Total: {structure['total_parameters']} parameters, {self.n_lines} lines, {len(self.config.systems)} system(s)")
+        lines.append(f"🔧 FWHM: {self.FWHM} pixels")
+        lines.append("")
+        
+        # Track global parameter indices
+        global_param_idx = 0
+        
+        for sys_idx, system in enumerate(self.config.systems):
+            # System header
+            lines.append(f"🌌 System {sys_idx + 1} (z = {system.redshift:.6f})")
+            lines.append("│")
+            
+            system_params = 0
+            system_lines = 0
+            
+            for ion_idx, ion_group in enumerate(system.ion_groups):
+                is_last_ion = (ion_idx == len(system.ion_groups) - 1)
+                ion_prefix = "└── " if is_last_ion else "├── "
+                
+                # Ion group header
+                ion_params = ion_group.components * 3  # N, b, v for each component
+                ion_lines = len(ion_group.transitions) * ion_group.components
+                
+                lines.append(f"│{ion_prefix}🧪 {ion_group.ion_name} ({ion_group.components} components)")
+                
+                # Transitions
+                transition_str = ", ".join([f"{w:.1f}Å" for w in ion_group.transitions])
+                lines.append(f"│{'    ' if is_last_ion else '│   '}📡 Transitions: [{transition_str}]")
+                
+                # Parameter structure
+                lines.append(f"│{'    ' if is_last_ion else '│   '}📋 Parameters ({ion_params} total):")
+                
+                # Show parameter indices for each component
+                for comp in range(ion_group.components):
+                    comp_suffix = "" if is_last_ion else "│   "
+                    
+                    # Parameter indices
+                    N_idx = global_param_idx + comp
+                    b_idx = global_param_idx + comp + self.total_components
+                    v_idx = global_param_idx + comp + 2 * self.total_components
+                    
+                    lines.append(f"│{'    ' if is_last_ion else '│   '}  • Component {comp + 1}: "
+                                f"θ[{N_idx}]=N, θ[{b_idx}]=b, θ[{v_idx}]=v")
+                
+                # Ion tying indicator
+                if len(ion_group.transitions) > 1:
+                    lines.append(f"│{'    ' if is_last_ion else '│   '}🔗 TIED: All {len(ion_group.transitions)} transitions share parameters")
+                
+                # Line count
+                lines.append(f"│{'    ' if is_last_ion else '│   '}📈 Lines: {ion_lines} ({len(ion_group.transitions)} trans × {ion_group.components} comp)")
+                
+                if not is_last_ion:
+                    lines.append("│")
+                
+                # Update counters
+                global_param_idx += ion_group.components
+                system_params += ion_params
+                system_lines += ion_lines
+            
+            # System summary
+            lines.append("│")
+            lines.append(f"└── 📊 System {sys_idx + 1} totals: {system_params} parameters, {system_lines} lines")
+            
+            if sys_idx < len(self.config.systems) - 1:
+                lines.append("")
+        
+        lines.append("")
+        lines.append("Legend:")
+        lines.append("🌌 = Absorption system    🧪 = Ion group")
+        lines.append("📡 = Transitions          📋 = Parameters")
+        lines.append("📈 = Model lines          🔗 = Parameter tying")
+        lines.append("θ[i] = Parameter index in theta array")
+        
+        # Parameter array structure
+        lines.append("")
+        lines.append("Parameter Array Structure:")
+        lines.append("-" * 30)
+        lines.append(f"θ[0:{self.total_components}]     = All N values")
+        lines.append(f"θ[{self.total_components}:{2*self.total_components}]    = All b values")
+        lines.append(f"θ[{2*self.total_components}:{3*self.total_components}]    = All v values")
+        
+        print("\n".join(lines))
 
 
 if __name__ == "__main__":
-    print(" rbvfit 2.0 ready to use!")
+    print("rbvfit 2.0 VoigtModel - Clean Elegant Implementation")
+    print("Usage:")
+    print("  config = FitConfiguration()")
+    print("  model1 = VoigtModel(config, FWHM='2.2')  # Instrument 1")
+    print("  model2 = VoigtModel(config, FWHM='4.0')  # Instrument 2")
     print("Happy fitting! 🎉")

@@ -92,8 +92,7 @@ config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
 
 
 v2_model = VoigtModel(config)
-v2_compiled = v2_model.compile()
-print("✓ V2 model created and compiled")
+print("✓ V2 model created, ready to use.")
 
 
 # MCMC settings
@@ -114,21 +113,13 @@ if HAS_ZEUS:
 else:
     sampler='emcee'
     
-# Create fitter #Legacy Call
-#fitter = mc.vfit(
-#    v2_compiled.model_flux, theta, lb, ub, wave, flux, error,
-#    no_of_Chain=n_walkers, 
-#    no_of_steps=n_steps,
-#    sampler=sampler,
-#    perturbation=1e-4  # Smaller perturbation for walker initialization
-#)
 
 
 # Create fitter cleaner newer call
 # Define instrument setup outside the call - For multi instrument we just keep adding to this
 instrument_data = {
     'COS': {
-        'model': v2_compiled.model_flux,
+        'model': v2_model,
         'wave': wave,
         'flux': flux,
         'error': error
@@ -155,7 +146,7 @@ print(f"Initial likelihood: {fitter.lnprob(theta)}")
 
 # Try manual model evaluation
 try:
-    test_flux = v2_compiled.model_flux(theta, wave)
+    test_flux = v2_model.evaluate(theta, wave)
     print(f"Model evaluation successful: {np.isfinite(test_flux).all()}")
 except Exception as e:
     print(f"Model evaluation failed: {e}")
@@ -164,45 +155,8 @@ except Exception as e:
 fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
 
 
-#plot corner     
-#fitter.plot_corner()
-#fitter.best_theta # These are the best fit parameters
-#fitter.fit_quick() 
 
 elapsed_time=time.time()-start_time        
 print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
 
 
-
-
-#plot models
-mc.plot_model(v2_model,fitter,show_residuals=True,outfile='example-fit.png')
-
-
-# New modules for better analysis and model plotting
-
-from rbvfit.core import unified_results as u
-# Save results
-results = u.UnifiedResults(fitter, v2_model)
-#results.save('my_fit.h5')
-
-# Load and analyze
-#results = u.UnifiedResults.load('my_fit.h5')
-results.print_summary()
-results.corner_plot()#save_path='corner.png')
-results.convergence_diagnostics()
-
-# Visual chain inspection
-#results.chain_trace_plot()#save_path='trace_plots.pdf')
-
-results.velocity_plot()
-
-# This is the main new feature - velocity space plots by ion!
-#velocity_plots = results.plot_velocity_fits(
-#    show_components=True,      # Show individual components
-#    #save_path='fitting_result.png',
-#    show_rail_system=True     # Show component position markers
-#)
-
-# For single ion systems, also try velocity range control:
-#results.plot_velocity_fits(velocity_range=(-600, 600))

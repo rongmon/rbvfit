@@ -1,14 +1,16 @@
 """
-Unified results management for rbvfit 2.0 - Clean redesign.
+Unified results management for rbvfit 2.0 - Updated for V2 vfit interface.
 
 This module provides the UnifiedResults class for managing MCMC fitting results
 with a self-contained, fitter-independent design.
 
 Key Features:
+- Single fitter initialization - extracts everything needed from vfit object
 - Self-contained data storage (no external dependencies after creation)
 - Clean save/load without backwards compatibility workarounds  
 - Unified treatment of single/multi-instrument cases
 - Sampler-agnostic diagnostic storage
+- Automatic model config extraction from vfit.instrument_configs
 """
 
 from __future__ import annotations
@@ -69,22 +71,21 @@ class UnifiedResults:
     - Diagnostic values: autocorr_time, rhat, acceptance_fraction
     """
     
-    def __init__(self, fitter, model=None):
+    def __init__(self, fitter):
         """
-        Initialize unified results from MCMC fitter.
+        Initialize unified results from V2 vfit object.
         
         Parameters
         ----------
         fitter : vfit
-            MCMC fitter object (emcee or zeus)
-        model : VoigtModel, optional
-            Model object for configuration extraction
+            V2 vfit object after runmcmc() - contains everything needed
         """
         # Extract core data (no external dependencies after this)
         self.best_fit = self._extract_best_fit(fitter)
         self.samples, self.chain = self._extract_samples_and_chain(fitter)
         self.instrument_data = self._extract_instrument_data(fitter)
-        self.config_metadata = self._extract_config_metadata(model) if model else None
+        self.config_metadata = self._extract_config_metadata(fitter)
+
         
         # Extract diagnostics (sampler-specific)
         self.autocorr_time, self.rhat, self.acceptance_fraction = self._extract_diagnostics(fitter)
@@ -94,7 +95,8 @@ class UnifiedResults:
         self.n_steps = getattr(fitter, 'no_of_steps', 0)
         self.burnin_steps = self._estimate_burnin(fitter)
         self.sampler_name = getattr(fitter, 'sampler_name', 'emcee')
-        self.is_multi_instrument = len(self.instrument_data) > 1
+        self.is_multi_instrument = getattr(fitter, 'multi_instrument', False)
+
     
     # =========================================================================
     # Data Extraction Methods
@@ -137,12 +139,11 @@ class UnifiedResults:
             raise RuntimeError(f"Could not extract MCMC samples: {e}")
     
     def _extract_instrument_data(self, fitter) -> Dict[str, Dict]:
-        """Extract observational data for all instruments."""
+        """Extract observational data from V2 vfit instrument_data."""
         instrument_data = {}
         
-        # Check for multi-instrument data
+        # V2 vfit always has instrument_data (even for single instrument)
         if hasattr(fitter, 'instrument_data') and fitter.instrument_data:
-            # Multi-instrument case
             for name, data in fitter.instrument_data.items():
                 instrument_data[name] = {
                     'wave': np.array(data['wave']),
@@ -150,15 +151,7 @@ class UnifiedResults:
                     'error': np.array(data['error'])
                 }
         else:
-            # Single instrument case
-            if not all(hasattr(fitter, attr) for attr in ['wave_obs', 'fnorm', 'enorm']):
-                raise ValueError("Missing required data attributes in fitter")
-            
-            instrument_data['primary'] = {
-                'wave': np.array(fitter.wave_obs),
-                'flux': np.array(fitter.fnorm),
-                'error': np.array(fitter.enorm)
-            }
+            raise ValueError("V2 vfit object missing instrument_data - incompatible fitter")
         
         return instrument_data
     
@@ -260,64 +253,53 @@ class UnifiedResults:
         """Calculate parameter correlation matrix."""
         return np.corrcoef(self.samples.T)
     
-    def _extract_config_metadata(self, model) -> Dict:
-        """Extract model configuration for reconstruction."""
-        if model is None:
-            return None
-        
-        # Debug what's available (remove this after fixing)
-        # self.debug_model_attributes(model)
-        
+    def _extract_config_metadata(self, fitter) -> Optional[Dict]:
+        """Extract model configuration metadata from V2 vfit."""
         try:
             config_data = {
                 'rbvfit_version': '2.0',
                 'systems': [],
-                'instrumental_params': {},
-                'instrument_params': {}  # For multi-instrument FWHM storage
+                'instrument_params': {}  # Per-instrument FWHM storage
             }
             
-            # Extract system configurations
-            if hasattr(model, 'config') and model.config is not None:
-                for system in model.config.systems:
-                    system_data = {
-                        'redshift': system.redshift,
-                        'ion_groups': []
-                    }
+            # V2 vfit stores instrument configs in instrument_configs attribute
+            if hasattr(fitter, 'instrument_configs') and fitter.instrument_configs:
+                # Extract FWHM from each instrument config
+                for inst_name, inst_config in fitter.instrument_configs.items():
+                    if hasattr(inst_config, 'instrumental_params'):
+                        fwhm = inst_config.instrumental_params.get('FWHM')
+                        if fwhm:
+                            config_data['instrument_params'][inst_name] = {'FWHM': fwhm}
                     
-                    for ion_group in system.ion_groups:
-                        ion_data = {
-                            'ion_name': ion_group.ion_name,
-                            'transitions': list(ion_group.transitions),
-                            'components': ion_group.components
-                        }
-                        system_data['ion_groups'].append(ion_data)
-                    
-                    config_data['systems'].append(system_data)
-                
-                # Extract instrumental parameters from config
-                if hasattr(model.config, 'instrumental_params'):
-                    config_data['instrumental_params'] = dict(model.config.instrumental_params)
-                
-                # For multi-instrument, extract per-instrument FWHM
-                # Note: is_multi_instrument is set after this method, so we check instrument_data instead
-                instrument_data_multi = hasattr(self, 'instrument_data') and len(getattr(self, 'instrument_data', {})) > 1
-                if instrument_data_multi and hasattr(model, 'instrument_configs'):
-                    # Extract FWHM from each instrument config
-                    for inst_name, inst_config in model.instrument_configs.items():
-                        if hasattr(inst_config, 'instrumental_params'):
-                            fwhm = inst_config.instrumental_params.get('FWHM')
-                            if fwhm:
-                                config_data['instrument_params'][inst_name] = {'FWHM': fwhm}
-                
-            # Fallback: extract from model attributes directly
-            if not config_data['instrumental_params'] and hasattr(model, 'FWHM'):
-                config_data['instrumental_params']['FWHM'] = model.FWHM
+                    # Extract system configurations from first instrument (they should be identical)
+                    if hasattr(inst_config, 'systems') and not config_data['systems']:
+                        for system in inst_config.systems:
+                            system_data = {
+                                'redshift': system.redshift,
+                                'ion_groups': []
+                            }
+                            
+                            for ion_group in system.ion_groups:
+                                ion_data = {
+                                    'ion_name': ion_group.ion_name,
+                                    'transitions': list(ion_group.transitions),
+                                    'components': ion_group.components
+                                }
+                                system_data['ion_groups'].append(ion_data)
+                            
+                            config_data['systems'].append(system_data)
             
-            return config_data
-            
+            # Return config data if we found anything useful
+            if config_data['systems'] or config_data['instrument_params']:
+                return config_data
+            else:
+                warnings.warn("No model configuration found in V2 vfit object")
+                return None
+                
         except Exception as e:
             warnings.warn(f"Could not extract model configuration: {e}")
             return None
+
     
     def _estimate_burnin(self, fitter) -> int:
         """Estimate burn-in steps."""
@@ -1551,20 +1533,18 @@ class UnifiedResults:
 # Convenience Functions
 # =============================================================================
 
-def save_unified_results(fitter, model, filename: Union[str, Path]) -> None:
+def save_unified_results(fitter, filename: Union[str, Path]) -> None:
     """
-    Convenience function to save unified results.
+    Convenience function to save unified results from V2 vfit.
     
     Parameters
     ----------
     fitter : vfit
-        MCMC fitter object
-    model : VoigtModel
-        rbvfit 2.0 model object
+        V2 vfit object after runmcmc() - contains all needed data
     filename : str or Path
         Output HDF5 filename
     """
-    results = UnifiedResults(fitter, model)
+    results = UnifiedResults(fitter)
     results.save(filename)
     print(f"✓ Unified results saved to {filename}")
     print(f"  Instruments: {len(results.instrument_names)}")

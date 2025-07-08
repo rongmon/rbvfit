@@ -159,4 +159,9 @@ fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
 elapsed_time=time.time()-start_time        
 print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
 
+from rbvfit.core import unified_results as u 
 
+results= u.UnifiedResults(fitter)
+
+
+results.help()

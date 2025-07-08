@@ -33,7 +33,20 @@ try:
     HAS_CORNER = True
 except ImportError:
     HAS_CORNER = False
-
+def get_rbvfit_version():
+    """
+    Get the current rbvfit version.
+    
+    Returns
+    -------
+    str
+        Version string, defaults to '2.0' if not available
+    """
+    try:
+        import rbvfit
+        return getattr(rbvfit, '__version__', '2.0')
+    except ImportError:
+        return '2.0'
 @dataclass
 class ParameterSummary:
     """Container for parameter summary statistics."""
@@ -96,6 +109,8 @@ class UnifiedResults:
         self.burnin_steps = self._estimate_burnin(fitter)
         self.sampler_name = getattr(fitter, 'sampler_name', 'emcee')
         self.is_multi_instrument = getattr(fitter, 'multi_instrument', False)
+
+
 
     
     # =========================================================================
@@ -257,19 +272,22 @@ class UnifiedResults:
         """Extract model configuration metadata from V2 vfit."""
         try:
             config_data = {
-                'rbvfit_version': '2.0',
+                'rbvfit_version': get_rbvfit_version(),
                 'systems': [],
                 'instrument_params': {}  # Per-instrument FWHM storage
             }
             
             # V2 vfit stores instrument configs in instrument_configs attribute
             if hasattr(fitter, 'instrument_configs') and fitter.instrument_configs:
-                # Extract FWHM from each instrument config
+                # Extract FWHM and other parameters from each instrument config
                 for inst_name, inst_config in fitter.instrument_configs.items():
+                    # Initialize instrument params for this instrument
+                    config_data['instrument_params'][inst_name] = {}
+                    
+                    # Extract instrumental parameters
                     if hasattr(inst_config, 'instrumental_params'):
-                        fwhm = inst_config.instrumental_params.get('FWHM')
-                        if fwhm:
-                            config_data['instrument_params'][inst_name] = {'FWHM': fwhm}
+                        for param_name, param_value in inst_config.instrumental_params.items():
+                            config_data['instrument_params'][inst_name][param_name] = param_value
                     
                     # Extract system configurations from first instrument (they should be identical)
                     if hasattr(inst_config, 'systems') and not config_data['systems']:
@@ -288,17 +306,13 @@ class UnifiedResults:
                                 system_data['ion_groups'].append(ion_data)
                             
                             config_data['systems'].append(system_data)
-            
-            # Return config data if we found anything useful
-            if config_data['systems'] or config_data['instrument_params']:
-                return config_data
-            else:
-                warnings.warn("No model configuration found in V2 vfit object")
-                return None
                 
+            return config_data    
         except Exception as e:
             warnings.warn(f"Could not extract model configuration: {e}")
             return None
+    
+    
 
     
     def _estimate_burnin(self, fitter) -> int:
@@ -989,7 +1003,7 @@ class UnifiedResults:
                 fwhm = self.config_metadata.get('instrumental_params', {}).get('FWHM', '6.5')
             
             # Create configuration with FWHM
-            config = FitConfiguration(FWHM=fwhm)
+            config = FitConfiguration()
             
             # Add systems from metadata
             for system_data in self.config_metadata['systems']:
@@ -1004,7 +1018,7 @@ class UnifiedResults:
                     )
             
             # Create model (FWHM already in config)
-            model = VoigtModel(config)
+            model = VoigtModel(config,FWHM=fwhm)
             
             return model
             

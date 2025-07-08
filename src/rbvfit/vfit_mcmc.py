@@ -218,13 +218,34 @@ class vfit:
         return compiled_data
     
     def _extract_configs(self, instrument_data):
-        """Extract model configurations for UnifiedResults."""
+        """Extract model configurations for UnifiedResults with FWHM information."""
+        import copy
+        
         configs = {}
         for name, data in instrument_data.items():
             model = data['model']
             if hasattr(model, 'config'):
-                configs[name] = model.config
+                # Create a deep copy to avoid modifying original
+                config_copy = copy.deepcopy(model.config)
+                
+                # Ensure instrumental_params exists
+                if not hasattr(config_copy, 'instrumental_params'):
+                    config_copy.instrumental_params = {}
+                
+                # Extract FWHM and other LSF parameters from model
+                if hasattr(model, 'FWHM') and model.FWHM is not None:
+                    config_copy.instrumental_params['FWHM'] = model.FWHM
+                
+                # Extract other LSF parameters
+                lsf_params = ['grating', 'life_position', 'cen_wave']
+                for param in lsf_params:
+                    if hasattr(model, param) and getattr(model, param) is not None:
+                        config_copy.instrumental_params[param] = getattr(model, param)
+                
+                configs[name] = config_copy
+        
         return configs
+
     
     def lnprior(self, theta):
         """Log prior probability - uniform within bounds."""

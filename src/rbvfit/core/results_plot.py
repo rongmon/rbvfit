@@ -396,7 +396,7 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         instruments = results.instrument_names
     
     n_instruments = len(instruments)
-    fig, axes = plt.subplots(n_instruments, 2, figsize=(15, 4*n_instruments))
+    fig, axes = plt.subplots(2,n_instruments, figsize=(15, 3*n_instruments))
     if n_instruments == 1:
         axes = axes.reshape(1, -1)
     
@@ -412,6 +412,8 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         
         # Get model
         model = results.reconstruct_model(inst_name if results.is_multi_instrument else None)
+        print(inst_name)
+        print(model.get_info())
         model_flux = model.evaluate(results.best_fit, wave_data)
         
         # Data vs model plot

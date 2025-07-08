@@ -60,16 +60,6 @@ def load_spectrum(slice_name):
     
     This is a custom data loading function. For your own data, replace this
     with whatever method you use to load wavelength, flux, and error arrays.
-    
-    Parameters
-    ----------
-    slice_name : str
-        Filename of the saved spectrum object
-        
-    Returns
-    -------
-    wave, flux, error : np.ndarray
-        Wavelength (Angstroms), normalized flux, and error arrays
     """
     print(f"Loading spectrum: {slice_name}")
     s_HIRES = load_rb_spec_object(filename=slice_name, verbose=verbose)
@@ -114,13 +104,10 @@ print("=" * 60)
 FWHM_XShooter = '2.2'  # Higher spectral resolution (sharper lines)
 FWHM_FIRE = '4.0'      # Lower spectral resolution (broader lines)
 
-config_A = FitConfiguration(FWHM=FWHM_XShooter)
-config_A.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
-print("XShooter configuration: OI 1302 at z=0.0, 1 component")
+config = FitConfiguration()
+config.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
+print("Absorber configuration: OI 1302 at z=0.0, 1 component")
 
-config_B = FitConfiguration(FWHM=FWHM_FIRE)
-config_B.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
-print("FIRE configuration: identical physical system")
 
 # Display the configuration details
 print(f"\nPhysical system details:")
@@ -144,98 +131,17 @@ print("=" * 60)
 
 # Create instrument-specific models
 # Each model applies different instrumental broadening to the same physics
-model_A = VoigtModel(config_A)  
+model_xshooter = VoigtModel(config,FWHM=FWHM_XShooter)  
 print(f"XShooter model: convolves with {FWHM_XShooter}-pixel Gaussian")
 
-model_B = VoigtModel(config_B)      
+model_FIRE = VoigtModel(config,FWHM=FWHM_FIRE)      
 print(f"FIRE model: convolves with {FWHM_FIRE}-pixel Gaussian")
 
 print("\n✓ Instrumental models created")
 
-# ============================================================================
-# PART 4: MULTI-INSTRUMENT MODEL COMPILATION
-# ============================================================================
-# This is the key step that enables joint fitting
-# KEY CONCEPT: Unified parameter space with per-instrument evaluation
 
 print("\n" + "=" * 60)
-print("COMPILING MULTI-INSTRUMENT MODEL")
-print("=" * 60)
 
-# Dictionary maps instrument names to their configurations
-instrument_configs = {
-    'XShooter': config_A,  # High-resolution configuration
-    'FIRE': config_B       # Lower-resolution configuration
-}
-
-print("Instrument mapping:")
-for name, config in instrument_configs.items():
-    print(f"  {name}: {config.get_parameter_structure()['total_parameters']} parameters")
-
-# Compile unified multi-instrument model
-# This creates a master configuration that handles parameter sharing
-compiled = model_A.compile(instrument_configs=instrument_configs, verbose=True)
-print("\n✓ Multi-instrument model compiled")
-
-# What the compilation does:
-print("\nCompilation effects:")
-print("  - Merges identical physics parameters (N, b, v) across instruments")
-print("  - Creates unified parameter space (single theta array)")
-print("  - Enables per-instrument evaluation with correct FWHM")
-print("  - Maintains parameter sharing while allowing different resolutions")
-
-# ============================================================================
-# PART 5: MODEL EVALUATION FUNCTIONS
-# ============================================================================
-# Create wrapper functions for MCMC compatibility
-# KEY CONCEPT: Single theta array controls both instrument models
-
-print("\n" + "=" * 60)
-print("CREATING MODEL EVALUATION FUNCTIONS")
-print("=" * 60)
-
-def model_xshooter(theta, wave):
-    """
-    Evaluate XShooter model with high resolution (2.2-pixel FWHM).
-    
-    Parameters
-    ----------
-    theta : np.ndarray
-        Parameter array [N, b, v] for all components
-    wave : np.ndarray  
-        Wavelength array for evaluation
-        
-    Returns
-    -------
-    np.ndarray
-        Model flux convolved with XShooter instrumental response
-    """
-    return compiled.model_flux(theta, wave, instrument='XShooter')
-
-def model_fire(theta, wave):
-    """
-    Evaluate FIRE model with lower resolution (4.0-pixel FWHM).
-    
-    Parameters
-    ----------
-    theta : np.ndarray
-        Same parameter array as XShooter (shared physics!)
-    wave : np.ndarray
-        Wavelength array for evaluation
-        
-    Returns
-    -------
-    np.ndarray
-        Model flux convolved with FIRE instrumental response
-    """
-    return compiled.model_flux(theta, wave, instrument='FIRE')
-
-print("Model evaluation functions created:")
-print("  model_xshooter(): applies 2.2-pixel FWHM convolution")
-print("  model_fire():     applies 4.0-pixel FWHM convolution")
-print("  Both use same theta parameters (shared physics)")
-
-print("\n✓ Evaluation functions ready")
 
 # ============================================================================
 # PART 6: PARAMETER ESTIMATION AND BOUNDS
@@ -292,7 +198,7 @@ instrument_data = {
         'error': error              # XShooter error array
     },
     'FIRE': {
-        'model': model_fire,        # FIRE model function
+        'model': model_FIRE,        # FIRE model function
         'wave': wave1,              # FIRE wavelength array
         'flux': flux1,              # FIRE flux array
         'error': error1             # FIRE error array
@@ -307,7 +213,6 @@ fitter = mc.vfit(
     no_of_steps=500,
     perturbation=1e-4,
     sampler='zeus'
-    # Note: No multi_instrument flag needed - automatically detected!
 )
 
 print("New interface benefits:")
@@ -322,25 +227,7 @@ print("  Shared parameters: N, b, v")
 print("  Different instrumental responses: Yes")
 print("  Multi-instrument mode: Automatically detected")
 
-# LEGACY INTERFACE (commented for reference):
-# fitter = mc.vfit(
-#     model_xshooter,           # Primary model function (XShooter)
-#     theta, lb, ub,            # Parameters and bounds
-#     wave, flux, error,        # Primary dataset (XShooter data)
-#     no_of_Chain=20,
-#     no_of_steps=500,
-#     perturbation=1e-4,
-#     sampler='zeus',
-#     multi_instrument=True,    # Enable multi-instrument mode
-#     instrument_data={         # Additional instruments
-#         'FIRE': {
-#             'model': model_fire,  # FIRE model function
-#             'wave': wave1,        # FIRE wavelength array
-#             'flux': flux1,        # FIRE flux array
-#             'error': error1       # FIRE error array
-#         }
-#     }
-# )
+
 
 print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
@@ -360,97 +247,16 @@ print("\n" + "=" * 60)
 print("ANALYZING FITTING RESULTS")
 print("=" * 60)
 
-# Display corner plot (parameter correlations and posteriors)
-print("Generating corner plot (parameter posterior distributions)...")
-fitter.plot_corner()
 
-# Extract key results
-print("\nExtracting results...")
-samples = fitter.samples      # MCMC samples (posterior chains)
-best_theta = fitter.best_theta # Best-fit parameters (median of posterior)
 
-# Print best-fit results
-print(f"\nBest-fit parameters:")
-print(f"  N = {best_theta[0]:.2f} ± {np.std(samples[:,0]):.2f} [log cm^-2]")
-print(f"  b = {best_theta[1]:.1f} ± {np.std(samples[:,1]):.1f} km/s")
-print(f"  v = {best_theta[2]:.1f} ± {np.std(samples[:,2]):.1f} km/s")
+from rbvfit.core import unified_results as u 
 
-# Calculate derived quantities
-linear_N = 10**best_theta[0]
-print(f"\nDerived quantities:")
-print(f"  Linear column density: {linear_N:.2e} cm^-2")
-print(f"  Thermal velocity (for T=10^4 K): ~12.9 km/s")
-print(f"  Turbulent component: ~{np.sqrt(best_theta[1]**2 - 12.9**2):.1f} km/s")
+results= u.UnifiedResults(fitter)
 
-print("\n✓ Results analysis complete")
 
-# ============================================================================
-# PART 9: DATA AND MODEL VISUALIZATION
-# ============================================================================
-# Create publication-quality plots showing the joint fit
-# KEY CONCEPT: Visualize how both datasets contribute to the constraints
+results.help()
 
-print("\n" + "=" * 60)
-print("CREATING VISUALIZATION")
-print("=" * 60)
 
-print("Preparing data/model comparison plots...")
-
-# Enhanced plotting with new interface support
-fig = mc.plot_model(model_A, fitter, 
-                outfile=False,           # or 'output.png' to save
-                show_residuals=True,     # Include residual plots
-                velocity_marks=True,     # Mark component velocities
-                verbose=True)            # Print parameter summary
-
-print("\n✓ Visualization complete")
-
-# ============================================================================
-# TUTORIAL SUMMARY AND NEXT STEPS
-# ============================================================================
-print("\n" + "=" * 80)
-print("TUTORIAL COMPLETE - SUMMARY")
-print("=" * 80)
-
-print("\nWhat you learned:")
-print("  ✓ How to load and prepare multi-instrument spectroscopic data")
-print("  ✓ How to configure shared physical systems in rbvfit 2.0")
-print("  ✓ How to handle different instrumental resolutions")
-print("  ✓ How to compile and use multi-instrument models")
-print("  ✓ How to use the new unified interface for cleaner setup")
-print("  ✓ How to run joint MCMC fitting")
-print("  ✓ How to analyze and visualize results")
-
-print("\nNew unified interface advantages:")
-print("  ✓ Symmetric treatment of all instruments")
-print("  ✓ Automatic multi-instrument detection")
-print("  ✓ No primary/secondary confusion")
-print("  ✓ Cleaner, more intuitive API")
-print("  ✓ Same performance and capabilities")
-
-print("\nKey advantages of multi-instrument fitting:")
-print("  • Better parameter constraints from combined data")
-print("  • Automatic handling of different instrumental responses")
-print("  • Consistency checks across multiple datasets")
-print("  • Reduced systematic uncertainties")
-
-print(f"\nYour results:")
-print(f"  OI 1302 column density: N = {best_theta[0]:.2f} ± {np.std(samples[:,0]):.2f} [log cm^-2]")
-print(f"  Doppler parameter:      b = {best_theta[1]:.1f} ± {np.std(samples[:,1]):.1f} km/s")
-print(f"  Velocity offset:        v = {best_theta[2]:.1f} ± {np.std(samples[:,2]):.1f} km/s")
-
-print("\nNext steps for your research:")
-print("  1. Try adding more velocity components if needed")
-print("  2. Fit additional transitions (e.g., OI 1355) jointly")
-print("  3. Add more instruments if available")
-print("  4. Compare results with single-instrument fits")
-print("  5. Explore different ion species in the same system")
-
-print("\nInterface migration notes:")
-print("  • Legacy interface still works for backward compatibility")
-print("  • New interface recommended for all new code")
-print("  • Same analysis and plotting capabilities")
-print("  • Easy to extend to any number of instruments")
-
-print("\nFor questions or issues, consult the rbvfit 2.0 documentation")
-print("Happy fitting! 🎉")
+results.print_summary()           # Overview
+results.convergence_diagnostics() # Check zeus     convergence
+results.velocity_plot(velocity_range=(-5200, 5200))

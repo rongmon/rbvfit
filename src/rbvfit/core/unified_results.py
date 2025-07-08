@@ -989,18 +989,20 @@ class UnifiedResults:
             from rbvfit.core.fit_configuration import FitConfiguration
             from rbvfit.core.voigt_model import VoigtModel
             
-            # Determine FWHM for this instrument
-            if self.is_multi_instrument and instrument_name:
-                # Multi-instrument: use instrument-specific FWHM
-                instrument_params = self.config_metadata.get('instrument_params', {})
-                if instrument_name in instrument_params:
-                    fwhm = instrument_params[instrument_name].get('FWHM')
-                else:
-                    # Fallback to global FWHM
-                    fwhm = self.config_metadata.get('instrumental_params', {}).get('FWHM', '6.5')
+            instrument_params = self.config_metadata.get('instrument_params', {})
+            default_fwhm = '6.5'
+            
+            if instrument_name:
+                # Use instrument-specific FWHM
+                fwhm = instrument_params.get(instrument_name, {}).get('FWHM', default_fwhm)
             else:
-                # Single instrument: use global FWHM
-                fwhm = self.config_metadata.get('instrumental_params', {}).get('FWHM', '6.5')
+                # Use the only entry in the dictionary (assumes one instrument)
+                if len(instrument_params) == 1:
+                    sole_instrument = next(iter(instrument_params))
+                    fwhm = instrument_params[sole_instrument].get('FWHM', default_fwhm)
+                else:
+                    fwhm = default_fwhm  # Fallback if multiple instruments or none
+
             
             # Create configuration with FWHM
             config = FitConfiguration()
@@ -1048,6 +1050,7 @@ class UnifiedResults:
             models[self.instrument_names[0]] = self.reconstruct_model()
         
         return models
+
     
     def print_summary(self) -> None:
         """Print comprehensive results summary."""

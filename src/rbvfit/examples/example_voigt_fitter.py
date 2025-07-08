@@ -84,14 +84,16 @@ print("\n=== Setting up V2 Model ===")
 FWHM_vel = 18.0      # km/s - example value
 # Convert to pixels using your observed wavelength grid
 FWHM = str(mean_fwhm_pixels(FWHM_vel, wave))
+
+print('Model FWHM :' +FWHM)
     
 # Create V2 model
-config = FitConfiguration(FWHM=FWHM)
+config = FitConfiguration()
 config.add_system(z=zabs, ion='SiII', transitions=lambda_rest, components=1)
 config.add_system(z=0.162005,ion='HI', transitions=lambda_rest1, components=1)
 
 
-v2_model = VoigtModel(config)
+v2_model = VoigtModel(config,FWHM=FWHM)
 print("✓ V2 model created, ready to use.")
 
 
@@ -164,4 +166,17 @@ from rbvfit.core import unified_results as u
 results= u.UnifiedResults(fitter)
 
 
+
+from rbvfit.core import unified_results as u 
+
+results= u.UnifiedResults(fitter)
+
+
 results.help()
+
+
+results.print_summary()           # Overview
+results.convergence_diagnostics() # Check zeus     convergence
+results.velocity_plot(velocity_range=(-5200, 5200))
+
+results.residuals_plot()

@@ -396,13 +396,27 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         instruments = results.instrument_names
     
     n_instruments = len(instruments)
-    fig, axes = plt.subplots(2,n_instruments, figsize=(15, 3*n_instruments))
-    if n_instruments == 1:
-        axes = axes.reshape(1, -1)
+    n_panels = 2       # number of rows/panels per instrument
+
+    fig, axes = plt.subplots(
+        nrows=n_panels,
+        ncols=n_instruments,
+        figsize=(10 * n_instruments, 4),  # adjust height as needed
+        sharex='col',
+        gridspec_kw={'height_ratios': [3, 1]}  # top row 3x the height of bottom row
+    )
+    
+    # If only 1 row or column, make sure axes is always 2D
+    if n_panels == 1:
+        axes = axes.reshape(1, n_instruments)
+    elif n_instruments == 1:
+        axes = axes.reshape(n_panels, 1)
+    
     
     for i, inst_name in enumerate(instruments):
-        ax_data = axes[i, 0]
-        ax_res = axes[i, 1]
+        ax_data = axes[0, i]  # row 0: data panel
+        ax_res  = axes[1, i]  # row 1: residuals panel
+
         
         # Get data
         data = results.instrument_data[inst_name]
@@ -437,24 +451,25 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         ax_res.axhline(-3, color='red', linestyle=':', alpha=0.5)
         
         ax_res.set_ylabel('Residuals/σ')
-        ax_res.set_title(f'{inst_name} - Residuals')
+
+
+        #ax_res.text(
+        #    0.45, 0.25, f'{inst_name} - Residuals',            # (x, y) in axis fraction coords
+        #    transform=ax_res.transAxes,     # use Axes coordinates
+        #    fontsize=12,
+        #    va='top', ha='left'
+        #)
+
         ax_res.legend()
         ax_res.grid(True, alpha=0.3)
         
-        # Add chi-squared info
-        try:
-            chi2_stats = results.chi_squared(inst_name)
-            chi2_reduced = chi2_stats[f'reduced_chi2_{inst_name}']
-            ax_res.text(0.02, 0.98, f'χ²/ν = {chi2_reduced:.2f}', 
-                       transform=ax_res.transAxes, verticalalignment='top',
-                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        except:
-            pass
     
     for ax in axes.flat:
         ax.set_xlabel('Wavelength (Å)')
     
     plt.tight_layout()
+    plt.subplots_adjust(hspace=0.05)
+
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')

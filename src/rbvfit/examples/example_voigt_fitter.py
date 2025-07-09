@@ -176,7 +176,7 @@ print(f"✓ mcmc completed in {elapsed_time:.1f} seconds")
 
 
 #plot models
-mc.plot_model(v2_model,fitter,show_residuals=True,outfile='example-fit.png')
+mc.plot_model(v2_model,fitter,show_residuals=True)#,outfile='example-fit.png')
 
 
 # New modules for better analysis and model plotting

@@ -44,9 +44,9 @@ def get_rbvfit_version():
     """
     try:
         import rbvfit
-        return getattr(rbvfit, '__version__', '2.0')
+        return getattr(rbvfit, '__version__', '2.0.0')
     except ImportError:
-        return '2.0'
+        return '2.0.0'
 @dataclass
 class ParameterSummary:
     """Container for parameter summary statistics."""
@@ -442,7 +442,7 @@ class UnifiedResults:
         with h5py.File(filename, 'w') as f:
             # Metadata
             meta = f.create_group('metadata')
-            meta.attrs['rbvfit_version'] = '2.0'
+            meta.attrs['rbvfit_version'] = get_rbvfit_version()
             meta.attrs['results_version'] = 'unified_redesign'
             meta.attrs['sampler_name'] = self.sampler_name
             meta.attrs['n_walkers'] = self.n_walkers
@@ -546,10 +546,7 @@ class UnifiedResults:
                 results.rhat = None
         
         return results
-    
-    # =========================================================================
-    # Analysis Methods (Foundation)
-    # =========================================================================
+
     
     # =========================================================================
     # Analysis Methods 

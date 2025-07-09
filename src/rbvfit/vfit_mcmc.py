@@ -275,6 +275,33 @@ class vfit:
         except Exception:
             # Return -inf for any evaluation errors
             return -np.inf
+
+    #def lnlike(self, theta):
+    #    """Log likelihood calculation - unified across all instruments.
+    #        More accurate but slower. no need to use this for mcmc 
+    #     """
+    #    try:
+    #        lnlike_total = 0.0
+    #
+    #        for instrument_name, data in self.instrument_data.items():
+    #            flux = data['flux']
+    #            error = data['error']
+    #            wave = data['wave']
+    #            model_flux = data['model'](theta, wave)
+    #
+    #            inv_sigma2 = 1.0 / (error ** 2)
+    #            residual = flux - model_flux
+    #
+    #            # Vectorized log-likelihood for this instrument
+    #            lnlike = -0.5 * np.sum(residual**2 * inv_sigma2 + np.log(2 * np.pi * error**2))
+    #            lnlike_total += lnlike
+    #
+    #        return lnlike_total
+    #
+    #    except Exception:
+    #        return -np.inf
+    
+
     
     def lnprob(self, theta):
         """Log posterior probability."""

@@ -512,7 +512,7 @@ def _add_rail_system(ax,results, wave_data):
         # Plotting config
         colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray']
         y_rail_base = 1.2
-        rail_spacing = 0.06
+        rail_spacing = 0.5
         tick_len = 0.2
 
         # Track global component index
@@ -561,7 +561,7 @@ def _add_rail_system(ax,results, wave_data):
                 ax.text(rail_center,
                         y_rail + 0.02,
                         f"{ion_name}\nz = {z:.3f}",
-                        ha='center',
+                        ha='right',
                         va='bottom',
                         fontsize=9,
                         weight='medium',

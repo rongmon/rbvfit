@@ -435,6 +435,9 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         ax_data.fill_between(wave_data, flux_data - error_data, flux_data + error_data, 
                            alpha=0.3, color='gray', step='mid')
         ax_data.plot(wave_data, model_flux, 'r-', linewidth=2, label='Model')
+
+        # Add rail system
+        ax_data=_add_rail_system(ax_data,results, wave_data)
         
         ax_data.set_ylabel('Normalized Flux')
         ax_data.set_title(f'{inst_name} - Data vs Model')
@@ -478,6 +481,152 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         plt.show()
     
     return fig
+
+
+
+def _add_rail_system(ax,results, wave_data):
+    """
+    Add rail system visualization for v2.0 ion groups.
+
+    Parameters
+    ----------
+    ax : matplotlib.axes.Axes
+        The axis to draw on.
+    best_theta : array-like
+        The flat parameter vector (N, b, v for each component).
+    wave_data : np.ndarray
+        Observed wavelength array (to restrict tick display).
+    """
+    try:
+        all_systems = results.config_metadata['systems']
+        best_theta=results.best_fit
+        n_comp = len(best_theta) // 3
+
+        N_list = best_theta[0:n_comp]
+        b_list = best_theta[n_comp:2*n_comp]
+        v_list = best_theta[2*n_comp:3*n_comp]
+
+        # Speed of light in km/s
+        c_kms = 299792.458
+
+        # Plotting config
+        colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray']
+        y_rail_base = 1.2
+        rail_spacing = 0.06
+        tick_len = 0.2
+
+        # Track global component index
+        glob_comp_idx = 0
+        rail_idx = 0
+
+        N_sys_all, b_sys_all, v_sys_all = [], [], []
+
+        for system in all_systems:
+            z = system['redshift']
+            N_sys, b_sys, v_sys = [], [], []
+            transition_list = []
+
+            for ion_group in system['ion_groups']:
+                ion_name = ion_group['ion_name']
+                transitions = ion_group['transitions']
+                n_components = ion_group['components']
+
+                # Expand transition and logN arrays
+                transition_list_group = np.tile(transitions, n_components)
+
+                for _ in range(n_components):
+                    N_sys.extend([N_list[glob_comp_idx]] * len(transitions))
+                    b_sys.extend([b_list[glob_comp_idx]] * len(transitions))
+                    v_sys.extend([v_list[glob_comp_idx]] * len(transitions))
+                    glob_comp_idx += 1
+
+                transition_list.extend(transition_list_group)
+
+                # Plot rail line
+                y_rail = y_rail_base + rail_idx * rail_spacing
+                wave_obs_sys = np.array(transition_list_group) * (1 + z) * \
+                               (1 + np.array(v_sys[-len(transition_list_group):]) / c_kms)
+
+                rail_start = wave_obs_sys.min()
+                rail_end = wave_obs_sys.max()
+
+                ax.plot([rail_start, rail_end], [y_rail, y_rail], 
+                        color='gray', linewidth=2, alpha=0.7)
+
+                # Ion label
+                rail_center = (rail_start + rail_end) / 2
+                #ax.text(rail_center, y_rail + 0.015, f'{ion_name} z={z:.3f}', 
+                #        ha='center', va='bottom', fontsize=10, weight='bold',
+                #        bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9))
+                ax.text(rail_center,
+                        y_rail + 0.02,
+                        f"{ion_name}\nz = {z:.3f}",
+                        ha='center',
+                        va='bottom',
+                        fontsize=9,
+                        weight='medium',
+                        bbox=dict(
+                            boxstyle='round,pad=0.25',
+                            facecolor='white',
+                            edgecolor='gray',
+                            alpha=0.8
+                        ),
+                        zorder=10
+                    )
+
+
+                # Component ticks and velocity labels
+                for comp_local_idx in range(n_components):
+                    color = colors[comp_local_idx % len(colors)]
+                    v_comp = v_list[glob_comp_idx - n_components + comp_local_idx]
+                    
+                    for rest_wave in transitions:
+                        obs_wave = rest_wave * (1 + z) * (1 + v_comp / c_kms)
+
+                        if wave_data.min() <= obs_wave <= wave_data.max():
+                            ax.plot([obs_wave, obs_wave], [y_rail, y_rail - tick_len],
+                                    color=color, linewidth=3, alpha=0.8)
+
+                            # Label only once per component
+                            if rest_wave == transitions[0]:
+                                #ax.text(obs_wave, y_rail + 3.5*tick_len , 
+                                #        f'c{comp_local_idx+1}\n{v_comp:.0f} km/s', 
+                                #        ha='center', va='top', fontsize=9, 
+                                #        color=color, rotation=90)
+                                ax.text(obs_wave,
+                                        y_rail + 1.5 * tick_len,
+                                        f'c{comp_local_idx+1} ({v_comp:.0f} km/s)',
+                                        ha='center',
+                                        va='bottom',
+                                        fontsize=8,
+                                        color=color,
+                                        rotation=90,
+                                        bbox=dict(
+                                            boxstyle='round,pad=0.2',
+                                            facecolor='white',
+                                            edgecolor='none',
+                                            alpha=0.7
+                                        ),
+                                        zorder=10
+                                    )
+
+
+                rail_idx += 1
+
+            # Save N/b/v per system
+            N_sys_all.append(np.array(N_sys))
+            b_sys_all.append(np.array(b_sys))
+            v_sys_all.append(np.array(v_sys))
+
+        # Adjust plot limits after all rails
+        current_ylim = ax.get_ylim()
+        new_top = max(current_ylim[1], y_rail_base + rail_idx * rail_spacing + 0.08)
+        ax.set_ylim(current_ylim[0], new_top)
+
+        print(f"Added rail system for {rail_idx} ion groups.")
+        return ax 
+    except Exception as e:
+        print(f"Warning: Could not add rail system: {e}")
 
 
 def diagnostic_summary_plot(results, save_path: Optional[str] = None) -> plt.Figure:

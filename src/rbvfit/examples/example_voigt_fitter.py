@@ -99,7 +99,7 @@ print("✓ V2 model created, ready to use.")
 
 # MCMC settings
 n_steps = 500
-n_walkers = 50
+n_walkers = 20
 
 print(f"\n{'='*50}")
 print(f"Running mcmc fitting multi core")

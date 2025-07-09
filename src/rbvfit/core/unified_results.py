@@ -239,26 +239,26 @@ class UnifiedResults:
         # Extract acceptance fraction (both samplers)
         try:
             if hasattr(fitter.sampler, 'acceptance_fraction'):
+                # emcee-style
                 af = fitter.sampler.acceptance_fraction
-                if hasattr(af, '__len__'):  # Array of acceptance fractions
-                    acceptance_fraction = np.mean(af)
-                else:  # Single value
-                    acceptance_fraction = float(af)
+                acceptance_fraction = np.mean(af) if hasattr(af, '__len__') else float(af)
             elif hasattr(fitter.sampler, 'get_chain'):
-                # Estimate from chain for zeus (fallback method)
-                try:
-                    chain = fitter.sampler.get_chain()
-                    # Count unique consecutive steps
-                    n_accepted = 0
-                    n_total = 0
-                    for walker_chain in chain.T:
-                        for i in range(1, len(walker_chain)):
-                            n_total += 1
-                            if not np.array_equal(walker_chain[i], walker_chain[i-1]):
-                                n_accepted += 1
-                    acceptance_fraction = n_accepted / n_total if n_total > 0 else 0.0
-                except:
-                    acceptance_fraction = None
+                # zeus-style: estimate manually
+                chain = fitter.sampler.get_chain()  # shape: (n_steps, n_walkers, n_params)
+                n_steps, n_walkers, n_params = chain.shape
+                n_accepted = 0
+                n_total = 0
+        
+                for w in range(n_walkers):
+                    walker_chain = chain[:, w, :]  # shape: (n_steps, n_params)
+                    for i in range(1, n_steps):
+                        n_total += 1
+                        if not np.allclose(walker_chain[i], walker_chain[i-1]):
+                            n_accepted += 1
+        
+                acceptance_fraction = n_accepted / n_total if n_total > 0 else 0.0
+            else:
+                acceptance_fraction = None
         except Exception:
             acceptance_fraction = None
         

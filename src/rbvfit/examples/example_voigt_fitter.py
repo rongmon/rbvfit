@@ -99,7 +99,7 @@ print("✓ V2 model created, ready to use.")
 
 # MCMC settings
 n_steps = 500
-n_walkers = 20
+n_walkers = 50
 
 print(f"\n{'='*50}")
 print(f"Running mcmc fitting multi core")
@@ -139,19 +139,6 @@ fitter = mc.vfit(
 
 
 
-# Add this before runmcmc to debug:
-print(f"Model expects: {v2_model.param_manager.structure['total_parameters']} params")
-print(f"Theta provides: {len(theta)} params")
-print(f"Initial theta: {theta}")
-print(f"Bounds check: {np.all(theta >= lb)} and {np.all(theta <= ub)}")
-print(f"Initial likelihood: {fitter.lnprob(theta)}")
-
-# Try manual model evaluation
-try:
-    test_flux = v2_model.evaluate(theta, wave)
-    print(f"Model evaluation successful: {np.isfinite(test_flux).all()}")
-except Exception as e:
-    print(f"Model evaluation failed: {e}")
         
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True, use_pool=True)

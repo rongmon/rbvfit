@@ -19,6 +19,7 @@ import copy
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.parameter_manager import ParameterManager
 from rbvfit import rb_setline as rb
+from scipy import ndimage
 
 # Try to import linetools for COS LSF
 try:
@@ -122,6 +123,9 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     """
     # Physical constants
     c = 2.99792458e10  # speed of light in cm/s
+    c_freq = 2.99792458e18      # c * 1e8
+    atomic_constant = 4.48898479507e3  # 448898479.507 / 1e5
+    
     
     # Vectorized calculations - broadcasting across all lines
     # Shape: (n_lines, 1) for broadcasting with wavelengths
@@ -133,11 +137,13 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     
     # Vectorized frequency calculations
     b_f = b_bc / lambda0_bc * 1e13
-    freq0 = c / lambda0_bc * 1e8
-    freq = c / wave_rest * 1e8
+    #freq0 = c / lambda0_bc * 1e8
+    #freq = c / wave_rest * 1e8
+    freq0 = c_freq / lambda0_bc
+    freq = c_freq / wave_rest
     
     # Vectorized constants
-    constant = 448898479.507 / (freq0 * b_bc * 1e5)
+    constant = atomic_constant / (freq0 * b_bc)#constant = 448898479.507 / (freq0 * b_bc * 1e5)
     
     # Vectorized complex argument calculation
     a = gamma_bc / (4 * np.pi * b_f)
@@ -210,7 +216,16 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
     # Apply convolution if kernel exists
     kernel = data_container.kernel
     if kernel is not None:
-        flux = astropy_convolve(flux, kernel, boundary="extend")
+        if isinstance(kernel,Gaussian1DKernel ):
+            # Use fast scipy for Gaussian kernels
+            flux = ndimage.convolve1d(flux, kernel.array, mode='nearest')
+        elif isinstance(kernel, CustomKernel):
+            # Use astropy for CustomKernel (COS LSF)
+            flux = astropy_convolve(flux, kernel, boundary="extend")
+        else:
+            # Fallback to astropy for unknown kernel types
+            flux = astropy_convolve(flux, data_container.kernel, boundary="extend")
+
 
     return flux
 

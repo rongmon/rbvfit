@@ -212,7 +212,8 @@ class vfit:
                 'model': model_func,
                 'wave': np.asarray(data['wave']),
                 'flux': np.asarray(data['flux']),
-                'error': np.asarray(data['error'])
+                'error': np.asarray(data['error']),
+                'inv_sigma2': 1.0 / (np.asarray(data['error']) ** 2)
             }
         
         return compiled_data
@@ -249,9 +250,9 @@ class vfit:
     
     def lnprior(self, theta):
         """Log prior probability - uniform within bounds."""
-        if np.all((self.lb <= theta) & (theta <= self.ub)):
-            return 0.0
-        return -np.inf
+        if np.any(theta < self.lb) or np.any(theta > self.ub):
+            return -np.inf
+        return 0.0
     
     def lnlike(self, theta):
         """Log likelihood calculation - unified across all instruments."""
@@ -263,7 +264,7 @@ class vfit:
                 model_dat = data['model'](theta, data['wave'])
                 
                 # Calculate likelihood contribution
-                inv_sigma2 = 1.0 / (data['error'] ** 2)
+                inv_sigma2 = data['inv_sigma2']#1.0 / (data['error'] ** 2)
                 lnlike_instrument = -0.5 * (
                     np.sum((data['flux'] - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2))
                 )
@@ -363,7 +364,7 @@ class vfit:
                 print(f"❌ Quick fit failed: {str(e)}")
             raise RuntimeError("Quick fitting failed") from e
     
-    def _setup_emcee_sampler(self, guesses, use_pool=True):
+    def _setup_emcee_sampler(self, use_pool=True):
         """Set up emcee sampler with optimized multiprocessing."""
         if use_pool:
             try:
@@ -380,7 +381,7 @@ class vfit:
             sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
             return sampler, None
     
-    def _setup_zeus_sampler(self, guesses, use_pool=True):
+    def _setup_zeus_sampler(self, use_pool=True):
         """Set up zeus sampler with optimized multiprocessing."""
         if use_pool:
             try:
@@ -474,9 +475,9 @@ class vfit:
         
         # Set up sampler
         if self.sampler_name == 'emcee':
-            sampler, pool = self._setup_emcee_sampler(guesses, use_pool)
+            sampler, pool = self._setup_emcee_sampler(use_pool)
         elif self.sampler_name == 'zeus':
-            sampler, pool = self._setup_zeus_sampler(guesses, use_pool)
+            sampler, pool = self._setup_zeus_sampler(use_pool)
         else:
             raise ValueError(f"Unknown sampler: {self.sampler_name}")
         

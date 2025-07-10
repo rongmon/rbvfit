@@ -1,81 +1,23 @@
 """
-Unified quick fitting interface using scipy.optimize for single and multi-instrument datasets.
+Quick fitting interface using scipy.optimize for rbvfit 2.0 V2 unified interface.
 """
 
 import numpy as np
-from scipy.optimize import curve_fit, minimize
+from scipy.optimize import minimize
 import warnings
 
 
-def quick_fit(model_func, theta_guess, wave, flux, error, bounds=None):
+def quick_fit_vfit(vfit_obj):
     """
-    Quick parameter fitting using scipy.optimize.curve_fit for single instrument.
+    Quick fit using scipy.optimize.minimize for V2 unified interface.
     
-    Parameters
-    ----------
-    model_func : callable
-        Model function: model_func(theta, wave) -> flux
-    theta_guess : array_like
-        Initial parameter guess
-    wave : array_like
-        Wavelength array
-    flux : array_like
-        Observed flux
-    error : array_like
-        Error array
-    bounds : list of tuples, optional
-        Parameter bounds [(low, high), ...]
-        
-    Returns
-    -------
-    theta_best : np.ndarray
-        Best-fit parameters
-    theta_best_error : np.ndarray
-        Parameter uncertainties (1-sigma)
-    """
-    # Wrapper for curve_fit (expects xdata as first argument)
-    def curve_fit_wrapper(xdata, *params):
-        theta = np.array(params)
-        return model_func(theta, xdata)
-    
-    # Convert bounds format for curve_fit
-    if bounds is not None:
-        bounds = ([b[0] for b in bounds], [b[1] for b in bounds])
-    
-    try:
-        popt, pcov = curve_fit(
-            curve_fit_wrapper, 
-            wave, 
-            flux, 
-            p0=theta_guess,
-            sigma=error,
-            absolute_sigma=True,
-            bounds=bounds if bounds is not None else (-np.inf, np.inf),
-            maxfev=5000
-        )
-        
-        theta_best = popt
-        theta_best_error = np.sqrt(np.diag(pcov))
-        
-    except Exception as e:
-        warnings.warn(f"Fitting failed: {e}")
-        theta_best = np.array(theta_guess)
-        theta_best_error = np.zeros_like(theta_guess)
-    
-    return theta_best, theta_best_error
-
-
-def quick_fit_minimize(vfit_obj):
-    """
-    Quick fit using scipy.optimize.minimize for single or multi-instrument.
-    
-    This unified approach works for both single and multi-instrument cases
-    by iterating over the instrument_data dictionary.
+    Works for both single and multi-instrument cases by iterating over
+    the instrument_data dictionary.
     
     Parameters
     ----------
     vfit_obj : vfit
-        The rbvfit vfit object with instrument_data
+        The rbvfit V2 vfit object with instrument_data dictionary
         
     Returns
     -------
@@ -185,48 +127,3 @@ def _estimate_parameter_errors(chi2_func, theta_best, theta_initial, delta_frac=
     
     return theta_errors
 
-
-def quick_fit_vfit(vfit_obj):
-    """
-    Quick fit directly from vfit object - unified interface.
-    
-    Automatically detects single vs multi-instrument and uses appropriate method.
-    
-    Parameters
-    ----------
-    vfit_obj : vfit
-        The rbvfit vfit object
-        
-    Returns
-    -------
-    theta_best : np.ndarray
-        Best-fit parameters
-    theta_best_error : np.ndarray
-        Parameter uncertainties
-    """
-    
-    # Check if unified interface (has instrument_data)
-    if hasattr(vfit_obj, 'instrument_data') and vfit_obj.instrument_data is not None:
-        # Use minimize approach for unified interface (works for single or multi-instrument)
-        n_instruments = len(vfit_obj.instrument_data)
-        if n_instruments == 1:
-            # Could use either method for single instrument, but minimize is more consistent
-            return quick_fit_minimize(vfit_obj)
-        else:
-            # Multi-instrument: must use minimize
-            return quick_fit_minimize(vfit_obj)
-    
-    else:
-        # Legacy interface: use curve_fit for single instrument
-        bounds = None
-        if hasattr(vfit_obj, 'lb') and hasattr(vfit_obj, 'ub'):
-            bounds = list(zip(vfit_obj.lb, vfit_obj.ub))
-        
-        return quick_fit(
-            vfit_obj.model, 
-            vfit_obj.theta,
-            vfit_obj.wave_obs, 
-            vfit_obj.fnorm, 
-            vfit_obj.enorm,
-            bounds=bounds
-        )

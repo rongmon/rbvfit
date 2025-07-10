@@ -216,7 +216,7 @@ fitter = mc.vfit(
     no_of_Chain=40,
     no_of_steps=500,
     perturbation=1e-4,
-    sampler='zeus'
+    sampler='emcee'
     # Note: No multi_instrument flag needed - automatically detected!
 )
 

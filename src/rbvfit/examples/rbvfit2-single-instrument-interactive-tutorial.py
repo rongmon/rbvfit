@@ -179,13 +179,6 @@ print("\n✓ Instrumental models created")
 # PART 5: MODEL COMPILATION
 # ============================================================================
 
-print("\n" + "=" * 60)
-print("COMPILING SINGLE-INSTRUMENT MODEL")
-print("=" * 60)
-
-compiled = model.compile(verbose=True)
-print("\n✓ Single-instrument model compiled")
-
 # ============================================================================
 # PART 6: MCMC FITTING
 # ============================================================================
@@ -196,23 +189,40 @@ print("=" * 60)
 
 print("Setting up MCMC fitter...")
 
-# Create vfit_mcmc object 
+instrument_data = {
+    'XShooter': {
+        'model': model,
+        'wave': wave_obs,
+        'flux': flux,
+        'error': error
+    }
+}
+
+n_walkers=20
+n_steps=500
+
+# Clean call
 fitter = mc.vfit(
-    compiled.model_flux,           # Model function
-    theta, lb, ub,                 # Parameters and bounds
-    wave_obs, flux, error,         # Dataset
-    no_of_Chain=50,               # Number of walkers
-    no_of_steps=500,              # Number of steps
-    perturbation=1e-4,            # Walker initialization perturbation
-    sampler='zeus'                # Sampler choice
+    instrument_data, theta, lb, ub,
+    no_of_Chain=n_walkers, 
+    no_of_steps=n_steps,
+    sampler='zeus',
+    perturbation=1e-4
 )
+
+
+
+        
+# Run MCMC
+
 
 print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
 
 # Run MCMC with optimization
 try:
-    fitter.runmcmc(optimize=True)  # optimize=True finds better starting point
+    fitter.runmcmc(optimize=True, verbose=True, use_pool=False)
+
     print("\n✓ MCMC fitting completed successfully")
 except Exception as e:
     print(f"\n✗ MCMC fitting failed: {e}")
@@ -228,85 +238,24 @@ print("\n" + "=" * 60)
 print("ANALYZING FITTING RESULTS")
 print("=" * 60)
 
-try:
-    from rbvfit.core import fit_results as f
-    
-    # Create results object
-    results = f.FitResults(fitter, model)
-    
-    # Print summary
-    print("Fit summary:")
-    results.print_fit_summary()
-    
-    # Generate plots with proper display handling
-    print("\nGenerating diagnostic plots...")
-    
-    # Corner plot
-    print("1. Corner plot (parameter posterior distributions)...")
-    fig_corner = results.corner_plot()
-    if fig_corner:
-        plt.figure(fig_corner.number)
-        plt.draw()
-        plt.pause(0.1)
-    
-    # Convergence diagnostics
-    print("2. Convergence diagnostics...")
-    conv_results = results.convergence_diagnostics()
-    
-    # Chain trace plot
-    print("3. Chain trace plots...")
-    fig_trace = results.chain_trace_plot()
-    if fig_trace:
-        plt.figure(fig_trace.number)
-        plt.draw()
-        plt.pause(0.1)
-    
-    # Velocity space plots
-    print("4. Velocity space fit plots...")
-    velocity_plots = results.plot_velocity_fits(
-        show_components=True,      # Show individual components
-        show_rail_system=True     # Show component position markers
-    )
-    
-    if velocity_plots:
-        plt.figure(velocity_plots.number)
-        plt.draw()
-        plt.pause(0.1)
-    
-    print("\n✓ All plots generated successfully")
-    
-    # Optional: Save results
-    save_results = input("\nSave results to file? (y/n): ").lower().strip()
-    if save_results in ['y', 'yes']:
-        filename = input("Enter filename (or press Enter for 'fit_results.h5'): ").strip()
-        if not filename:
-            filename = 'fit_results.h5'
-        results.save(filename)
-        print(f"Results saved to {filename}")
 
-except Exception as e:
-    print(f"Error in results analysis: {e}")
-    print("Basic fit completed, but results analysis failed")
+from rbvfit.core import unified_results as u 
 
-# ============================================================================
-# FINAL DISPLAY
-# ============================================================================
+results= u.UnifiedResults(fitter)
 
-print("\n" + "=" * 60)
-print("FITTING COMPLETE")
-print("=" * 60)
-print("All plots should now be displayed.")
-print("Close plot windows manually when done examining results.")
 
-# Keep all plots open - THIS IS THE KEY FIX
-print("\nKeeping script alive to maintain plot windows...")
-print("Press Ctrl+C to exit when done examining plots.")
 
-try:
-    # Keep the script running to maintain plot windows
-    while True:
-        plt.pause(1.0)  # Check every second
-except KeyboardInterrupt:
-    print("\nExiting...")
-    plt.close('all')  # Clean up all figures
-    sys.exit(0)
+from rbvfit.core import unified_results as u 
+
+results= u.UnifiedResults(fitter)
+
+
+results.help()
+
+
+results.print_summary()           # Overview
+results.convergence_diagnostics() # Check zeus     convergence
+#results.velocity_plot(velocity_range=(-5200, 5200))
+
+results.residuals_plot()
+#results.save('my_fit.h5')

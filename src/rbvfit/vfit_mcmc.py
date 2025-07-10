@@ -31,7 +31,6 @@ except ImportError:
     HAS_ZEUS = False
     zeus = None
 
-from rbvfit.rb_vfit import rb_veldiff as rb_veldiff
 from rbvfit import rb_setline as rb
 
 # Detect OS to set multiprocessing context
@@ -49,6 +48,31 @@ except (AttributeError, RuntimeError):
     # Fallback to default if fork is not available
     OptimizedPool = mp.Pool
     MP_CONTEXT = 'default'
+
+
+
+def rb_veldiff(lam_cen,lam_offset):    
+    z=(lam_offset/lam_cen) -1.
+    C = 299792.458;  #% speed of light [km/sec]
+    Beta =((z+1.)**2 - 1.)/(1. + (z+1.)**2.)
+    return Beta*C
+
+
+
+def vel2shift(Vel):
+#%----------------------------------------------------------------
+#% vel2shift function    calculate the red/blue shift (Z)
+#%                     from velocity.
+#% Input  : - vector of Velocities in km/sec.
+#% Output : - red/blue shift (Z).
+#% Tested : Matlab 2012
+#%     By : Rongmon Bordoloi             Dec 2012
+#%----------------------------------------------------------------
+    C = 299792.458;  #% speed of light [km/sec]
+    Beta  = Vel/C;
+    Z = np.sqrt((1.+Beta)/(1.-Beta)) - 1.;
+    return Z
+
 
 
 # Ion-specific bounds lookup table

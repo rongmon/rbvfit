@@ -1,1279 +1,637 @@
 #!/usr/bin/env python
 """
-Clean Model Setup Tab for rbvfit 2.0 GUI
+Simplified Model Setup Tab for rbvfit 2.0 GUI
 
-This tab handles ion system assignment to configurations and parameter estimation.
-Complete rewrite with clean parameter manager integration.
+Clean, streamlined interface using FitConfiguration and direct VoigtModel creation.
+Focus on simplicity and common use cases.
 """
 
 import numpy as np
-import pandas as pd
 from typing import Dict, List, Tuple, Optional, Any
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter, 
                             QGroupBox, QTreeWidget, QTreeWidgetItem, QPushButton,
                             QLabel, QComboBox, QTableWidget, QTableWidgetItem, 
                             QHeaderView, QMessageBox, QDialog, QFormLayout,
                             QDoubleSpinBox, QSpinBox, QLineEdit, QDialogButtonBox,
-                            QTextEdit)
+                            QTextEdit, QCheckBox)
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QFont
 
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 from rbvfit import vfit_mcmc as mc
-from rbvfit.gui.interactive_param_dialog import InteractiveParameterDialog
-
-# Import the parameter manager
-from multi_instrument_parameter_manager import MultiInstrumentParameterManager
 
 
+# Ion templates for quick setup
 ION_TEMPLATES = {
-    "Custom (manual entry)": {
-        "ion": "",
-        "transitions": []
-    },
     "CIV": {
         "ion": "CIV", 
-        "transitions": [1548.2, 1550.8]
+        "transitions": [1548.2, 1550.8],
+        "description": "C IV doublet (1548, 1551 Å)"
     },
     "SiIV": {
         "ion": "SiIV",
-        "transitions": [1393.8, 1402.8]
-    },
-    "OI": {
-        "ion": "OI",
-        "transitions": [1302.2]
-    },
-    "SiII": {
-        "ion": "SiII", 
-        "transitions": [1260.4, 1304.4, 1526.7]
-    },
-    "FeII": {
-        "ion": "FeII",
-        "transitions": [1608.5, 2374.5, 2382.8, 2586.7, 2600.2]
+        "transitions": [1393.8, 1402.8],
+        "description": "Si IV doublet (1394, 1403 Å)"
     },
     "MgII": {
         "ion": "MgII",
-        "transitions": [2796.4, 2803.5]
-    },
-    "AlIII": {
-        "ion": "AlIII",
-        "transitions": [1854.7, 1862.8]
-    },
-    "CIII": {
-        "ion": "CIII",
-        "transitions": [977.0]
-    },
-    "NV": {
-        "ion": "NV", 
-        "transitions": [1238.8, 1242.8]
+        "transitions": [2796.4, 2803.5],
+        "description": "Mg II doublet (2796, 2804 Å)"
     },
     "OVI": {
         "ion": "OVI",
-        "transitions": [1031.9, 1037.6]
+        "transitions": [1031.9, 1037.6],
+        "description": "O VI doublet (1032, 1038 Å)"
     },
-    "Lyman-α": {
+    "OI": {
+        "ion": "OI",
+        "transitions": [1302.2],
+        "description": "O I 1302 Å"
+    },
+    "SiII": {
+        "ion": "SiII", 
+        "transitions": [1260.4, 1304.4, 1526.7],
+        "description": "Si II (1260, 1304, 1527 Å)"
+    },
+    "FeII": {
+        "ion": "FeII",
+        "transitions": [1608.5, 2374.5, 2382.8, 2586.7, 2600.2],
+        "description": "Fe II multiplet"
+    },
+    "AlIII": {
+        "ion": "AlIII",
+        "transitions": [1854.7, 1862.8],
+        "description": "Al III doublet (1855, 1863 Å)"
+    },
+    "CIII": {
+        "ion": "CIII",
+        "transitions": [977.0],
+        "description": "C III 977 Å"
+    },
+    "NV": {
+        "ion": "NV", 
+        "transitions": [1238.8, 1242.8],
+        "description": "N V doublet (1239, 1243 Å)"
+    },
+    "HI_Lya": {
         "ion": "HI",
-        "transitions": [1215.7]
+        "transitions": [1215.7],
+        "description": "Lyman-α (1216 Å)"
     },
-    "Lyman-β": {
+    "HI_Lyb": {
         "ion": "HI", 
-        "transitions": [1025.7]
+        "transitions": [1025.7],
+        "description": "Lyman-β (1026 Å)"
+    },
+    "Custom": {
+        "ion": "",
+        "transitions": [],
+        "description": "Custom ion/transitions"
     }
 }
 
-class ModelFunc:
-    def __init__(self, compiled_model, instrument_name):
-        self.compiled_model = compiled_model
-        self.instrument_name = instrument_name
-    
-    def __call__(self, theta, wave):
-        return self.compiled_model.model_flux(theta, wave, instrument=self.instrument_name)
-
-
-
-
 
 class SystemDialog(QDialog):
-    """Dialog for adding/editing ion systems with templates"""
+    """Dialog for adding/editing absorption systems"""
     
     def __init__(self, system_data=None, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Ion System Configuration")
+        self.setWindowTitle("Add/Edit Absorption System")
         self.setModal(True)
-        self.resize(450, 350)  # Slightly larger for template dropdown
+        self.resize(500, 400)
         
+        # Store data
         self.system_data = system_data or {}
+        
+        # Create UI
         self.setup_ui()
         
+        # Load existing data
+        if system_data:
+            self.load_system_data(system_data)
+    
     def setup_ui(self):
-        """Create dialog interface with ion templates"""
-        layout = QFormLayout()
-        self.setLayout(layout)
+        """Set up the dialog UI"""
+        layout = QVBoxLayout(self)
         
-        # NEW: Ion Template Dropdown
-        self.template_combo = QComboBox()
-        self.template_combo.setToolTip("Select predefined ion template or custom entry")
-        for template_name in ION_TEMPLATES.keys():
-            self.template_combo.addItem(template_name)
-        self.template_combo.setCurrentText("Custom (manual entry)")
-        layout.addRow("Ion Template:", self.template_combo)
+        # Basic system properties
+        form_layout = QFormLayout()
         
-        # Add a separator line
-        layout.addRow("", QLabel("─" * 40))
+        # Redshift
+        self.redshift_spin = QDoubleSpinBox()
+        self.redshift_spin.setDecimals(6)
+        self.redshift_spin.setRange(-0.1, 10.0)
+        self.redshift_spin.setValue(0.0)
+        form_layout.addRow("Redshift (z):", self.redshift_spin)
         
-        # Redshift (existing)
-        self.z_spin = QDoubleSpinBox()
-        self.z_spin.setRange(-0.1, 20.0)
-        self.z_spin.setDecimals(6)
-        self.z_spin.setValue(self.system_data.get('z', 0.0))
-        layout.addRow("Redshift (z):", self.z_spin)
+        # Ion template selection
+        self.ion_combo = QComboBox()
+        self.ion_combo.addItems(list(ION_TEMPLATES.keys()))
+        self.ion_combo.currentTextChanged.connect(self.on_ion_template_changed)
+        form_layout.addRow("Ion Template:", self.ion_combo)
         
-        # Ion name (existing, but will be populated by template)
-        self.ion_edit = QLineEdit()
-        self.ion_edit.setText(self.system_data.get('ion', ''))
-        self.ion_edit.setPlaceholderText("e.g., CIV, OI, SiII")
-        layout.addRow("Ion:", self.ion_edit)
+        # Custom ion name (for custom template)
+        self.custom_ion_edit = QLineEdit()
+        self.custom_ion_edit.setPlaceholderText("e.g., CII, SiIII")
+        form_layout.addRow("Custom Ion:", self.custom_ion_edit)
         
-        # Transitions (existing, but will be populated by template)
+        # Transitions
         self.transitions_edit = QLineEdit()
-        transitions = self.system_data.get('transitions', [])
-        if transitions:
-            self.transitions_edit.setText(', '.join(map(str, transitions)))
-        self.transitions_edit.setPlaceholderText("e.g., 1548.2, 1550.3")
-        layout.addRow("Transitions (Å):", self.transitions_edit)
+        self.transitions_edit.setPlaceholderText("e.g., 1548.2, 1550.8")
+        form_layout.addRow("Transitions (Å):", self.transitions_edit)
         
-        # Components (existing)
+        # Number of components
         self.components_spin = QSpinBox()
         self.components_spin.setRange(1, 10)
-        self.components_spin.setValue(self.system_data.get('components', 1))
-        layout.addRow("Components:", self.components_spin)
+        self.components_spin.setValue(1)
+        form_layout.addRow("Components:", self.components_spin)
         
-        # Buttons (existing)
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        layout.addRow(buttons)
+        layout.addLayout(form_layout)
         
-        # NEW: Connect template dropdown
-        self.template_combo.currentTextChanged.connect(self.on_template_changed)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        # Description text
+        self.description_label = QLabel()
+        self.description_label.setWordWrap(True)
+        self.description_label.setStyleSheet("QLabel { color: gray; font-style: italic; }")
+        layout.addWidget(self.description_label)
         
-        # If editing existing system, try to match template
-        if self.system_data:
-            self.match_existing_template()
+        # Update description initially
+        self.on_ion_template_changed(self.ion_combo.currentText())
+        
+        # Buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
     
-    def on_template_changed(self, template_name):
-        """Handle template selection change"""
+    def on_ion_template_changed(self, template_name):
+        """Handle ion template selection"""
         if template_name not in ION_TEMPLATES:
             return
             
         template = ION_TEMPLATES[template_name]
         
-        if template_name == "Custom (manual entry)":
-            # Clear fields for manual entry
-            if not self.system_data:  # Only clear if not editing existing
-                self.ion_edit.clear()
-                self.transitions_edit.clear()
+        # Update description
+        self.description_label.setText(template["description"])
+        
+        # Update fields
+        if template_name == "Custom":
+            self.custom_ion_edit.setEnabled(True)
+            self.transitions_edit.clear()
         else:
-            # Populate fields from template
-            self.ion_edit.setText(template["ion"])
+            self.custom_ion_edit.setEnabled(False)
+            self.custom_ion_edit.clear()
             
-            if template["transitions"]:
-                transitions_str = ', '.join(map(str, template["transitions"]))
-                self.transitions_edit.setText(transitions_str)
-            else:
-                self.transitions_edit.clear()
+            # Set transitions
+            transitions_str = ", ".join(f"{t:.1f}" for t in template["transitions"])
+            self.transitions_edit.setText(transitions_str)
     
-    def match_existing_template(self):
-        """Try to match existing system data to a template"""
-        if not self.system_data:
-            return
-            
-        existing_ion = self.system_data.get('ion', '').strip()
-        existing_transitions = set(self.system_data.get('transitions', []))
+    def load_system_data(self, data):
+        """Load existing system data into dialog"""
+        self.redshift_spin.setValue(data.get('redshift', 0.0))
+        self.components_spin.setValue(data.get('components', 1))
         
-        # Look for matching template
-        for template_name, template in ION_TEMPLATES.items():
-            if template_name == "Custom (manual entry)":
-                continue
-                
-            template_ion = template["ion"]
-            template_transitions = set(template["transitions"])
-            
-            # Check for exact match (ion name and transitions)
-            if (existing_ion.upper() == template_ion.upper() and 
-                existing_transitions == template_transitions):
-                self.template_combo.setCurrentText(template_name)
-                return
-                
-            # Check for partial match (ion name and subset of transitions)
-            if (existing_ion.upper() == template_ion.upper() and 
-                existing_transitions.issubset(template_transitions)):
-                self.template_combo.setCurrentText(template_name)
-                return
+        # Try to match ion template
+        ion_name = data.get('ion', '')
+        transitions = data.get('transitions', [])
         
-        # No match found, keep "Custom"
-        self.template_combo.setCurrentText("Custom (manual entry)")
+        matched_template = None
+        for template_name, template_data in ION_TEMPLATES.items():
+            if (template_data['ion'] == ion_name and 
+                set(template_data['transitions']) == set(transitions)):
+                matched_template = template_name
+                break
+        
+        if matched_template:
+            self.ion_combo.setCurrentText(matched_template)
+        else:
+            # Use custom
+            self.ion_combo.setCurrentText("Custom")
+            self.custom_ion_edit.setText(ion_name)
+            transitions_str = ", ".join(f"{t:.1f}" for t in transitions)
+            self.transitions_edit.setText(transitions_str)
     
     def get_system_data(self):
-        """Get system data from dialog (existing method, unchanged)"""
-        transitions_text = self.transitions_edit.text().strip()
-        transitions = []
+        """Get system data from dialog"""
+        template_name = self.ion_combo.currentText()
         
-        if transitions_text:
-            try:
-                transitions = [float(w.strip()) for w in transitions_text.split(',')]
-            except ValueError:
-                pass
+        if template_name == "Custom":
+            ion_name = self.custom_ion_edit.text().strip()
+        else:
+            ion_name = ION_TEMPLATES[template_name]["ion"]
+        
+        # Parse transitions
+        transitions_text = self.transitions_edit.text().strip()
+        try:
+            transitions = [float(x.strip()) for x in transitions_text.split(',') if x.strip()]
+        except ValueError:
+            transitions = []
         
         return {
-            'z': self.z_spin.value(),
-            'ion': self.ion_edit.text().strip(),
+            'redshift': self.redshift_spin.value(),
+            'ion': ion_name,
             'transitions': transitions,
-            'components': self.components_spin.value()
+            'components': self.components_spin.value(),
+            'template': template_name
         }
 
 
-
-class MasterThetaDialog(QDialog):
-    """Dialog for viewing and editing master theta parameters"""
+class ModelSetupTab(QWidget):
+    """Simplified model setup tab using FitConfiguration"""
     
-    def __init__(self, collection_result=None, parent=None):
+    # Signal emitted when model is ready
+    model_updated = pyqtSignal(dict, dict, dict)  # instrument_data, theta_dict, bounds_dict
+    
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.collection_result = collection_result
-        self.parent_tab = parent  # Store reference to ModelSetupTab
-
-        self.setWindowTitle("Master Theta Parameters")
-        self.setModal(True)
-        self.resize(800, 600)
+        
+        # Data storage
+        self.systems = []  # List of system dictionaries
+        self.configurations = {}  # From data tab: {name: {wave, flux, error, fwhm}}
+        self.current_config = None
+        self.compiled_models = {}
         
         self.setup_ui()
-        self.load_data()
-        
+    
     def setup_ui(self):
-        """Create dialog interface"""
-        layout = QVBoxLayout()
-        self.setLayout(layout)
+        """Set up the main UI"""
+        layout = QVBoxLayout(self)
         
-        # Summary info
-        summary_group = QGroupBox("Summary")
-        summary_layout = QVBoxLayout()
-        summary_group.setLayout(summary_layout)
-        layout.addWidget(summary_group)
+        # Main splitter
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter)
         
-        self.summary_label = QLabel()
-        summary_layout.addWidget(self.summary_label)
+        # Left panel: System management
+        left_panel = self.create_system_panel()
+        splitter.addWidget(left_panel)
         
-        # Parameter table
-        table_group = QGroupBox("Master Parameters")
-        table_layout = QVBoxLayout()
-        table_group.setLayout(table_layout)
-        layout.addWidget(table_group)
+        # Right panel: Configuration and compilation
+        right_panel = self.create_config_panel()
+        splitter.addWidget(right_panel)
         
-        self.table = QTableWidget()
-        table_layout.addWidget(self.table)
+        # Set splitter proportions
+        splitter.setSizes([400, 300])
+    
+    def create_system_panel(self):
+        """Create the absorption systems management panel"""
+        group = QGroupBox("Absorption Systems")
+        layout = QVBoxLayout(group)
         
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        # Systems table
+        self.systems_table = QTableWidget()
+        self.systems_table.setColumnCount(5)
+        self.systems_table.setHorizontalHeaderLabels([
+            "Redshift", "Ion", "Transitions", "Components", "Template"
+        ])
         
-    def load_data(self):
-        """Load parameter data into table"""
-        if self.collection_result is None:
-            # Empty case
-            self.summary_label.setText("No parameter collection result available")
-            self.table.setRowCount(0)
-            self.table.setColumnCount(7)
-            self.table.setHorizontalHeaderLabels(['Parameter', 'Type', 'System', 'Component', 'Value', 'Source', 'Instruments'])
-            return
-        
-        # Update summary
-        n_systems = len(self.collection_result.master_systems)
-        n_params = len(self.collection_result.master_theta)
-        n_instruments = len(self.collection_result.instrument_mappings)
-        
-        summary_text = f"Systems: {n_systems}, Parameters: {n_params}, Instruments: {n_instruments}\n"
-        summary_text += f"Parameter structure: [N×{n_params//3}, b×{n_params//3}, v×{n_params//3}]"
-        self.summary_label.setText(summary_text)
-        
-        # Get parameter info table
-        manager = MultiInstrumentParameterManager()
-        df = manager.get_parameter_info_table(self.collection_result)
-        
-        # Set up table
-        self.table.setRowCount(len(df))
-        self.table.setColumnCount(len(df.columns))
-        self.table.setHorizontalHeaderLabels(df.columns.tolist())
-        
-        # Populate table
-        for i, row in df.iterrows():
-            for j, col in enumerate(df.columns):
-                if col == 'Value':
-                    # Make value column editable
-                    item = QTableWidgetItem(f"{row[col]:.3f}")
-                    item.setData(Qt.UserRole, row[col])  # Store original value
-                else:
-                    item = QTableWidgetItem(str(row[col]))
-                    if col != 'Value':
-                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)  # Make non-editable
-                
-                self.table.setItem(i, j, item)
+        # Make table read-only
+        self.systems_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.systems_table.setSelectionBehavior(QTableWidget.SelectRows)
         
         # Resize columns
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)  # Parameter name
-
-    def accept(self):
-        """Handle OK button - update master theta and re-emit"""
-        if self.parent_tab and hasattr(self.parent_tab, 'current_collection_result'):
-            updated_theta = self.get_updated_theta()
-            
-            # Update the collection result
-            self.parent_tab.current_collection_result = self.parent_tab.param_manager.update_master_theta(
-                self.parent_tab.current_collection_result, 
-                updated_theta
-            )
-            
-            # Re-emit the model signal
-            self.parent_tab.recompile_and_emit()
-            
-        super().accept()
-
+        header = self.systems_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         
-    def get_updated_theta(self):
-        """Get updated theta array from table"""
-        if self.collection_result is None:
-            return np.array([])
+        layout.addWidget(self.systems_table)
         
-        # Get the value column index
-        value_col = None
-        for i in range(self.table.columnCount()):
-            if self.table.horizontalHeaderItem(i).text() == 'Value':
-                value_col = i
-                break
-        
-        if value_col is None:
-            return self.collection_result.master_theta.copy()
-        
-        # Extract values from table
-        updated_theta = np.zeros_like(self.collection_result.master_theta)
-        
-        for i in range(self.table.rowCount()):
-            item = self.table.item(i, value_col)
-            try:
-                updated_theta[i] = float(item.text())
-            except (ValueError, TypeError):
-                # Use original value if parsing fails
-                updated_theta[i] = item.data(Qt.UserRole)
-        
-        return updated_theta
-
-
-class ModelSetupTab(QWidget):
-    """Clean tab for setting up absorption line models with configurations"""
-    
-    model_updated = pyqtSignal(dict, dict, dict)  # (instrument_data, theta_dict, bounds)
-    
-    def __init__(self, main_window):
-        super().__init__()
-        self.main_window = main_window
-        self.configurations = {}  # From Tab 1
-        self.config_systems = {}  # Dict: config_name -> list of system dicts
-        self.config_parameters = {}  # Dict: (config_name, system_id) -> DataFrame
-        self.current_config = None
-        self.current_system_id = None
-        
-        # Parameter manager and results
-        self.param_manager = MultiInstrumentParameterManager()
-        self.current_collection_result = None
-        
-        self.setup_ui()
-        self.setup_connections()
-        
-    def setup_ui(self):
-        """Create the model setup interface"""
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-        
-        # Main splitter: configurations | systems | parameters
-        main_splitter = QSplitter(Qt.Horizontal)
-        layout.addWidget(main_splitter)
-        
-        self.setup_config_panel(main_splitter)
-        self.setup_systems_panel(main_splitter)
-        self.setup_parameters_panel(main_splitter)
-        
-        main_splitter.setSizes([250, 300, 450])
-        
-        # Bottom controls
-        self.setup_bottom_controls(layout)
-        
-    def setup_config_panel(self, parent):
-        """Create configuration selection panel"""
-        config_widget = QWidget()
-        config_layout = QVBoxLayout()
-        config_widget.setLayout(config_layout)
-        parent.addWidget(config_widget)
-        
-        # Configuration group
-        config_group = QGroupBox("Available Configurations")
-        config_group_layout = QVBoxLayout()
-        config_group.setLayout(config_group_layout)
-        config_layout.addWidget(config_group)
-        
-        # Configuration list
-        self.config_tree = QTreeWidget()
-        self.config_tree.setHeaderLabels(['Configuration', 'Details'])
-        self.config_tree.setColumnWidth(0, 120)
-        config_group_layout.addWidget(self.config_tree)
-        
-        # Configuration info
-        self.config_info = QTextEdit()
-        self.config_info.setMaximumHeight(100)
-        self.config_info.setReadOnly(True)
-        config_group_layout.addWidget(self.config_info)
-        
-    def setup_systems_panel(self, parent):
-        """Create systems management panel"""
-        systems_widget = QWidget()
-        systems_layout = QVBoxLayout()
-        systems_widget.setLayout(systems_layout)
-        parent.addWidget(systems_widget)
-        
-        # Current configuration selector
-        current_config_layout = QHBoxLayout()
-        systems_layout.addLayout(current_config_layout)
-        
-        current_config_layout.addWidget(QLabel("Current Config:"))
-        self.current_config_combo = QComboBox()
-        current_config_layout.addWidget(self.current_config_combo)
-        
-        # Systems group
-        systems_group = QGroupBox("Ion Systems")
-        systems_group_layout = QVBoxLayout()
-        systems_group.setLayout(systems_group_layout)
-        systems_layout.addWidget(systems_group)
-        
-        # Systems list
-        self.systems_tree = QTreeWidget()
-        self.systems_tree.setHeaderLabels(['System', 'Details'])
-        self.systems_tree.setColumnWidth(0, 120)
-        systems_group_layout.addWidget(self.systems_tree)
-        
-        # System controls
-        sys_controls_layout = QHBoxLayout()
-        systems_group_layout.addLayout(sys_controls_layout)
+        # Buttons
+        button_layout = QHBoxLayout()
         
         self.add_system_btn = QPushButton("Add System")
-        self.edit_system_btn = QPushButton("Edit")
-        self.delete_system_btn = QPushButton("Delete")
-        
-        sys_controls_layout.addWidget(self.add_system_btn)
-        sys_controls_layout.addWidget(self.edit_system_btn)
-        sys_controls_layout.addWidget(self.delete_system_btn)
-        
-    def setup_parameters_panel(self, parent):
-        """Create parameters panel"""
-        params_widget = QWidget()
-        params_layout = QVBoxLayout()
-        params_widget.setLayout(params_layout)
-        parent.addWidget(params_widget)
-        
-        # System selector
-        selector_layout = QHBoxLayout()
-        params_layout.addLayout(selector_layout)
-        
-        selector_layout.addWidget(QLabel("Current System:"))
-        self.system_combo = QComboBox()
-        selector_layout.addWidget(self.system_combo)
-        selector_layout.addStretch()
-        
-        # Parameter input methods
-        methods_layout = QHBoxLayout()
-        params_layout.addLayout(methods_layout)
-        
-        self.interactive_btn = QPushButton("Interactive Parameters")
-        self.manual_btn = QPushButton("Manual Entry")
-        self.clear_params_btn = QPushButton("Clear")
-        
-        methods_layout.addWidget(self.interactive_btn)
-        methods_layout.addWidget(self.manual_btn)
-        methods_layout.addWidget(self.clear_params_btn)
-        methods_layout.addStretch()
-        
-        # Parameter table
-        params_group = QGroupBox("Parameters")
-        params_group_layout = QVBoxLayout()
-        params_group.setLayout(params_group_layout)
-        params_layout.addWidget(params_group)
-        
-        self.params_table = QTableWidget()
-        self.params_table.setColumnCount(4)
-        self.params_table.setHorizontalHeaderLabels(['Component', 'N (log cm⁻²)', 'b (km/s)', 'v (km/s)'])
-        
-        header = self.params_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        header.setSectionResizeMode(3, QHeaderView.Stretch)
-        
-        params_group_layout.addWidget(self.params_table)
-        
-        # Parameter controls
-        param_controls_layout = QHBoxLayout()
-        params_group_layout.addLayout(param_controls_layout)
-        
-        self.add_component_btn = QPushButton("Add Component")
-        self.delete_component_btn = QPushButton("Delete Component")
-        
-        param_controls_layout.addWidget(self.add_component_btn)
-        param_controls_layout.addWidget(self.delete_component_btn)
-        param_controls_layout.addStretch()
-        
-        # Status display
-        self.status_display = QTextEdit()
-        self.status_display.setMaximumHeight(100)
-        self.status_display.setReadOnly(True)
-        params_layout.addWidget(self.status_display)
-        
-    def setup_bottom_controls(self, parent_layout):
-        """Create bottom control buttons"""
-        controls_layout = QHBoxLayout()
-        parent_layout.addLayout(controls_layout)
-        
-        controls_layout.addStretch()
-        
-        # Master theta button - always visible
-        self.show_master_theta_btn = QPushButton("Master Theta")
-        controls_layout.addWidget(self.show_master_theta_btn)
-        
-        self.compile_btn = QPushButton("Compile Models")
-        controls_layout.addWidget(self.compile_btn)
-        
-    def setup_connections(self):
-        """Connect signals and slots"""
-        # Configuration selection
-        self.config_tree.itemSelectionChanged.connect(self.on_config_tree_selection_changed)
-        self.current_config_combo.currentTextChanged.connect(self.on_current_config_changed)
-        
-        # System management
         self.add_system_btn.clicked.connect(self.add_system)
-        self.edit_system_btn.clicked.connect(self.edit_system)
-        self.delete_system_btn.clicked.connect(self.delete_system)
-        self.systems_tree.itemSelectionChanged.connect(self.on_system_selection_changed)
+        button_layout.addWidget(self.add_system_btn)
         
-        # Parameter management
-        self.system_combo.currentTextChanged.connect(self.on_system_changed)
-        self.interactive_btn.clicked.connect(self.launch_interactive_params)
-        self.manual_btn.clicked.connect(self.setup_manual_params)
-        self.clear_params_btn.clicked.connect(self.clear_params)
-        self.add_component_btn.clicked.connect(self.add_component)
-        self.delete_component_btn.clicked.connect(self.delete_component)
-        self.params_table.itemChanged.connect(self.on_parameter_table_edited)
-
+        self.edit_system_btn = QPushButton("Edit System")
+        self.edit_system_btn.clicked.connect(self.edit_system)
+        button_layout.addWidget(self.edit_system_btn)
+        
+        self.remove_system_btn = QPushButton("Remove System")
+        self.remove_system_btn.clicked.connect(self.remove_system)
+        button_layout.addWidget(self.remove_system_btn)
+        
+        button_layout.addStretch()
+        layout.addLayout(button_layout)
+        
+        return group
+    
+    def create_config_panel(self):
+        """Create the configuration and compilation panel"""
+        group = QGroupBox("Model Configuration & Compilation")
+        layout = QVBoxLayout(group)
+        
+        # FitConfiguration preview
+        config_group = QGroupBox("Current Configuration")
+        config_layout = QVBoxLayout(config_group)
+        
+        self.config_preview = QTextEdit()
+        self.config_preview.setMaximumHeight(150)
+        self.config_preview.setFont(QFont("monospace"))
+        self.config_preview.setReadOnly(True)
+        config_layout.addWidget(self.config_preview)
+        
+        layout.addWidget(config_group)
+        
+        # Instrument FWHM settings
+        fwhm_group = QGroupBox("Instrument FWHM Settings")
+        fwhm_layout = QVBoxLayout(fwhm_group)
+        
+        self.fwhm_table = QTableWidget()
+        self.fwhm_table.setColumnCount(2)
+        self.fwhm_table.setHorizontalHeaderLabels(["Instrument", "FWHM"])
+        self.fwhm_table.horizontalHeader().setStretchLastSection(True)
+        fwhm_layout.addWidget(self.fwhm_table)
+        
+        layout.addWidget(fwhm_group)
         
         # Compilation
+        compile_group = QGroupBox("Model Compilation")
+        compile_layout = QVBoxLayout(compile_group)
+        
+        self.compile_btn = QPushButton("Compile Models")
         self.compile_btn.clicked.connect(self.compile_models)
-        self.show_master_theta_btn.clicked.connect(self.show_master_theta_dialog)
+        self.compile_btn.setStyleSheet("QPushButton { font-weight: bold; }")
+        compile_layout.addWidget(self.compile_btn)
         
-    def set_configurations(self, configurations):
-        """Set configurations from Tab 1"""
-        self.configurations = configurations
+        # Status
+        self.status_text = QTextEdit()
+        self.status_text.setMaximumHeight(100)
+        self.status_text.setFont(QFont("monospace", 9))
+        self.status_text.setReadOnly(True)
+        compile_layout.addWidget(self.status_text)
         
-        # Initialize systems for new configurations
-        for config_name in configurations:
-            if config_name not in self.config_systems:
-                self.config_systems[config_name] = []
-                
-        self.update_config_display()
-        self.update_status()
+        layout.addWidget(compile_group)
         
-    def update_config_display(self):
-        """Update configuration tree display"""
-        self.config_tree.clear()
-        self.current_config_combo.clear()
-        
-        for config_name, config_data in self.configurations.items():
-            if config_data['wave'] is not None:  # Only show configs with data
-                item = QTreeWidgetItem()
-                item.setText(0, config_name)
-                
-                wave = config_data['wave']
-                n_systems = len(self.config_systems.get(config_name, []))
-                item.setText(1, f"FWHM={config_data['fwhm']}, {n_systems} systems")
-                item.setData(0, Qt.UserRole, config_name)
-                
-                self.config_tree.addTopLevelItem(item)
-                self.current_config_combo.addItem(config_name)
-
-    def on_parameter_table_edited(self, item):
-        """Handle parameter table cell edits"""
-        if not self.current_config or not self.current_system_id:
-            return
-            
-        # Update the stored DataFrame
-        row = item.row()
-        col = item.column()
-        
-        key = (self.current_config, self.current_system_id)
-        if key not in self.config_parameters:
-            return
-            
-        df = self.config_parameters[key]
-        if row >= len(df):
-            return
-            
-        # Map column to DataFrame column
-        col_names = ['Component', 'N', 'b', 'v']
-        if col < len(col_names):
-            try:
-                if col == 0:  # Component (string)
-                    df.iloc[row, col] = str(item.text())
-                else:  # N, b, v (float)
-                    df.iloc[row, col] = float(item.text())
-                    
-                # If we have a compiled model, re-emit the signal
-                if self.current_collection_result is not None:
-                    self.recompile_and_emit()
-                else:
-                    self.update_status("Parameter updated (compile models to propagate changes)")
-        
-                    
-            except ValueError:
-                # Invalid input - revert to original value
-                self.load_parameter_table()
-                self.update_status("Invalid parameter value - reverted to original")
-
-
-    def recompile_and_emit(self):
-        """Recompile and emit model_updated signal with current parameters"""
-        if self.current_collection_result is None:
-            return
-            
-        try:
-            # Rebuild instrument data with updated parameters
-            instrument_data = self.build_instrument_data(self.current_collection_result)
-            
-            # Rebuild bounds
-            n_params = len(self.current_collection_result.master_theta)
-            n_comp = n_params // 3
-            
-            nguess = self.current_collection_result.master_theta[:n_comp].tolist()
-            bguess = self.current_collection_result.master_theta[n_comp:2*n_comp].tolist()
-            vguess = self.current_collection_result.master_theta[2*n_comp:3*n_comp].tolist()
-            
-            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
-            
-            # Re-emit signal
-            theta_dict = {'theta': self.current_collection_result.master_theta}
-            self.model_updated.emit(instrument_data, theta_dict, bounds)
-            
-            self.update_status("Parameters updated - changes propagated to fitting tab")
-            
-        except Exception as e:
-            self.update_status(f"Error updating parameters: {str(e)}")
-                
-    def on_config_tree_selection_changed(self):
-        """Handle configuration tree selection change"""
-        current_item = self.config_tree.currentItem()
-        
-        if current_item:
-            config_name = current_item.data(0, Qt.UserRole)
-            config_data = self.configurations[config_name]
-            
-            info_text = f"Configuration: {config_name}\n"
-            info_text += f"FWHM: {config_data['fwhm']} pixels\n"
-            info_text += f"Data file: {config_data['filename']}\n"
-            
-            if config_data['wave'] is not None:
-                wave = config_data['wave']
-                info_text += f"λ range: {wave.min():.1f} - {wave.max():.1f} Å\n"
-                info_text += f"Data points: {len(wave)}"
-                
-            self.config_info.setText(info_text)
-        else:
-            self.config_info.clear()
-            
-    def on_current_config_changed(self, config_name):
-        """Handle current configuration change"""
-        self.current_config = config_name
-        self.update_systems_display()
-        self.update_system_combo()
-        
+        return group
+    
     def add_system(self):
-        """Add new ion system to current configuration"""
-        if not self.current_config:
-            QMessageBox.warning(self, "No Configuration", "Please select a configuration first")
-            return
-            
+        """Add a new absorption system"""
         dialog = SystemDialog(parent=self)
         if dialog.exec_() == QDialog.Accepted:
             system_data = dialog.get_system_data()
             
-            if not system_data['transitions']:
-                QMessageBox.warning(self, "Incomplete Data", 
-                                  "Please specify at least one transition wavelength")
+            # Validate
+            if not system_data['ion'] or not system_data['transitions']:
+                QMessageBox.warning(self, "Invalid System", 
+                                  "Please specify ion name and transitions.")
                 return
-                
-            if not system_data['ion']:
-                system_data['ion'] = "Unknown"
-                
-            # Generate unique system ID
-            system_id = f"{system_data['ion']}_z{system_data['z']:.6f}"
-            system_data['id'] = system_id
             
-            # Add to current configuration
-            if self.current_config not in self.config_systems:
-                self.config_systems[self.current_config] = []
-                
-            self.config_systems[self.current_config].append(system_data)
-            
-            # Initialize empty parameter table
-            key = (self.current_config, system_id)
-            self.config_parameters[key] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
-            
-            self.update_systems_display()
-            self.update_system_combo()
-            self.update_status()
-            
+            self.systems.append(system_data)
+            self.update_systems_table()
+            self.update_config_preview()
+    
     def edit_system(self):
-        """Edit selected system"""
-        current_item = self.systems_tree.currentItem()
-        if not current_item:
+        """Edit selected absorption system"""
+        row = self.systems_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "No Selection", "Please select a system to edit.")
             return
-            
-        system_id = current_item.data(0, Qt.UserRole)
-        systems = self.config_systems.get(self.current_config, [])
-        system_data = next((s for s in systems if s['id'] == system_id), None)
         
-        if not system_data:
-            return
-            
+        system_data = self.systems[row]
         dialog = SystemDialog(system_data, parent=self)
         if dialog.exec_() == QDialog.Accepted:
-            new_system_data = dialog.get_system_data()
+            updated_data = dialog.get_system_data()
             
-            if not new_system_data['transitions']:
-                QMessageBox.warning(self, "Incomplete Data", 
-                                  "Please specify at least one transition wavelength")
+            # Validate
+            if not updated_data['ion'] or not updated_data['transitions']:
+                QMessageBox.warning(self, "Invalid System", 
+                                  "Please specify ion name and transitions.")
                 return
-                
-            if not new_system_data['ion']:
-                new_system_data['ion'] = "Unknown"
-                
-            # Update system data
-            new_system_id = f"{new_system_data['ion']}_z{new_system_data['z']:.6f}"
-            new_system_data['id'] = new_system_id
             
-            # Handle ID change
-            if new_system_id != system_id:
-                old_key = (self.current_config, system_id)
-                new_key = (self.current_config, new_system_id)
-                if old_key in self.config_parameters:
-                    self.config_parameters[new_key] = self.config_parameters.pop(old_key)
-                    
-            system_data.update(new_system_data)
-            
-            self.update_systems_display()
-            self.update_system_combo()
-            
-    def delete_system(self):
-        """Delete selected system"""
-        current_item = self.systems_tree.currentItem()
-        if not current_item:
+            self.systems[row] = updated_data
+            self.update_systems_table()
+            self.update_config_preview()
+    
+    def remove_system(self):
+        """Remove selected absorption system"""
+        row = self.systems_table.currentRow()
+        if row < 0:
+            QMessageBox.information(self, "No Selection", "Please select a system to remove.")
             return
-            
-        system_id = current_item.data(0, Qt.UserRole)
         
-        reply = QMessageBox.question(self, "Confirm Delete",
-                                   f"Delete system '{system_id}'?",
+        reply = QMessageBox.question(self, "Confirm Removal", 
+                                   "Remove selected absorption system?",
                                    QMessageBox.Yes | QMessageBox.No)
         
         if reply == QMessageBox.Yes:
-            systems = self.config_systems.get(self.current_config, [])
-            self.config_systems[self.current_config] = [s for s in systems if s['id'] != system_id]
-            
-            # Remove parameter data
-            key = (self.current_config, system_id)
-            if key in self.config_parameters:
-                del self.config_parameters[key]
-                
-            self.update_systems_display()
-            self.update_system_combo()
-            
-    def update_systems_display(self):
-        """Update systems tree display"""
-        self.systems_tree.clear()
+            del self.systems[row]
+            self.update_systems_table()
+            self.update_config_preview()
+    
+    def update_systems_table(self):
+        """Update the systems table display"""
+        self.systems_table.setRowCount(len(self.systems))
         
-        if not self.current_config:
+        for row, system in enumerate(self.systems):
+            # Redshift
+            self.systems_table.setItem(row, 0, QTableWidgetItem(f"{system['redshift']:.6f}"))
+            
+            # Ion
+            self.systems_table.setItem(row, 1, QTableWidgetItem(system['ion']))
+            
+            # Transitions
+            trans_str = ", ".join(f"{t:.1f}" for t in system['transitions'])
+            self.systems_table.setItem(row, 2, QTableWidgetItem(trans_str))
+            
+            # Components
+            self.systems_table.setItem(row, 3, QTableWidgetItem(str(system['components'])))
+            
+            # Template
+            self.systems_table.setItem(row, 4, QTableWidgetItem(system.get('template', 'Custom')))
+    
+    def update_config_preview(self):
+        """Update the FitConfiguration preview"""
+        if not self.systems:
+            self.config_preview.setText("No absorption systems defined.\nUse 'Add System' to get started.")
             return
-            
-        systems = self.config_systems.get(self.current_config, [])
         
-        for system in systems:
-            item = QTreeWidgetItem()
-            item.setText(0, f"{system['ion']} z={system['z']:.6f}")
-            
-            # Show actual component count from parameter table
-            key = (self.current_config, system['id'])
-            actual_components = 0
-            if key in self.config_parameters:
-                actual_components = len(self.config_parameters[key])
-            
-            transitions_str = ', '.join(f"{t:.1f}" for t in system['transitions'])
-            item.setText(1, f"{actual_components} comp, [{transitions_str}] Å")
-            item.setData(0, Qt.UserRole, system['id'])
-            
-            self.systems_tree.addTopLevelItem(item)
-
-    def update_system_combo(self):
-        """Update system combo box"""
-        self.system_combo.clear()
-        
-        if not self.current_config:
-            return
-            
-        systems = self.config_systems.get(self.current_config, [])
-        
-        for system in systems:
-            self.system_combo.addItem(f"{system['ion']} z={system['z']:.6f}", system['id'])            
-
-    def on_system_selection_changed(self):
-        """Handle system selection change"""
-        current_item = self.systems_tree.currentItem()
-        has_selection = current_item is not None
-        
-        self.edit_system_btn.setEnabled(has_selection)
-        self.delete_system_btn.setEnabled(has_selection)
-        
-    def on_system_changed(self, text):
-        """Handle system combo change"""
-        if text:
-            system_id = self.system_combo.currentData()
-            self.current_system_id = system_id
-            self.load_parameter_table()
-            
-    def launch_interactive_params(self):
-        """Launch interactive parameter estimation"""
-        if not self.current_config or not self.current_system_id:
-            QMessageBox.warning(self, "No Selection", 
-                              "Please select configuration and system first")
-            return
-            
-        # Get system data
-        systems = self.config_systems.get(self.current_config, [])
-        system_data = next((s for s in systems if s['id'] == self.current_system_id), None)
-        
-        if not system_data:
-            return
-            
-        # Get spectrum data
-        config_data = self.configurations[self.current_config]
-        spectrum_data = {
-            'wave': config_data['wave'],
-            'flux': config_data['flux'],
-            'error': config_data['error']
-        }
-        
-        # Launch interactive dialog
-        dialog = InteractiveParameterDialog(system_data, spectrum_data, self)
-        dialog.parameters_ready.connect(self.on_interactive_parameters_ready)
-        dialog.exec_()
-        
-    def on_interactive_parameters_ready(self, df):
-        """Handle interactive parameters result"""
-        if self.current_config and self.current_system_id:
-            key = (self.current_config, self.current_system_id)
-            self.config_parameters[key] = df.copy()
-            self.load_parameter_table()
-            self.update_systems_display()  # Update component count display
-            self.update_status()
-            
-    def setup_manual_params(self):
-        """Set up manual parameter entry"""
-        if not self.current_config or not self.current_system_id:
-            QMessageBox.warning(self, "No Selection", 
-                              "Please select configuration and system first")
-            return
-            
-        # Add default component if table is empty
-        key = (self.current_config, self.current_system_id)
-        if key not in self.config_parameters or self.config_parameters[key].empty:
-            self.add_component()
-            
-    def clear_params(self):
-        """Clear parameters for current system"""
-        if self.current_config and self.current_system_id:
-            key = (self.current_config, self.current_system_id)
-            self.config_parameters[key] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
-            self.load_parameter_table()
-            self.update_systems_display()
-            
-    def add_component(self):
-        """Add new component to current system"""
-        if not self.current_config or not self.current_system_id:
-            return
-            
-        key = (self.current_config, self.current_system_id)
-        if key not in self.config_parameters:
-            self.config_parameters[key] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
-            
-        df = self.config_parameters[key]
-        new_component = len(df) + 1
-        
-        new_row = pd.DataFrame({
-            'Component': [new_component],
-            'N': [13.5],  # Default log column density
-            'b': [25.0],  # Default b parameter
-            'v': [0.0]    # Default velocity
-        })
-        
-        self.config_parameters[key] = pd.concat([df, new_row], ignore_index=True)
-        self.load_parameter_table()
-        self.update_systems_display()
-        
-    def delete_component(self):
-        """Delete last component"""
-        if not self.current_config or not self.current_system_id:
-            return
-            
-        key = (self.current_config, self.current_system_id)
-        if key not in self.config_parameters:
-            return
-            
-        df = self.config_parameters[key]
-        if len(df) > 0:
-            self.config_parameters[key] = df.iloc[:-1].reset_index(drop=True)
-            self.load_parameter_table()
-            self.update_systems_display()
-            
-    def load_parameter_table(self):
-        """Load parameter table for current system"""
-        self.params_table.setRowCount(0)
-        
-        if not self.current_config or not self.current_system_id:
-            return
-            
-        key = (self.current_config, self.current_system_id)
-        if key not in self.config_parameters:
-            return
-            
-        df = self.config_parameters[key]
-        
-        self.params_table.setRowCount(len(df))
-        
-        for i, row in df.iterrows():
-            self.params_table.setItem(i, 0, QTableWidgetItem(str(row['Component'])))
-            self.params_table.setItem(i, 1, QTableWidgetItem(f"{row['N']:.2f}"))
-            self.params_table.setItem(i, 2, QTableWidgetItem(f"{row['b']:.1f}"))
-            self.params_table.setItem(i, 3, QTableWidgetItem(f"{row['v']:.1f}"))
-            
-    def compile_models(self):
-        """Clean compilation using parameter manager"""
-        if not self.configurations:
-            QMessageBox.warning(self, "No Configurations", "No configurations available")
-            return
-            
         try:
-            # Simple delegation to parameter manager
-            self.update_status("Starting compilation...")
+            # Create temporary config to show structure
+            config = FitConfiguration()
             
-            collection_result = self.param_manager.collect_and_merge_parameters(
-                self.config_systems,
-                self.config_parameters,
-                self.configurations
-            )
+            for system in self.systems:
+                config.add_system(
+                    z=system['redshift'],
+                    ion=system['ion'],
+                    transitions=system['transitions'],
+                    components=system['components']
+                )
             
-            # Store result
-            self.current_collection_result = collection_result
+            # Show summary
+            preview_text = config.summary()
             
-            # Show collection log
-            self.update_status('\n'.join(collection_result.collection_log))
+            # Add parameter count info
+            total_components = sum(s['components'] for s in self.systems)
+            total_params = total_components * 3  # N, b, v for each component
             
-            # Build instrument data
-            instrument_data = self.build_instrument_data(collection_result)
+            preview_text += f"\n\nTotal Components: {total_components}"
+            preview_text += f"\nTotal Parameters: {total_params} (N, b, v)"
             
-            # Create bounds
-            n_params = len(collection_result.master_theta)
-            n_comp = n_params // 3
-            
-            nguess = collection_result.master_theta[:n_comp].tolist()
-            bguess = collection_result.master_theta[n_comp:2*n_comp].tolist()
-            vguess = collection_result.master_theta[2*n_comp:3*n_comp].tolist()
-            
-            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
-            
-            # Emit to fitting tab
-            theta_dict = {'theta': collection_result.master_theta, 'length': len(collection_result.master_theta)}
-            bounds_dict = {'lb': lb, 'ub': ub}
-            self.model_updated.emit(instrument_data, theta_dict, bounds_dict)
-            
-            QMessageBox.information(self, "Success", 
-                                  f"Models compiled successfully!\n"
-                                  f"Configurations: {len(instrument_data)}\n"
-                                  f"Total parameters: {len(collection_result.master_theta)}\n"
-                                  f"Unique systems: {len(collection_result.master_systems)}")
+            self.config_preview.setText(preview_text)
             
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Compilation Error", f"Failed to compile models:\n{str(e)}")
-            self.update_status(f"Compilation failed: {str(e)}")
+            self.config_preview.setText(f"Configuration Error:\n{str(e)}")
     
-    def build_instrument_data(self, collection_result):
-        """Build instrument data from collection result"""
-        instrument_data = {}
+    def update_configurations(self, configurations):
+        """Update available instrument configurations from data tab"""
+        self.configurations = configurations
+        self.update_fwhm_table()
+        self.update_status("Configurations updated from data tab")
+    
+    def update_fwhm_table(self):
+        """Update the FWHM settings table"""
+        self.fwhm_table.setRowCount(len(self.configurations))
         
-        # Create instrument configs for VoigtModel compilation
-        instrument_configs = {}
-        
-        for config_name, config_data in self.configurations.items():
-            if config_data['wave'] is None:
-                continue
-                
-            # Create FitConfiguration using parameter manager's master config
-            # We'll use the master config and let VoigtModel handle the details
-            instrument_configs[config_name] = collection_result.master_config
-        
-        if not instrument_configs:
-            raise ValueError("No configurations with data found")
+        for row, (name, config_data) in enumerate(self.configurations.items()):
+            # Instrument name
+            name_item = QTableWidgetItem(name)
+            name_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.fwhm_table.setItem(row, 0, name_item)
             
-        # Create VoigtModel and compile
-        first_config = list(instrument_configs.values())[0]
-        voigt_model = VoigtModel(first_config)
+            # FWHM (editable)
+            current_fwhm = config_data.get('fwhm', 6.5)
+            fwhm_item = QTableWidgetItem(f"{current_fwhm:.1f}")
+            self.fwhm_table.setItem(row, 1, fwhm_item)
+    
+    def compile_models(self):
+        """Compile VoigtModel objects for all instruments"""
+        if not self.systems:
+            QMessageBox.warning(self, "No Systems", "Please add absorption systems first.")
+            return
         
-        # Store for other uses
-        self.voigt_model = voigt_model
+        if not self.configurations:
+            QMessageBox.warning(self, "No Data", "Please load spectroscopic data first.")
+            return
         
-        is_multi = len(instrument_configs) > 1
-        
-        if is_multi:
-            # For multi-instrument, we need to create separate configs with correct FWHM
-            fwhm_configs = {}
-            for config_name, config_data in self.configurations.items():
+        try:
+            self.update_status("Starting model compilation...")
+            
+            # Create FitConfiguration
+            config = FitConfiguration()
+            
+            for system in self.systems:
+                config.add_system(
+                    z=system['redshift'],
+                    ion=system['ion'],
+                    transitions=system['transitions'],
+                    components=system['components']
+                )
+            
+            self.update_status("FitConfiguration created successfully")
+            
+            # Get updated FWHM values from table
+            fwhm_values = {}
+            for row in range(self.fwhm_table.rowCount()):
+                name = self.fwhm_table.item(row, 0).text()
+                fwhm_text = self.fwhm_table.item(row, 1).text()
+                try:
+                    fwhm_values[name] = float(fwhm_text)
+                except ValueError:
+                    fwhm_values[name] = 6.5  # Default
+            
+            # Create VoigtModel objects for each instrument
+            voigt_models = {}
+            for name, config_data in self.configurations.items():
                 if config_data['wave'] is None:
                     continue
                 
-                # Create config with correct FWHM
-                fit_config = FitConfiguration()
-                fit_config.instrumental_params = {'FWHM': str(config_data['fwhm'])}
+                fwhm = fwhm_values.get(name, 6.5)
+                voigt_model = VoigtModel(config, FWHM=str(fwhm))
+                voigt_models[name] = voigt_model
                 
-                # Add systems from master config
-                for system in collection_result.master_systems:
-                    fit_config.add_system(
-                        z=system.z,
-                        ion=system.ion,
-                        transitions=system.transitions,
-                        components=system.components
-                    )
-                
-                fwhm_configs[config_name] = fit_config
+                self.update_status(f"Created VoigtModel for {name} (FWHM={fwhm})")
             
-            compiled_model = voigt_model.compile(instrument_configs=fwhm_configs, verbose=True)
-        else:
-            compiled_model = voigt_model.compile(verbose=True)
-        
-        # Store compiled model
-        self.compiled_model = compiled_model
-        
-        # Build instrument data dictionary
-        for config_name, config_data in self.configurations.items():
-            if config_data['wave'] is None:
-                continue
-                
-            if is_multi:
-                model_func = ModelFunc(compiled_model, config_name)
-            else:
-                model_func = compiled_model.model_flux
+            # Build instrument_data dictionary
+            instrument_data = {}
+            for name, voigt_model in voigt_models.items():
+                config_data = self.configurations[name]
+                instrument_data[name] = {
+                    'model': voigt_model,
+                    'wave': config_data['wave'],
+                    'flux': config_data['flux'],
+                    'error': config_data['error']
+                }
             
-            instrument_data[config_name] = {
-                'model': model_func,
-                'wave': config_data['wave'],
-                'flux': config_data['flux'],
-                'error': config_data['error']
-            }
-        
-        print(f"Built instrument data:")
-        for name, data in instrument_data.items():
-            wave = data['wave']
-            print(f"  {name}: {len(wave)} points, {wave.min():.1f}-{wave.max():.1f} Å")
+            self.update_status(f"Built instrument_data for {len(instrument_data)} instruments")
             
-        return instrument_data
+            # Create initial parameter guess and bounds
+            total_components = sum(s['components'] for s in self.systems)
+            
+            # Simple initial guesses
+            nguess = [14.0] * total_components  # log column density
+            bguess = [20.0] * total_components  # Doppler parameter
+            vguess = [0.0] * total_components   # velocity offset
+            
+            # Use rbvfit bounds utility
+            bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
+            
+            # Prepare output dictionaries
+            theta = np.concatenate([nguess, bguess, vguess])
+            theta_dict = {'theta': theta, 'length': len(theta)}
+            bounds_dict = {'lb': lb, 'ub': ub}
+            
+            # Store compiled models
+            self.compiled_models = voigt_models
+            
+            # Emit signal to fitting tab
+            self.model_updated.emit(instrument_data, theta_dict, bounds_dict)
+            
+            # Success message
+            success_msg = (
+                f"✓ Models compiled successfully!\n"
+                f"  Instruments: {len(instrument_data)}\n"
+                f"  Systems: {len(self.systems)}\n"
+                f"  Components: {total_components}\n"
+                f"  Parameters: {len(theta)}"
+            )
+            
+            self.update_status(success_msg)
+            QMessageBox.information(self, "Success", success_msg)
+            
+        except Exception as e:
+            error_msg = f"Model compilation failed:\n{str(e)}"
+            self.update_status(error_msg)
+            QMessageBox.critical(self, "Compilation Error", error_msg)
     
-    def show_master_theta_dialog(self):
-        """Show master theta dialog"""
-        dialog = MasterThetaDialog(self.current_collection_result, self)
-        if dialog.exec_() == QDialog.Accepted and self.current_collection_result is not None:
-            # Update collection result with edited parameters
-            new_theta = dialog.get_updated_theta()
-            if len(new_theta) > 0:
-                self.current_collection_result = self.param_manager.update_master_theta(
-                    self.current_collection_result, new_theta
-                )
-                self.update_status("Master theta updated by user")
-                QMessageBox.information(self, "Updated", 
-                                      f"Master theta updated with {len(new_theta)} parameters")
-    
-    def update_status(self, message=None):
+    def update_status(self, message):
         """Update status display"""
-        if message:
-            self.status_display.setText(message)
-        else:
-            # Generate summary status
-            n_configs = len([c for c in self.configurations.values() if c['wave'] is not None])
-            n_systems = sum(len(systems) for systems in self.config_systems.values())
-            n_with_params = sum(1 for df in self.config_parameters.values() if not df.empty)
-            
-            status = f"Configurations with data: {n_configs}\n"
-            status += f"Systems defined: {n_systems}\n"
-            status += f"Systems with parameters: {n_with_params}"
-            
-            if self.current_collection_result:
-                status += f"\nLast compilation: {len(self.current_collection_result.master_systems)} unique systems"
-            
-            self.status_display.setText(status)
+        self.status_text.append(f"[{self.get_timestamp()}] {message}")
+        
+        # Auto-scroll to bottom
+        cursor = self.status_text.textCursor()
+        cursor.movePosition(cursor.End)
+        self.status_text.setTextCursor(cursor)
     
-    def get_current_model(self):
-        """Return current model for main window"""
-        if self.current_collection_result:
-            return self.current_collection_result.master_config
-        return None
-        
-    def get_spectrum_data(self):
-        """Return spectrum data for current configuration"""
-        if not self.current_config or self.current_config not in self.configurations:
-            return None
-            
-        config_data = self.configurations[self.current_config]
-        if config_data['wave'] is None:
-            return None
-            
-        return {
-            'wave': config_data['wave'],
-            'flux': config_data['flux'],
-            'error': config_data['error']
-        }
-
+    def get_timestamp(self):
+        """Get current timestamp string"""
+        from datetime import datetime
+        return datetime.now().strftime("%H:%M:%S")
     
-    def _restore_master_theta(self, master_theta_list, collection_info):
-        """Restore master theta and create minimal collection result"""
-        import numpy as np
+    def clear_all(self):
+        """Clear all systems and reset"""
+        reply = QMessageBox.question(self, "Clear All", 
+                                   "Clear all absorption systems?",
+                                   QMessageBox.Yes | QMessageBox.No)
         
-        # Convert list back to numpy array
-        master_theta = np.array(master_theta_list)
-        
-        # Create a minimal collection result for GUI purposes
-        # This won't be fully functional for compilation, but allows viewing/editing
-        from types import SimpleNamespace
-        
-        # Create minimal master systems from saved info
-        master_systems = []
-        for sys_info in collection_info.get('system_info', []):
-            system = SimpleNamespace(
-                z=sys_info['z'],
-                ion=sys_info['ion'], 
-                transitions=sys_info['transitions'],
-                components=sys_info['components'],
-                source_instrument=sys_info['source_instrument']
-            )
-            master_systems.append(system)
-        
-        # Create minimal collection result
-        minimal_result = SimpleNamespace(
-            master_theta=master_theta,
-            master_systems=master_systems,
-            instrument_mappings=[],  # Empty for now
-            master_config=None,
-            collection_log=[f"Restored from project file ({len(master_theta)} parameters)"]
-        )
-        
-        self.current_collection_result = minimal_result
-        
-        self.update_status(f"Master theta restored ({len(master_theta)} parameters)")
+        if reply == QMessageBox.Yes:
+            self.systems.clear()
+            self.compiled_models.clear()
+            self.update_systems_table()
+            self.update_config_preview()
+            self.status_text.clear()
+            self.update_status("All systems cleared")
 
 
-    def _restore_model_setup(self, config_systems, config_parameters, current_config, current_system_id):
-        """Restore model setup state from project load"""
-        self.config_systems = config_systems
-        self.config_parameters = config_parameters
-        self.current_config = current_config
-        self.current_system_id = current_system_id
-        
-        # Update displays
-        self.update_config_display()
-        self.update_systems_display()
-        self.update_system_combo()
-        
-        # Set current selections if they exist
-        if current_config:
-            # Find and select the current config in combo
-            index = self.current_config_combo.findText(current_config)
-            if index >= 0:
-                self.current_config_combo.setCurrentIndex(index)
-        
-        if current_system_id:
-            # Find and select the current system in combo
-            index = self.system_combo.findData(current_system_id)
-            if index >= 0:
-                self.system_combo.setCurrentIndex(index)
-        
-        # Load parameter table for current system
-        if current_config and current_system_id:
-            self.load_parameter_table()
-        
-        self.update_status("Model setup restored from project")
-
-    def _restore_master_theta(self, master_theta, collection_info):
-        """Restore master theta and create minimal collection result"""
-        import numpy as np
-        from types import SimpleNamespace
-        
-        # Create minimal master systems from saved info
-        master_systems = []
-        for sys_info in collection_info.get('system_info', []):
-            system = SimpleNamespace(
-                z=sys_info['z'],
-                ion=sys_info['ion'], 
-                transitions=sys_info['transitions'],
-                components=sys_info['components'],
-                source_instrument=sys_info['source_instrument']
-            )
-            master_systems.append(system)
-        
-        # Create minimal collection result
-        minimal_result = SimpleNamespace(
-            master_theta=master_theta,
-            master_systems=master_systems,
-            instrument_mappings=[],  # Empty for now
-            master_config=None,
-            collection_log=[f"Restored from project file ({len(master_theta)} parameters)"]
-        )
-        
-        self.current_collection_result = minimal_result
-        
-        self.update_status(f"Master theta restored ({len(master_theta)} parameters)")
+if __name__ == "__main__":
+    import sys
+    from PyQt5.QtWidgets import QApplication
     
-    def clear_state(self):
-        """Clear tab state for project loading"""
-        # Clear data structures
-        self.config_systems = {}
-        self.config_parameters = {}
-        self.current_config = None
-        self.current_system_id = None
-        self.current_collection_result = None
-        
-        # Clear UI elements
-        self.config_tree.clear()
-        self.current_config_combo.clear()
-        self.systems_tree.clear()
-        self.system_combo.clear()
-        self.params_table.setRowCount(0)
-        self.config_info.clear()
-        self.status_display.clear()
-        
-        # Reset button states
-        self.edit_system_btn.setEnabled(False)
-        self.delete_system_btn.setEnabled(False)
-            
+    app = QApplication(sys.argv)
+    
+    # Test the widget
+    widget = ModelSetupTab()
+    widget.show()
+    
+    sys.exit(app.exec_())

@@ -75,7 +75,7 @@ print("=" * 60)
 # Define instrumental resolutions (Full Width at Half Maximum in pixels)
 FWHM_XShooter = '2.2' # XShooter
 
-config_A = FitConfiguration(FWHM=FWHM_XShooter)
+config_A = FitConfiguration()
 config_A.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=3)
 
 
@@ -92,23 +92,9 @@ print("=" * 60)
 
 
 # Create instrument-specific models
-model_A = VoigtModel(config_A)  
+model = VoigtModel(config_A,FWHM=FWHM_XShooter)  
 
 
-
-print("\n✓ Instrumental models created")
-
-# ============================================================================
-# PART 4: MODEL COMPILATION
-# ============================================================================
-
-print("\n" + "=" * 60)
-print("COMPILING SINGLE-INSTRUMENT MODEL")
-print("=" * 60)
-
-
-compiled = model_A.compile(verbose=True)
-print("\n✓ Single-instrument model compiled")
 
 
 
@@ -150,8 +136,8 @@ print("Setting up mcmc fitter...")
 
 # Define instrument setup outside the call - For multi instrument we just keep adding to this
 instrument_data = {
-    'XS': {
-        'model': compiled.model_flux,
+    'XShooter': {
+        'model': model,
         'wave': wave_obs,
         'flux': flux,
         'error': error
@@ -180,55 +166,25 @@ print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
 
 # Run MCMC with optimization
-fitter.runmcmc(optimize=True)  # optimize=True finds better starting point
+fitter.runmcmc(optimize=True,use_pool=False)  # optimize=True finds better starting point
 
 print("\n✓ MCMC fitting completed")
 
 # ============================================================================
 # PART 7: RESULTS ANALYSIS
 # ============================================================================
-# Display and analyze the fitting results
-# KEY CONCEPT: Joint constraints from both datasets
-
-print("\n" + "=" * 60)
-print("ANALYZING FITTING RESULTS")
-print("=" * 60)
-
-# Display corner plot (parameter correlations and posteriors)
-#print("Generating corner plot (parameter posterior distributions)...")
-#fitter.plot_corner()
 
 
-# Extract key results
-#print("\nExtracting results...")
-fig = mc.plot_model(model_A, fitter, 
-                outfile=None,           # or 'output.png' to save
-                show_residuals=True,     # Include residual plots
-                velocity_marks=True,     # Mark component velocities
-                verbose=True)            # Print parameter summary
+from rbvfit.core import unified_results as u 
+
+results= u.UnifiedResults(fitter)
 
 
-from rbvfit.core import fit_results as f
-# Save results
-results = f.FitResults(fitter, model_A)
-#results.save('my_fit.h5')
+results.help()
 
-# Load and analyze
-#results = f.FitResults.load('my_fit.h5')
-results.print_fit_summary()
-print("Generating corner plot (parameter posterior distributions)...")
-results.corner_plot()#save_path='corner.pdf')
-results.convergence_diagnostics()
 
-# Visual chain inspection
-results.chain_trace_plot(save_path='trace_plots.png')
+results.print_summary()           # Overview
+results.convergence_diagnostics() # Check zeus     convergence
+results.velocity_plot(velocity_range=(-5200, 5200))
 
-# This is the main new feature - velocity space plots by ion!
-velocity_plots = results.plot_velocity_fits(
-    show_components=True,      # Show individual components
-    show_rail_system=True     # Show component position markers
-)
-
-# For single ion systems, also try velocity range control:
-results.plot_velocity_fits(velocity_range=(-600, 600))
-
+results.residuals_plot()

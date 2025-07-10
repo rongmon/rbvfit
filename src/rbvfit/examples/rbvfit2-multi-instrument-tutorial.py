@@ -233,7 +233,7 @@ print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
 
 # Run MCMC with optimization
-fitter.runmcmc(optimize=True)  # optimize=True finds better starting point
+fitter.runmcmc(optimize=True,use_pool=False)  # optimize=True finds better starting point
 
 print("\n✓ MCMC fitting completed")
 

@@ -118,9 +118,9 @@ print(f"  HIRES FWHM:    {FWHM_HIRES} pixels (highest resolution)")
 # Create instrument-specific configurations with FWHM
 # Each configuration contains both physics and instrumental setup
 config = FitConfiguration()  # XShooter configuration
-config.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=2)
-config.add_system(z=z, ion='OI', transitions=[1302.17], components=1)
-config.add_system(z=z, ion='SiII', transitions=[1304.5], components=1)
+config.add_system(z=zabs_CIV, ion='CIV', transitions=[1548.2,1550.3], components=4)
+#config.add_system(z=z, ion='OI', transitions=[1302.17], components=1)
+#config.add_system(z=z, ion='SiII', transitions=[1304.5], components=1)
 
 
 print("\nPhysical system details:")
@@ -213,7 +213,7 @@ instrument_data = {
 fitter = mc.vfit(
     instrument_data,              # All 3 instruments in one dictionary
     theta, lb, ub,               # Parameters and bounds
-    no_of_Chain=50,
+    no_of_Chain=40,
     no_of_steps=500,
     perturbation=1e-4,
     sampler='zeus'
@@ -224,7 +224,7 @@ print("\nStarting MCMC sampling...")
 print("This may take several minutes depending on data size and convergence")
 
 # Run MCMC with optimization
-fitter.runmcmc(optimize=True)
+fitter.runmcmc(optimize=True,use_pool=True)
 
 print("\n✓ MCMC fitting completed")
 print("✓ All 3 instruments used their correct FWHM values during fitting")

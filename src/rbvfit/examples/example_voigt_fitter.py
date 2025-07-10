@@ -133,7 +133,7 @@ fitter = mc.vfit(
     instrument_data, theta, lb, ub,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
-    sampler=sampler,
+    sampler='zeus',
     perturbation=1e-4
 )
 
@@ -141,7 +141,7 @@ fitter = mc.vfit(
 
         
 # Run MCMC
-fitter.runmcmc(optimize=True, verbose=True, use_pool=True)
+fitter.runmcmc(optimize=True, verbose=True, use_pool=False)
 
 
 

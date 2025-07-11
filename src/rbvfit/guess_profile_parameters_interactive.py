@@ -3,7 +3,7 @@ import numpy as np
 from typing import Tuple, List, Optional, Any, Dict, Union
 import matplotlib.figure
 import matplotlib.axes
-from rbvfit.rb_vfit import rb_veldiff 
+from rbvfit.vfit_mcmc import rb_veldiff 
 # Converting To velocities
 from rbvfit import rb_setline as line
 
@@ -281,7 +281,7 @@ class gui_set_clump(object):
             default_b = 22.0
         elif 'II ' in transition_name or transition_name.endswith('II'):
             # Singly ionized (II) 
-            default_b = 18.0
+            default_b = 12.0
         elif 'III ' in transition_name or transition_name.endswith('III'):
             # Doubly ionized (III)
             default_b = 25.0

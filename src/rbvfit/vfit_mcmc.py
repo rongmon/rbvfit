@@ -7,7 +7,6 @@ with automatic model compilation and unified multi-instrument support.
 Key Features:
 - Unified interface for single and multi-instrument fitting
 - Automatic VoigtModel compilation with per-instrument FWHM
-- No legacy interface support (V2 only)
 - Sampler-agnostic (emcee and zeus support)
 - GUI-friendly dictionary interface
 """

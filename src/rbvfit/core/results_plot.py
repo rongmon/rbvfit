@@ -251,7 +251,8 @@ def correlation_plot(results, save_path: Optional[str] = None) -> plt.Figure:
 
 
 def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[float, float] = (-500, 500),
-                 show_components: bool = False, save_path: Optional[str] = None) -> plt.Figure:
+                 y_range: Tuple[float, float] = (0, 1.2), show_components: bool = False, 
+                 save_path: Optional[str] = None) -> plt.Figure:
     """
     Create velocity space plot of absorption line fits.
     
@@ -263,6 +264,8 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
         Specific instrument to plot. If None, plots all instruments.
     velocity_range : tuple
         Velocity range to plot in km/s
+    y_range : tuple
+        Y-axis range for flux (default: (0, 1.2))
     show_components : bool
         Whether to show individual components
     save_path : str, optional
@@ -287,6 +290,9 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
     if n_instruments == 1:
         axes = [axes]
     
+    # Define colors for components
+    component_colors = plt.cm.tab10(np.linspace(0, 1, 10))
+    
     for i, inst_name in enumerate(instruments):
         ax = axes[i]
         
@@ -298,7 +304,12 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
         
         # Get model
         model = results.reconstruct_model(inst_name if results.is_multi_instrument else None)
-        model_flux = model.evaluate(results.best_fit, wave_data)
+        
+        # Get model output with components
+        model_output = model.evaluate(results.best_fit, wave_data, return_components=True)
+        model_flux = model_output['flux']
+        model_components = model_output['components']
+        model_comp_info = model_output['component_info']
         
         # Convert to velocity space (use absorption minimum as reference)
         min_flux_idx = np.argmin(flux_data)
@@ -325,39 +336,48 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
         # Plot model
         ax.plot(vel_plot, model_plot, 'r-', linewidth=2, label='Best-fit model')
         
-        # Add components if requested
-        if show_components:
-            try:
-                # This would require component evaluation capability
-                # For now, just plot the total model
-                pass
-            except:
-                pass
+        # Plot individual components if requested
+        if show_components and len(model_components) > 0:
+            for j, (component_flux, comp_info) in enumerate(zip(model_components, model_comp_info)):
+                component_plot = component_flux[vel_mask]
+                color = component_colors[j % len(component_colors)]
+                
+                # Create label with component info
+                lambda0 = comp_info['lambda0']
+                z_total = comp_info['z_total']
+                v_value = comp_info['v_value']
+                label = f'λ{lambda0:.1f} (z={z_total:.4f}, v={v_value:.1f})'
+                
+                ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5, 
+                       alpha=0.7, label=label)
         
         # Format
         ax.grid(True, alpha=0.3)
-        ax.set_ylim(0, 1.2)
+        ax.set_ylim(y_range)
         ax.set_ylabel('Normalized Flux')
         ax.set_title(f'{inst_name}')
-        ax.legend()
         
-        # Add residuals in small panel
-        if i == len(instruments) - 1:  # Only for last subplot
-            divider = GridSpecFromSubplotSpec(
-                2, 1, axes[i].get_subplotspec(), height_ratios=[3, 1], hspace=0)
-            ax.set_subplotspec(divider[0])
-            ax_res = fig.add_subplot(divider[1], sharex=ax)
-            
-            residuals = (flux_plot - model_plot) / error_plot
-            ax_res.step(vel_plot, residuals, 'k-', where='mid', linewidth=1)
-            ax_res.axhline(0, color='red', linestyle='--', alpha=0.5)
-            ax_res.set_ylabel('Residuals/σ')
-            ax_res.grid(True, alpha=0.3)
+        # Handle legend - components can make it crowded
+        if show_components and len(model_components) > 5:
+            # If many components, put legend outside plot
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        else:
+            ax.legend()
     
     axes[-1].set_xlabel('Velocity (km/s)')
     
     # Overall title
-    fig.suptitle(f'Velocity Space Fit - {len(instruments)} Instrument(s)', fontsize=14)
+    title = f'Velocity Space Fit - {len(instruments)} Instrument(s)'
+    if show_components:
+        title += f' ({len(model_comp_info)} components)'
+    fig.suptitle(title, fontsize=14)
+    
+    # Adjust layout to accommodate legend if needed
+    if show_components and any(len(model_components) > 5 for _ in instruments):
+        plt.tight_layout()
+        plt.subplots_adjust(right=0.75)
+    else:
+        plt.tight_layout()
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
@@ -368,7 +388,9 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
     return fig
 
 
-def residuals_plot(results, instrument_name: str = None, save_path: Optional[str] = None) -> plt.Figure:
+def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple[float, float]] = None,
+                  y_range: Optional[Tuple[float, float]] = None, show_components: bool = False,
+                  show_residuals: bool = True, save_path: Optional[str] = None) -> plt.Figure:
     """
     Create residuals plot showing model vs data comparison.
     
@@ -378,6 +400,14 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         The fit results object
     instrument_name : str, optional
         Specific instrument to plot. If None, plots all instruments.
+    x_range : tuple, optional
+        Wavelength range to plot (min_wave, max_wave). If None, uses full range.
+    y_range : tuple, optional
+        Y-axis range for flux (min_flux, max_flux). If None, auto-scales.
+    show_components : bool
+        Whether to show individual components
+    show_residuals : bool
+        Whether to show residuals panel (default: True)
     save_path : str, optional
         Path to save the plot
         
@@ -396,27 +426,38 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         instruments = results.instrument_names
     
     n_instruments = len(instruments)
-    n_panels = 2       # number of rows/panels per instrument
-
+    
+    # Determine panel configuration
+    if show_residuals:
+        n_panels = 2
+        height_ratios = [3, 1]
+        figsize = (10 * n_instruments, 4)
+    else:
+        n_panels = 1
+        height_ratios = [1]
+        figsize = (10 * n_instruments, 3)
+    
     fig, axes = plt.subplots(
         nrows=n_panels,
         ncols=n_instruments,
-        figsize=(10 * n_instruments, 4),  # adjust height as needed
+        figsize=figsize,
         sharex='col',
-        gridspec_kw={'height_ratios': [3, 1]}  # top row 3x the height of bottom row
+        gridspec_kw={'height_ratios': height_ratios}
     )
     
-    # If only 1 row or column, make sure axes is always 2D
-    if n_panels == 1:
+    # Ensure axes is always 2D
+    if n_panels == 1 and n_instruments == 1:
+        axes = np.array([[axes]])
+    elif n_panels == 1:
         axes = axes.reshape(1, n_instruments)
     elif n_instruments == 1:
         axes = axes.reshape(n_panels, 1)
     
+    # Define colors for components
+    component_colors = plt.cm.tab10(np.linspace(0, 1, 10))
     
     for i, inst_name in enumerate(instruments):
         ax_data = axes[0, i]  # row 0: data panel
-        ax_res  = axes[1, i]  # row 1: residuals panel
-
         
         # Get data
         data = results.instrument_data[inst_name]
@@ -424,55 +465,112 @@ def residuals_plot(results, instrument_name: str = None, save_path: Optional[str
         flux_data = data['flux']
         error_data = data['error']
         
+        # Apply x-range filter if specified
+        if x_range is not None:
+            wave_mask = (wave_data >= x_range[0]) & (wave_data <= x_range[1])
+            if np.sum(wave_mask) == 0:
+                print(f"Warning: No data in wavelength range {x_range} for {inst_name}")
+                continue
+            wave_plot = wave_data[wave_mask]
+            flux_plot = flux_data[wave_mask]
+            error_plot = error_data[wave_mask]
+        else:
+            wave_plot = wave_data
+            flux_plot = flux_data
+            error_plot = error_data
+            wave_mask = slice(None)
+        
         # Get model
         model = results.reconstruct_model(inst_name if results.is_multi_instrument else None)
         print(inst_name)
         print(model.get_info())
-        model_flux = model.evaluate(results.best_fit, wave_data)
+        
+        # Get model output with components if requested
+        if show_components:
+            model_output = model.evaluate(results.best_fit, wave_data, return_components=True)
+            model_flux = model_output['flux']
+            model_components = model_output['components']
+            model_comp_info = model_output['component_info']
+        else:
+            model_flux = model.evaluate(results.best_fit, wave_data)
+        
+        model_plot = model_flux[wave_mask]
         
         # Data vs model plot
-        ax_data.step(wave_data, flux_data, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
-        ax_data.fill_between(wave_data, flux_data - error_data, flux_data + error_data, 
+        ax_data.step(wave_plot, flux_plot, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
+        ax_data.fill_between(wave_plot, flux_plot - error_plot, flux_plot + error_plot, 
                            alpha=0.3, color='gray', step='mid')
-        ax_data.plot(wave_data, model_flux, 'r-', linewidth=2, label='Model')
-
+        ax_data.plot(wave_plot, model_plot, 'r-', linewidth=2, label='Model')
+        
+        # Plot individual components if requested
+        if show_components and 'model_components' in locals():
+            for j, (component_flux, comp_info) in enumerate(zip(model_components, model_comp_info)):
+                component_plot = component_flux[wave_mask]
+                color = component_colors[j % len(component_colors)]
+                
+                # Create label with component info
+                lambda0 = comp_info['lambda0']
+                z_total = comp_info['z_total']
+                v_value = comp_info['v_value']
+                label = f'λ{lambda0:.1f} (z={z_total:.4f}, v={v_value:.1f})'
+                
+                ax_data.plot(wave_plot, component_plot, '--', color=color, linewidth=1.5, 
+                           alpha=0.7, label=label)
+        
         # Add rail system
-        ax_data=_add_rail_system(ax_data,results, wave_data)
+        ax_data = _add_rail_system(ax_data, results, wave_plot)
         
         ax_data.set_ylabel('Normalized Flux')
         ax_data.set_title(f'{inst_name} - Data vs Model')
-        ax_data.legend()
         ax_data.grid(True, alpha=0.3)
         
-        # Residuals plot
-        residuals = (flux_data - model_flux) / error_data
-        ax_res.step(wave_data, residuals, 'k-', where='mid', linewidth=1)
-        ax_res.axhline(0, color='red', linestyle='--', alpha=0.5)
-        ax_res.axhline(2, color='orange', linestyle=':', alpha=0.5, label='±2σ')
-        ax_res.axhline(-2, color='orange', linestyle=':', alpha=0.5)
-        ax_res.axhline(3, color='red', linestyle=':', alpha=0.5, label='±3σ')
-        ax_res.axhline(-3, color='red', linestyle=':', alpha=0.5)
+        # Set y-range if specified
+        if y_range is not None:
+            ax_data.set_ylim(y_range)
         
-        ax_res.set_ylabel('Residuals/σ')
-
-
-        #ax_res.text(
-        #    0.45, 0.25, f'{inst_name} - Residuals',            # (x, y) in axis fraction coords
-        #    transform=ax_res.transAxes,     # use Axes coordinates
-        #    fontsize=12,
-        #    va='top', ha='left'
-        #)
-
-        ax_res.legend()
-        ax_res.grid(True, alpha=0.3)
+        # Handle legend - components can make it crowded
+        if show_components and 'model_components' in locals() and len(model_components) > 5:
+            # If many components, put legend outside plot
+            ax_data.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        else:
+            ax_data.legend()
         
+        # Residuals plot (only if show_residuals is True)
+        if show_residuals:
+            ax_res = axes[1, i]  # row 1: residuals panel
+            
+            residuals = (flux_plot - model_plot) / error_plot
+            ax_res.step(wave_plot, residuals, 'k-', where='mid', linewidth=1)
+            ax_res.axhline(0, color='red', linestyle='--', alpha=0.5)
+            ax_res.axhline(2, color='orange', linestyle=':', alpha=0.5, label='±2σ')
+            ax_res.axhline(-2, color='orange', linestyle=':', alpha=0.5)
+            ax_res.axhline(3, color='red', linestyle=':', alpha=0.5, label='±3σ')
+            ax_res.axhline(-3, color='red', linestyle=':', alpha=0.5)
+            
+            ax_res.set_ylabel('Residuals/σ')
+            ax_res.legend()
+            ax_res.grid(True, alpha=0.3)
+            
+            # Set x-range for residuals panel
+            if x_range is not None:
+                ax_res.set_xlim(x_range)
     
-    for ax in axes.flat:
-        ax.set_xlabel('Wavelength (Å)')
+    # Set x-labels
+    if show_residuals:
+        for i in range(n_instruments):
+            axes[1, i].set_xlabel('Wavelength (Å)')
+    else:
+        for i in range(n_instruments):
+            axes[0, i].set_xlabel('Wavelength (Å)')
     
-    plt.tight_layout()
-    plt.subplots_adjust(hspace=0.05)
-
+    # Adjust layout
+    if show_components and any('model_components' in locals() and len(model_components) > 5 for _ in instruments):
+        plt.tight_layout()
+        plt.subplots_adjust(right=0.75, hspace=0.05 if show_residuals else 0)
+    else:
+        plt.tight_layout()
+        if show_residuals:
+            plt.subplots_adjust(hspace=0.05)
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')

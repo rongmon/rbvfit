@@ -61,6 +61,7 @@ def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float,
               wv: np.ndarray) -> np.ndarray:
     """
     Voigt profile optical depth calculation.
+    Legacy implementation. We use a vectorized implementation for speed.
     
     Parameters
     ----------
@@ -159,7 +160,7 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
     return tau_all
 
 
-def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray) -> np.ndarray:
+def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.ndarray, return_components: bool = False) -> Union[np.ndarray, Dict[str, Any]]:
     """
     Global function to evaluate compiled Voigt model.
     
@@ -171,11 +172,13 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
         Parameter array
     wavelength : np.ndarray
         Wavelength array for evaluation
+    return_components : bool, optional
+        Return individual component contributions (default: False)
         
     Returns
     -------
-    np.ndarray
-        Model flux array
+    np.ndarray or dict
+        Model flux array, or dict with flux and component breakdown if return_components=True
     """
     atomic_lambda0 = data_container.atomic_lambda0
     atomic_gamma = data_container.atomic_gamma
@@ -216,7 +219,7 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
     # Apply convolution if kernel exists
     kernel = data_container.kernel
     if kernel is not None:
-        if isinstance(kernel,Gaussian1DKernel ):
+        if isinstance(kernel, Gaussian1DKernel):
             # Use fast scipy for Gaussian kernels
             flux = ndimage.convolve1d(flux, kernel.array, mode='nearest')
         elif isinstance(kernel, CustomKernel):
@@ -226,8 +229,36 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
             # Fallback to astropy for unknown kernel types
             flux = astropy_convolve(flux, data_container.kernel, boundary="extend")
 
-
-    return flux
+    if return_components:
+        # Convert individual line optical depths to flux components
+        # Apply convolution to each component if kernel exists
+        component_fluxes = []
+        for i in range(n_lines):
+            component_flux = np.exp(-tau_all_lines[i])
+            component_fluxes.append(component_flux)
+        
+        # Build component info
+        component_info = []
+        for i in range(n_lines):
+            info = {
+                'line_index': i,
+                'lambda0': float(atomic_lambda0[i]),
+                'gamma': float(atomic_gamma[i]), 
+                'f_value': float(atomic_f[i]),
+                'z_total': float(z_total[i]),
+                'N_value': float(N_linear[i]),
+                'b_value': float(b_values[i]),
+                'v_value': float(v_values[i])
+            }
+            component_info.append(info)
+        
+        return {
+            'flux': flux,
+            'components': component_fluxes,
+            'component_info': component_info
+        }
+    else:
+        return flux
 
 
 @dataclass
@@ -500,16 +531,15 @@ class VoigtModel:
             total_components=self.total_components
         )
         
-        flux_total = _evaluate_compiled_model(data_container, theta, wavelength)
+        
         
         if return_components:
-            return {
-                'total': flux_total,
-                'components': [],
-                'component_info': []
-            }
+            #Return dictionary with 'flux','components' and 'component_info'
+            return _evaluate_compiled_model(data_container, theta, wavelength, return_components=return_components)
+            
         else:
-            return flux_total
+            #return only total model flux
+            return _evaluate_compiled_model(data_container, theta, wavelength)
     
     @property
     def is_compiled(self) -> bool:

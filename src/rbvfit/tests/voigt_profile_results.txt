@@ -1,0 +1,28 @@
+         2101 function calls in 0.009 seconds
+
+   Ordered by: cumulative time
+   List reduced from 33 to 20 due to restriction <20>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+       50    0.000    0.000    0.009    0.000 /Users/bordoloi/WORK/python/rbvfit/src/rbvfit/core/voigt_model.py:294(model_flux)
+       50    0.001    0.000    0.009    0.000 /Users/bordoloi/WORK/python/rbvfit/src/rbvfit/core/voigt_model.py:163(_evaluate_compiled_model)
+       50    0.006    0.000    0.006    0.000 /Users/bordoloi/WORK/python/rbvfit/src/rbvfit/core/voigt_model.py:99(_vectorized_voigt_tau)
+       50    0.000    0.000    0.001    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/scipy/ndimage/_filters.py:138(convolve1d)
+       50    0.000    0.000    0.001    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/scipy/ndimage/_filters.py:83(correlate1d)
+       50    0.000    0.000    0.000    0.000 <__array_function__ internals>:177(sum)
+       50    0.000    0.000    0.000    0.000 {built-in method numpy.core._multiarray_umath.implement_array_function}
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/fromnumeric.py:2160(sum)
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/fromnumeric.py:69(_wrapreduction)
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/scipy/ndimage/_ni_support.py:73(_get_output)
+       50    0.000    0.000    0.000    0.000 {built-in method scipy.ndimage._nd_image.correlate1d}
+       50    0.000    0.000    0.000    0.000 {method 'reduce' of 'numpy.ufunc' objects}
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/_dtype.py:328(_name_get)
+       50    0.000    0.000    0.000    0.000 {method 'normal' of 'numpy.random.mtrand.RandomState' objects}
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/_dtype.py:314(_name_includes_bit_suffix)
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/numerictypes.py:356(issubdtype)
+       50    0.000    0.000    0.000    0.000 {built-in method numpy.zeros}
+      100    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/numerictypes.py:282(issubclass_)
+       50    0.000    0.000    0.000    0.000 {method 'copy' of 'numpy.ndarray' objects}
+       50    0.000    0.000    0.000    0.000 /Users/bordoloi/opt/anaconda3/envs/zgui/lib/python3.9/site-packages/numpy/core/fromnumeric.py:70(<dictcomp>)
+
+

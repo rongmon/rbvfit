@@ -1,0 +1,40 @@
+{
+  "metadata": {
+    "timestamp": "20250711_143101",
+    "cpu_cores": 12,
+    "test_description": "MCMC Serial vs Parallel Performance Test",
+    "wavelength_range": [
+      1000,
+      1800
+    ],
+    "ions_tested": [
+      "HI_Lya",
+      "HI_Lyb",
+      "OVI",
+      "CIV",
+      "SiIV",
+      "CII"
+    ]
+  },
+  "phase1": {
+    "complexity": [],
+    "serial_time": [],
+    "parallel_time": [],
+    "speedup": [],
+    "n_params": []
+  },
+  "phase2": {
+    "complexity": [],
+    "serial_time": [],
+    "parallel_time": [],
+    "speedup": [],
+    "n_params": []
+  },
+  "phase3": {
+    "complexity": [],
+    "serial_time": [],
+    "parallel_time": [],
+    "speedup": [],
+    "n_params": []
+  }
+}

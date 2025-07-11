@@ -261,6 +261,7 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
         return flux
 
 
+
 @dataclass
 class CompiledModelData:
     """

@@ -236,7 +236,8 @@ class vfit:
                 'wave': np.asarray(data['wave']),
                 'flux': np.asarray(data['flux']),
                 'error': np.asarray(data['error']),
-                'inv_sigma2': 1.0 / (np.asarray(data['error']) ** 2)
+                'inv_sigma2': 1.0 / (np.asarray(data['error']) ** 2),
+                'log_inv_sigma2': np.log(1.0 / (np.asarray(data['error']) ** 2))
             }
         
         return compiled_data
@@ -288,8 +289,9 @@ class vfit:
                 
                 # Calculate likelihood contribution
                 inv_sigma2 = data['inv_sigma2']#1.0 / (data['error'] ** 2)
+                log_inv_sigma2=data['log_inv_sigma2']
                 lnlike_instrument = -0.5 * (
-                    np.sum((data['flux'] - model_dat) ** 2 * inv_sigma2 - np.log(inv_sigma2))
+                    np.sum((data['flux'] - model_dat) ** 2 * inv_sigma2 - log_inv_sigma2)
                 )
                 
                 lnlike_total += lnlike_instrument

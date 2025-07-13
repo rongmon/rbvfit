@@ -350,16 +350,21 @@ class FittingTab(QWidget):
         n_params = len(theta)
         n_comp = n_params // 3
         self.param_names = []
+        # N parameters first
         for i in range(n_comp):
-            self.param_names.extend([f'N_{i+1}', f'b_{i+1}', f'v_{i+1}'])
-        
+            self.param_names.append(f'N_{i+1}')
+        # Then b parameters  
+        for i in range(n_comp):
+            self.param_names.append(f'b_{i+1}')
+        # Then v parameters
+        for i in range(n_comp):
+            self.param_names.append(f'v_{i+1}')
         # Update UI
         self.update_instrument_selector()
         self.update_parameter_table()
         self.update_fitting_controls()
         
         # Status update
-        n_comp = n_params // 3
         self.status_text.clear()
         self.status_text.append(f"Model data loaded:")
         self.status_text.append(f"  Instruments: {len(instrument_data)}")
@@ -419,7 +424,9 @@ class FittingTab(QWidget):
         if not self.current_instrument or self.current_instrument not in self.instrument_data:
             self.canvas.draw()
             return
-            
+        
+        current_theta, _, _ = self.param_bounds_table.get_parameters()   
+        print(current_theta) 
         data = self.instrument_data[self.current_instrument]
         wave = data['wave']
         flux = data['flux']
@@ -432,9 +439,10 @@ class FittingTab(QWidget):
         ax.step(wave, error, 'r-', where='mid', alpha=0.7, label='Error')
         
         # Plot model if available
-        if self.theta is not None:
+        if current_theta is not None:
             try:
-                model_flux = data['model'](self.theta, wave)
+                data['model'].print_info()
+                model_flux = data['model'].evaluate(current_theta, wave)
                 ax.plot(wave, model_flux, 'b-', linewidth=2, label='Model')
             except Exception as e:
                 self.status_text.append(f"Model evaluation error: {str(e)}")

@@ -538,7 +538,18 @@ class ModelSetupTab(QWidget):
             
         try:
             self.update_status("Creating master configuration...")
-            
+
+
+            # Update component counts in config_systems to match actual parameters
+            #IMPORTANT BUG FIX
+            for config_name, systems in self.config_systems.items():
+                for system in systems:
+                    key = (config_name, system['id'])
+                    if key in self.config_parameters:
+                        # Update component count to match actual parameter rows
+                        actual_components = len(self.config_parameters[key])
+                        system['components'] = actual_components
+                    
             # Create a single master FitConfiguration from all systems
             self.master_config = FitConfiguration()
             
@@ -622,11 +633,11 @@ class ModelSetupTab(QWidget):
             model = VoigtModel(self.master_config, FWHM=str(config_data['fwhm']))
             
             # Compile model
-            compiled_model = model.compile(verbose=False)
+            #compiled_model = model.compile(verbose=False)
             
             # Create unified instrument data entry
             instrument_data[config_name] = {
-                'model': compiled_model,  # Compiled VoigtModel object
+                'model': model,  # Compiled VoigtModel object
                 'wave': config_data['wave'],
                 'flux': config_data['flux'],
                 'error': config_data['error']

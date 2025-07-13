@@ -530,6 +530,12 @@ class ModelSetupTab(QWidget):
                               "No ion systems defined. Please add systems before compiling.")
             return
             
+        # Check if any parameters are estimated
+        if not self.config_parameters:
+            QMessageBox.warning(self, "No Parameters", 
+                              "No parameters estimated. Please estimate parameters for your systems first.")
+            return
+            
         try:
             self.update_status("Creating master configuration...")
             
@@ -551,49 +557,28 @@ class ModelSetupTab(QWidget):
                     components=system['components']
                 )
             
-            # Create parameter manager
-            self.param_manager = ParameterManager(self.master_config)
-            
             self.update_status("Collecting parameters...")
             
-            # Get parameter structure
-            structure = self.param_manager.config_to_theta_structure()
-            n_params = structure['total_parameters']
+            # Collect parameters from all systems
+            all_N = []
+            all_b = []
+            all_v = []
             
-            # Initialize with reasonable defaults
-            n_comp = n_params // 3
-            param_values = []
-            
-            # N parameters (log column density)
-            param_values.extend([13.5] * n_comp)
-            # b parameters (km/s)
-            param_values.extend([20.0] * n_comp)
-            # v parameters (km/s)  
-            param_values.extend([0.0] * n_comp)
-            
-            # Try to use actual estimated parameters if available
-            used_estimates = False
             for (config_name, system_id), df in self.config_parameters.items():
-                if len(df) > 0:
-                    # Use these parameters
-                    n_estimates = min(len(df), n_comp)
-                    for i in range(n_estimates):
-                        if i < len(df):
-                            param_values[i] = df.iloc[i]['N']  # N
-                            param_values[n_comp + i] = df.iloc[i]['b']  # b
-                            param_values[2*n_comp + i] = df.iloc[i]['v']  # v
-                    used_estimates = True
-                    break
+                for _, row in df.iterrows():
+                    all_N.append(row['N'])
+                    all_b.append(row['b']) 
+                    all_v.append(row['v'])
             
-            self.master_theta = np.array(param_values)
+            # Create master theta array
+            self.master_theta = np.array(all_N + all_b + all_v)
             
-            if used_estimates:
-                self.update_status("Used estimated parameters")
-            else:
-                self.update_status("Using default parameters - estimate parameters for better results")
+            self.update_status("Building instrument data...")
             
             # Build unified instrument data
             instrument_data = self.build_unified_instrument_data()
+            
+            self.update_status("Creating parameter bounds...")
             
             # Create bounds using vfit_mcmc
             n_comp = len(self.master_theta) // 3
@@ -610,6 +595,8 @@ class ModelSetupTab(QWidget):
             
             # Enable master theta button
             self.show_master_theta_btn.setEnabled(True)
+            
+            self.update_status("Compilation completed successfully!")
             
             QMessageBox.information(self, "Success", 
                                   f"Models compiled successfully!\n"

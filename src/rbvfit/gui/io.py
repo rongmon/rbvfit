@@ -263,94 +263,164 @@ def validate_project_file(filename: str) -> Dict[str, Any]:
 
 
 def check_missing_files(project_data: Dict[str, Any]) -> List[str]:
-    """
-    Check which data files referenced in project are missing.
-    
-    Parameters
-    ----------
-    project_data : dict
-        Project data dictionary
-        
-    Returns
-    -------
-    list
-        List of missing filenames (basenames only)
-    """
+    """Check which data files referenced in project are missing - updated for new format"""
     missing = []
     configurations = project_data.get('configurations', {})
     
     for name, config in configurations.items():
-        filename = config.get('filename', '')
-        if filename and not Path(filename).exists():
-            missing.append(Path(filename).name)
+        # Check multiple possible file path fields
+        filepath = config.get('filepath', '') or config.get('filename', '')
+        basename = config.get('basename', '')
+        
+        if filepath and not Path(filepath).exists():
+            missing.append(basename or Path(filepath).name)
     
     return missing
 
 
 def serialize_configurations(configurations: Dict[str, Dict]) -> Dict[str, Any]:
-    """Serialize configurations with file paths and wavelength processing history"""
+    """Serialize configurations with complete file paths and wavelength processing history"""
     serialized = {}
     for name, config in configurations.items():
         config_data = {
             'name': config['name'],
             'fwhm': config['fwhm'],
             'description': config.get('description', ''),
-            'filename': config.get('filename', ''),  # Store file path
+            
+            # Multiple file path formats for robust restoration
+            'filename': config.get('filename', ''),
+            'filepath': str(Path(config.get('filename', '')).resolve()) if config.get('filename') else '',
+            'basename': Path(config.get('filename', '')).name if config.get('filename') else '',
+            'file_directory': str(Path(config.get('filename', '')).parent) if config.get('filename') else '',
+            
             'has_data': config['wave'] is not None,
-            'data_points': len(config['wave']) if config['wave'] is not None else 0,
-            'wavelength_range': [float(config['wave'].min()), float(config['wave'].max())] if config['wave'] is not None else None
         }
         
-        # Save wavelength processing history
+        # Save complete wavelength processing information
         if config['wave'] is not None:
-            # Original full range
+            # Current processed data range
+            config_data['current_wavelength_range'] = [float(config['wave'].min()), float(config['wave'].max())]
+            config_data['current_data_points'] = len(config['wave'])
+            
+            # Original data range (before any processing)
             if 'wave_original' in config:
                 orig_wave = config['wave_original']
                 config_data['original_wavelength_range'] = [float(orig_wave.min()), float(orig_wave.max())]
                 config_data['original_data_points'] = len(orig_wave)
+            else:
+                # If no original saved, current = original
+                config_data['original_wavelength_range'] = config_data['current_wavelength_range']
+                config_data['original_data_points'] = config_data['current_data_points']
             
-            # Trimming/selection history
-            if '_last_selection' in config:
-                config_data['wavelength_selection'] = config['_last_selection']
+            # Wavelength processing history
+            config_data['trim_range'] = config.get('trim_range', None)
+            config_data['union_info'] = config.get('union_info', None)
+            config_data['processing_steps'] = config.get('processing_steps', [])
+            config_data['is_trimmed'] = config_data['current_data_points'] != config_data['original_data_points']
             
-            # Check if data was trimmed
-            config_data['is_trimmed'] = (
-                'wave_original' in config and 
-                len(config['wave']) != len(config['wave_original'])
-            )
+            # Additional processing metadata
+            config_data['wave_step'] = config.get('wave_step', None)
+            config_data['spectral_resolution'] = config.get('spectral_resolution', None)
+            
+        else:
+            # No data loaded
+            config_data['current_wavelength_range'] = None
+            config_data['current_data_points'] = 0
+            config_data['original_wavelength_range'] = None  
+            config_data['original_data_points'] = 0
+            config_data['trim_range'] = None
+            config_data['union_info'] = None
+            config_data['processing_steps'] = []
+            config_data['is_trimmed'] = False
         
         serialized[name] = config_data
     return serialized
 
 
-def deserialize_configurations(serialized: Dict[str, Any]) -> Dict[str, Dict]:
-    """Deserialize configurations (without loading actual data)"""
+def deserialize_configurations(serialized: Dict[str, Any]) -> Tuple[Dict[str, Dict], List[str]]:
+    """
+    Deserialize configurations with automatic data loading and processing
+    
+    Returns:
+        configurations: Restored configuration dict
+        missing_files: List of files that couldn't be loaded
+    """
     configurations = {}
+    missing_files = []
+    
     for name, config_data in serialized.items():
         config = {
             'name': config_data['name'],
             'fwhm': config_data['fwhm'],
             'description': config_data.get('description', ''),
             'filename': config_data.get('filename', ''),
-            # Data arrays start as None - will be loaded when files are reassigned
+            'filepath': config_data.get('filepath', config_data.get('filename', '')),
+            'basename': config_data.get('basename', ''),
+            'file_directory': config_data.get('file_directory', ''),
             'wave': None,
             'flux': None,
             'error': None
         }
         
-        # Restore wavelength processing metadata
-        if 'wavelength_selection' in config_data:
-            config['_last_selection'] = config_data['wavelength_selection']
+        # Restore processing metadata
+        config['trim_range'] = config_data.get('trim_range')
+        config['union_info'] = config_data.get('union_info')
+        config['processing_steps'] = config_data.get('processing_steps', [])
+        config['wave_step'] = config_data.get('wave_step')
+        config['spectral_resolution'] = config_data.get('spectral_resolution')
         
-        if 'original_wavelength_range' in config_data:
-            config['_original_range'] = config_data['original_wavelength_range']
-            config['_original_points'] = config_data.get('original_data_points')
+        # Try to auto-reload data if file exists
+        filepath = config_data.get('filepath', '') or config_data.get('filename', '')
+        if filepath and Path(filepath).exists():
+            try:
+                # Load original spectrum
+                wave_orig, flux_orig, error_orig = load_spectrum_file(filepath)
+                
+                # Store original data
+                config['wave_original'] = wave_orig
+                config['flux_original'] = flux_orig
+                config['error_original'] = error_orig
+                
+                # Apply processing steps
+                wave_proc = wave_orig.copy()
+                flux_proc = flux_orig.copy() 
+                error_proc = error_orig.copy()
+                
+                # Apply trim if it was saved
+                trim_range = config_data.get('trim_range')
+                if trim_range and len(trim_range) == 2:
+                    trim_min, trim_max = trim_range
+                    mask = (wave_proc >= trim_min) & (wave_proc <= trim_max)
+                    wave_proc = wave_proc[mask]
+                    flux_proc = flux_proc[mask]
+                    error_proc = error_proc[mask]
+                
+                # Apply other processing steps
+                processing_steps = config_data.get('processing_steps', [])
+                for step in processing_steps:
+                    # Apply each processing step as needed
+                    # This can be extended for unions, resampling, etc.
+                    pass
+                
+                # Set final processed data
+                config['wave'] = wave_proc
+                config['flux'] = flux_proc
+                config['error'] = error_proc
+                
+            except Exception as e:
+                print(f"Warning: Could not reload data for {name}: {e}")
+                basename = config_data.get('basename', Path(filepath).name)
+                missing_files.append(f"{name}: {basename}")
         
-        if 'is_trimmed' in config_data:
-            config['_was_trimmed'] = config_data['is_trimmed']
-            
+        elif filepath:
+            # File specified but missing
+            basename = config_data.get('basename', Path(filepath).name)
+            missing_files.append(f"{name}: {basename}")
+        
         configurations[name] = config
-    return configurations
+    
+    return configurations, missing_files
+
 
 
 def serialize_parameters(config_parameters: Dict[Tuple, pd.DataFrame]) -> Dict[str, Any]:
@@ -418,36 +488,25 @@ def serialize_collection_info(collection_result) -> Optional[Dict[str, Any]]:
 
 
 def create_project_summary(project_data: Dict[str, Any]) -> str:
-    """
-    Create human-readable project summary.
-    
-    Parameters
-    ----------
-    project_data : dict
-        Project data dictionary
-        
-    Returns
-    -------
-    str
-        Formatted summary text
-    """
+    """Create enhanced project summary with processing info"""
     n_configs = len(project_data.get('configurations', {}))
     n_systems = sum(len(systems) for systems in project_data.get('config_systems', {}).values())
     n_params = len(project_data.get('config_parameters', {}))
     missing_files = check_missing_files(project_data)
     
-    # Count wavelength processing
+    # Count processing info
     configs = project_data.get('configurations', {})
+    n_with_data = sum(1 for config in configs.values() if config.get('has_data', False))
     n_trimmed = sum(1 for config in configs.values() if config.get('is_trimmed', False))
     
     summary = f"Project Summary:\n"
-    summary += f"  Configurations: {n_configs}\n"
+    summary += f"  Configurations: {n_configs} ({n_with_data} with data)\n"
     summary += f"  Ion systems: {n_systems}\n" 
     summary += f"  Parameter sets: {n_params}\n"
-    summary += f"  Master theta: {'Available' if project_data.get('master_theta') else 'Not available'}\n"
+    summary += f"  Master theta: {'Available' if project_data.get('master_theta') else 'Not compiled'}\n"
     
     if n_trimmed > 0:
-        summary += f"  Wavelength processing: {n_trimmed} configs trimmed/filtered\n"
+        summary += f"  Processed data: {n_trimmed} configurations trimmed/filtered\n"
     
     if missing_files:
         summary += f"  ⚠️ Missing files: {len(missing_files)}\n"
@@ -459,6 +518,8 @@ def create_project_summary(project_data: Dict[str, Any]) -> str:
     return summary
 
 
+
+
 # ==================== PRIVATE HELPER FUNCTIONS ====================
 
 def _validate_project_data(project_data: Dict[str, Any]) -> None:
@@ -468,9 +529,7 @@ def _validate_project_data(project_data: Dict[str, Any]) -> None:
         if key not in project_data:
             raise ValueError(f"Missing required key in project data: {key}")
     
-    if project_data['version'] != '2.0':
-        raise ValueError(f"Unsupported project version: {project_data['version']}")
-
+    
 
 def _validate_project_file(project_data: Dict[str, Any], filename: str) -> None:
     """Validate loaded project file"""

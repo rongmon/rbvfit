@@ -1,131 +1,107 @@
 {
-  "version": "2.0",
-  "created": "2025-07-01 11:22:17.385901",
+  "version": "2.0.0",
+  "created": "2025-07-13T15:34:21.659357",
+  "rbvfit_version": "2.0.0",
   "configurations": {
-    "cos": {
-      "name": "cos",
+    "COS": {
+      "name": "COS",
       "fwhm": 2.5,
       "description": "",
-      "filename": "/Users/bordoloi/WORK/python/rbcodes/example-data/test.fits",
+      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/example-data/test.fits",
+      "filepath": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/example-data/test.fits",
+      "basename": "test.fits",
+      "file_directory": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/example-data",
       "has_data": true,
-      "data_points": 167,
-      "wavelength_range": [
-        1189.5239660704542,
-        1194.4856204756188
+      "current_wavelength_range": [
+        1189.5837450391912,
+        1193.977499241355
       ],
+      "current_data_points": 148,
       "original_wavelength_range": [
         1135.5634836239267,
         1795.5297733561463
       ],
       "original_data_points": 19663,
-      "wavelength_selection": {
-        "mode": "simple",
-        "min": 1189.5,
-        "max": 1194.5
-      },
-      "is_trimmed": true
+      "trim_range": null,
+      "union_info": null,
+      "processing_steps": [],
+      "is_trimmed": true,
+      "wave_step": null,
+      "spectral_resolution": null
     }
   },
   "config_systems": {
-    "cos": [
+    "COS": [
       {
         "z": 0.0,
         "ion": "SiII",
+        "components": 1,
         "transitions": [
           1190.5,
           1193.5
         ],
-        "id": "SiII_z0.000000"
+        "id": "0.000000_SiII"
       },
       {
-        "z": 0.1619,
+        "z": 0.1605,
         "ion": "HI",
+        "components": 1,
         "transitions": [
-          1025.6
+          1025.7
         ],
-        "id": "HI_z0.161900"
+        "id": "0.160500_HI"
       }
     ]
   },
   "config_parameters": {
-    "cos___SiII_z0.000000": {
-      "data": [
-        {
-          "Component": "1.0",
-          "N": 13.95,
-          "b": 22.0,
-          "v": -22.6
-        }
-      ],
+    "COS___0.000000_SiII": {
       "columns": [
         "Component",
         "N",
         "b",
         "v"
+      ],
+      "data": [
+        {
+          "Component": "1.0",
+          "N": 13.945086869411538,
+          "b": 22.0,
+          "v": -27.419354838709637
+        }
       ]
     },
-    "cos___HI_z0.161900": {
-      "data": [
-        {
-          "Component": "1.0",
-          "N": 13.66,
-          "b": 22.0,
-          "v": 21.0
-        }
-      ],
+    "COS___0.160500_HI": {
       "columns": [
         "Component",
         "N",
         "b",
         "v"
+      ],
+      "data": [
+        {
+          "Component": "1.0",
+          "N": 13.893994161233536,
+          "b": 22.0,
+          "v": 400.0000000000001
+        }
       ]
     }
   },
-  "current_config": "cos",
-  "current_system_id": "HI_z0.161900",
+  "current_config": "COS",
+  "current_system_id": "0.160500_HI",
   "master_theta": [
-    13.95,
-    13.66,
+    13.945086869411538,
+    13.893994161233536,
     22.0,
     22.0,
-    -22.6,
-    21.0
+    -27.419354838709637,
+    400.0000000000001
   ],
-  "collection_result_info": {
-    "n_systems": 2,
-    "n_params": 6,
-    "n_instruments": 1,
-    "system_info": [
-      {
-        "z": 0.0,
-        "ion": "SiII",
-        "transitions": [
-          1190.5,
-          1193.5
-        ],
-        "components": 1,
-        "source_instrument": "cos"
-      },
-      {
-        "z": 0.1619,
-        "ion": "HI",
-        "transitions": [
-          1025.6
-        ],
-        "components": 1,
-        "source_instrument": "cos"
-      }
-    ]
-  },
-  "gui_state": {
-    "current_tab": 0,
-    "tab_enabled": [
-      true,
-      true,
-      true,
-      true
-    ]
-  },
-  "saved_at": "2025-07-01T11:22:17.386497",
-  "rbvfit_version": "2.0"
+  "current_tab": 0,
+  "tab_enabled": [
+    true,
+    true,
+    true,
+    false
+  ]
 }

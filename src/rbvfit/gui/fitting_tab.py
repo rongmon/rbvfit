@@ -65,7 +65,7 @@ class MCMCThread(QThread):
                 optimize=self.mcmc_params['optimize'],
                 verbose=True,  # Allow vfit to print its own status
                 use_pool=self.mcmc_params['use_pool'],
-                progress=False  # Disable tqdm in GUI
+                progress=True  
             )
             
             self.status_update.emit("MCMC completed successfully")
@@ -425,8 +425,8 @@ class FittingTab(QWidget):
             self.canvas.draw()
             return
         
+        #grab values from the param_table
         current_theta, _, _ = self.param_bounds_table.get_parameters()   
-        print(current_theta) 
         data = self.instrument_data[self.current_instrument]
         wave = data['wave']
         flux = data['flux']
@@ -473,11 +473,25 @@ class FittingTab(QWidget):
         """Set custom plot range"""
         if not self.plot_ranges['original_xlim']:
             return
-            
+        
+
+
         current_xlim = self.plot_ranges['xlim'] or self.plot_ranges['original_xlim']
         current_ylim = self.plot_ranges['ylim'] or self.plot_ranges['original_ylim']
+
+
+        # Default ranges for velocity plots
+        original_xlim = (current_xlim)  # Default velocity range
+        original_ylim = (-0.02, 1.5)  # Default flux range
         
-        dialog = PlotRangeDialog(current_xlim, current_ylim, parent=self)
+        dialog = PlotRangeDialog(
+            current_xlim=current_xlim,
+            current_ylim=current_ylim, 
+            original_xlim=original_xlim,
+            original_ylim=original_ylim,
+            parent=self
+        )
+
         if dialog.exec_() == QDialog.Accepted:
             xlim, ylim = dialog.get_ranges()
             self.plot_ranges['xlim'] = xlim
@@ -583,11 +597,11 @@ class FittingTab(QWidget):
             # Extract from samples
             try:
                 if hasattr(fitter, 'get_samples'):
-                    samples = fitter.get_samples(flat=True, burn_in=0.5)
+                    samples = fitter.get_samples(flat=True, burn_in=0.2)
                     best_theta = np.median(samples, axis=0)
                 else:
                     # Fallback to sampler
-                    samples = fitter.sampler.get_chain(flat=True, discard=int(0.5 * fitter.no_of_steps))
+                    samples = fitter.sampler.get_chain(flat=True, discard=int(0.2 * fitter.no_of_steps))
                     best_theta = np.median(samples, axis=0)
             except:
                 best_theta = self.theta  # Fallback to original

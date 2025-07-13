@@ -246,11 +246,43 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
 
 
 
-def plot_velocity_space_custom(figure, results, velocity_range=None, show_components=True, show_rail=True, instrument_name=None,yrange=None):
-    """Simplified velocity space plotting"""
+def plot_velocity_space_custom(figure, results, velocity_range=None, show_components=True, show_rail=True, instrument_name=None, yrange=None):
+    """
+    Create velocity space plot for GUI showing all transitions in a single row.
+    
+    Parameters
+    ----------
+    figure : matplotlib.Figure
+        The Qt figure to plot on
+    results : UnifiedResults
+        Results object with config metadata
+    velocity_range : tuple, optional
+        Velocity range to plot in km/s (default: (-500, 500))
+    show_components : bool
+        Whether to show individual components
+    show_rail : bool
+        Whether to show transition markers (currently unused)
+    instrument_name : str, optional
+        Specific instrument to plot. If None, uses first instrument.
+    yrange : tuple, optional
+        Y-axis range for flux (default: (0, 1.2))
+    """
     figure.clear()
     
+    # Set defaults
+    if velocity_range is None:
+        velocity_range = (-500, 500)
+    if yrange is None:
+        yrange = (0, 1.2)
+    
     try:
+        # Check if we have config metadata for transition info
+        if not results.config_metadata:
+            ax = figure.add_subplot(111)
+            ax.text(0.5, 0.5, 'Model reconstruction not available',
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            return
+        
         # Get instrument data
         if instrument_name and instrument_name in results.instrument_data:
             inst_data = results.instrument_data[instrument_name]
@@ -259,49 +291,173 @@ def plot_velocity_space_custom(figure, results, velocity_range=None, show_compon
             inst_data = results.instrument_data[primary_inst]
             instrument_name = primary_inst
         
-        wave_obs = inst_data['wave']
-        flux_obs = inst_data['flux']
-        error_obs = inst_data['error']
-        best_theta = results.best_fit
+        wave_data = inst_data['wave']
+        flux_data = inst_data['flux']
+        error_data = inst_data['error']
         
-        # Try to get model
-        if results.config_metadata:
-            if results.is_multi_instrument:
-                model = results.reconstruct_model(instrument_name)
+        # Build list of all individual transitions
+        all_transitions = []
+        for system in results.config_metadata['systems']:
+            system_z = system['redshift']
+            for ion_group in system['ion_groups']:
+                ion_name = ion_group['ion_name']
+                for transition_wave in ion_group['transitions']:
+                    all_transitions.append({
+                        'system_z': system_z,
+                        'ion_name': ion_name,
+                        'rest_wavelength': transition_wave,
+                        'obs_wavelength': transition_wave * (1 + system_z)
+                    })
+        
+        if not all_transitions:
+            ax = figure.add_subplot(111)
+            ax.text(0.5, 0.5, 'No transitions found in config',
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            return
+        
+        n_transitions = len(all_transitions)
+        c_kms = 299792.458  # Speed of light in km/s
+        
+        # Determine grid layout
+        if n_transitions == 1:
+            n_rows, n_cols = 1, 1
+        elif n_transitions == 2:
+            n_rows, n_cols = 2, 1  # Vertical stack for 2 transitions
+        else:
+            n_cols = int(np.ceil(np.sqrt(n_transitions)))
+            n_rows = int(np.ceil(n_transitions / n_cols))
+        
+        # Create subplot grid
+        import math
+        axes = []
+        for i in range(n_transitions):
+            if i == 0:
+                ax = figure.add_subplot(n_rows, n_cols, i + 1)
             else:
-                model = results.reconstruct_model()
+                ax = figure.add_subplot(n_rows, n_cols, i + 1, sharex=axes[0])
+            axes.append(ax)
+        
+        # Get model for this instrument
+        if results.is_multi_instrument:
+            model = results.reconstruct_model(instrument_name)
+        else:
+            model = results.reconstruct_model()
+        
+        # Define colors for components
+        component_colors = plt.cm.tab10(np.linspace(0, 1, 10))
+        
+        # Plot each transition
+        for trans_idx, transition in enumerate(all_transitions):
+            ax = axes[trans_idx]
+            system_z = transition['system_z']
+            ion_name = transition['ion_name']
+            rest_wavelength = transition['rest_wavelength']
+            obs_wavelength = transition['obs_wavelength']
             
-            # Simple velocity conversion using center wavelength
-            center_wave = np.median(wave_obs)
-            c_kms = 299792.458
-            velocity = c_kms * (wave_obs / center_wave - 1)
+            # Check if this transition is covered by this instrument
+            if not (wave_data.min() <= obs_wavelength <= wave_data.max()):
+                # Transition not covered
+                ax.text(0.5, 0.5, f'{ion_name}\n{rest_wavelength:.1f}\nnot covered', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightyellow"))
+                ax.set_xlim(velocity_range)
+                ax.set_ylim(yrange)
+                ax.set_title(f'{ion_name} {rest_wavelength:.1f}', fontsize=10)
+                continue
+            
+            # Use this specific transition as velocity reference
+            lambda_ref = obs_wavelength
+            
+            # Convert to velocity space
+            velocity = c_kms * (wave_data / lambda_ref - 1)
+            
+            # Filter to velocity range
+            vel_mask = (velocity >= velocity_range[0]) & (velocity <= velocity_range[1])
+            if np.sum(vel_mask) == 0:
+                ax.text(0.5, 0.5, f'No data in\nvelocity range\n{velocity_range}', 
+                       ha='center', va='center', transform=ax.transAxes,
+                       fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor="lightcoral"))
+                ax.set_xlim(velocity_range)
+                ax.set_ylim(yrange)
+                ax.set_title(f'{ion_name} {rest_wavelength:.1f}', fontsize=10)
+                continue
+            
+            vel_plot = velocity[vel_mask]
+            flux_plot = flux_data[vel_mask]
+            error_plot = error_data[vel_mask]
             
             # Evaluate model
-            model_flux = model.evaluate(best_theta, wave_obs)
+            model_output = model.evaluate(results.best_fit, wave_data, return_components=True)
+            model_flux = model_output['flux']
+            model_plot = model_flux[vel_mask]
             
-            # Create plot
-            ax = figure.add_subplot(111)
-            ax.step(velocity, flux_obs, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
-            ax.fill_between(velocity, flux_obs - error_obs, flux_obs + error_obs,
-                           alpha=0.3, color='gray', label='1σ Error')
-            ax.plot(velocity, model_flux, 'r-', linewidth=2, label='Best Fit')
+            # Plot data
+            ax.step(vel_plot, flux_plot, 'k-', where='mid', linewidth=1, alpha=0.8, label='Data')
+            ax.fill_between(vel_plot, flux_plot - error_plot, flux_plot + error_plot, 
+                           alpha=0.3, color='gray', step='mid', label='1σ error')
             
-            # Set velocity range
-            if velocity_range:
-                ax.set_xlim(velocity_range)
-            if yrange:
-                ax.set_ylim(yrange)
+            # Plot model
+            ax.plot(vel_plot, model_plot, 'r-', linewidth=2, label='Best-fit model')
             
-            ax.set_xlabel('Velocity (km/s)')
-            ax.set_ylabel('Normalized Flux')
-            ax.set_title(f'Velocity Space - {instrument_name}')
-            ax.legend()
+            # Plot individual components if requested
+            if show_components and 'components' in model_output and len(model_output['components']) > 0:
+                model_components = model_output['components']
+                model_comp_info = model_output['component_info']
+                
+                for j, (component_flux, comp_info) in enumerate(zip(model_components, model_comp_info)):
+                    # Only plot components that match this transition
+                    comp_lambda0 = comp_info.get('lambda0', 0)
+                    if abs(comp_lambda0 - rest_wavelength) < 0.1:  # Match transition
+                        component_plot = component_flux[vel_mask]
+                        color = component_colors[j % len(component_colors)]
+                        
+                        # Create label with component info
+                        v_value = comp_info.get('v_value', 0)
+                        label = f'comp {j+1} (v={v_value:.1f})'
+                        
+                        ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5, 
+                               alpha=0.7, label=label)
+            
+            # Mark the reference transition at v=0
+            ax.axvline(0, color='blue', linestyle=':', alpha=0.8, linewidth=2)
+            
+            # Format subplot
             ax.grid(True, alpha=0.3)
+            ax.set_ylim(yrange)
+            ax.set_xlim(velocity_range)
             
-        else:
-            ax = figure.add_subplot(111)
-            ax.text(0.5, 0.5, 'Model reconstruction not available',
-                   ha='center', va='center', transform=ax.transAxes, fontsize=12)
+            # Hide tick labels for cleaner layout
+            # Hide y-tick labels for all but leftmost column
+            if not ((n_cols > 1 and trans_idx % n_cols == 0) or (n_cols == 1 and trans_idx == 0)):
+                ax.set_yticklabels([])
+            
+            # Hide x-tick labels for panels that have a panel below them
+            #if trans_idx + n_cols < n_transitions:
+            #    ax.set_xticklabels([])
+            
+            # Add transition info as text box inside panel instead of title
+            textstr = f'{ion_name} {rest_wavelength:.1f}\nz={system_z:.4f}'
+            props = dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='gray')
+            ax.text(0.02, 0.98, textstr, transform=ax.transAxes, fontsize=9,
+                   verticalalignment='top', bbox=props)
+            
+            # Only leftmost subplot gets y-label (for horizontal grids) or top subplot (for vertical)
+            if (n_cols > 1 and trans_idx % n_cols == 0) or (n_cols == 1 and trans_idx == 0):
+                ax.set_ylabel('Normalized Flux')
+            
+            # Bottom row gets x-label
+            if trans_idx >= n_transitions - (n_transitions % n_cols if n_transitions % n_cols != 0 else n_cols):
+                ax.set_xlabel('Velocity (km/s)')
+        
+        # Overall title
+        title = f'Velocity Space - {instrument_name} ({n_transitions} transitions)'
+        if show_components:
+            title += ' (showing components)'
+        figure.suptitle(title, fontsize=12)
+        
+        # Adjust layout - no spacing between panels, no legends
+        figure.tight_layout()
+        figure.subplots_adjust(hspace=0.2, wspace=0.2, top=0.9)
             
     except Exception as e:
         ax = figure.add_subplot(111)

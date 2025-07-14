@@ -63,7 +63,7 @@ class MCMCThread(QThread):
             # Run MCMC
             fitter.runmcmc(
                 optimize=self.mcmc_params['optimize'],
-                verbose=True,  # Allow vfit to print its own status
+                verbose=False,  # Allow vfit to print its own status
                 use_pool=self.mcmc_params['use_pool'],
                 progress=True  
             )

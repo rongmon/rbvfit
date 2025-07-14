@@ -23,7 +23,7 @@ from rbvfit.core.voigt_model import VoigtModel
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.parameter_manager import ParameterManager
 import rbvfit.vfit_mcmc as mc
-
+from rbvfit import rb_setline 
 # Try to import interactive parameter dialog
 try:
     from rbvfit.gui.interactive_param_dialog import InteractiveParameterDialog
@@ -199,23 +199,33 @@ class SystemDialog(QDialog):
         """Get system data from dialog"""
         transitions_text = self.transitions_edit.text().strip()
         transitions = []
+        detected_ion = None
         
         if transitions_text:
             for trans in transitions_text.split(','):
                 try:
                     wavelength = float(trans.strip())
-                    transitions.append(wavelength)
+                    line = rb.rb_setline(wavelength, 'closest')  # Fix import
+                    name = line['name'][0].split(' ')
+                    transitions.append(line['wave'][0])
+                    
+                    # Only set ion from first valid transition
+                    if detected_ion is None:
+                        detected_ion = name[0]
+                        
                 except ValueError:
                     continue
         
+        # Use detected ion or fallback to manual entry
+        ion_name = detected_ion if detected_ion else self.ion_edit.text().strip()
+        
         return {
             'z': self.z_spin.value(),
-            'ion': self.ion_edit.text().strip(),
+            'ion': ion_name,
             'components': self.components_spin.value(),
             'transitions': transitions,
-            'id': f"{self.z_spin.value():.6f}_{self.ion_edit.text().strip()}"  # Add ID for tracking
+            'id': f"{self.z_spin.value():.6f}_{ion_name}"  # Use same ion for ID
         }
-
 
 class ModelSetupTab(QWidget):
     """Clean tab for setting up absorption line models with full functionality"""

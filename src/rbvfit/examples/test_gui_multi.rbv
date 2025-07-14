@@ -1,105 +1,83 @@
 {
-  "version": "2.0",
-  "created": "2025-07-01 12:26:31.821259",
+  "version": "2.0.0",
+  "created": "2025-07-14T13:42:24.981555",
+  "rbvfit_version": "2.0",
   "configurations": {
-    "hires": {
-      "name": "hires",
-      "fwhm": 4.25,
-      "description": "",
-      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J1030_9089_HIRES_OI_air2vac_updated.json",
-      "has_data": true,
-      "data_points": 393,
-      "wavelength_range": [
-        1300.6678715972623,
-        1303.9931762908996
-      ],
-      "original_wavelength_range": [
-        1295.6543452672604,
-        1308.6758819508366
-      ],
-      "original_data_points": 1536,
-      "wavelength_selection": {
-        "mode": "simple",
-        "min": 1300.66,
-        "max": 1304.0
-      },
-      "is_trimmed": true
-    },
-    "xshooter": {
-      "name": "xshooter",
+    "XShooter": {
+      "name": "XShooter",
       "fwhm": 2.5,
       "description": "",
-      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J1030_9089_XShooter_OI1302.json",
+      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J159_7921_XShooter_OI1302.json",
+      "filepath": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J159_7921_XShooter_OI1302.json",
+      "basename": "J159_7921_XShooter_OI1302.json",
+      "file_directory": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples",
       "has_data": true,
-      "data_points": 65,
-      "wavelength_range": [
-        1300.7131836280475,
-        1303.9575932393261
+      "current_wavelength_range": [
+        1295.6879722229492,
+        1308.6391346801602
       ],
+      "current_data_points": 256,
       "original_wavelength_range": [
-        1295.6597969957677,
-        1308.6354622100391
+        1295.6879722229492,
+        1308.6391346801602
       ],
-      "original_data_points": 257,
-      "wavelength_selection": {
-        "mode": "simple",
-        "min": 1300.66,
-        "max": 1304.0
-      },
-      "is_trimmed": true
+      "original_data_points": 256,
+      "trim_range": null,
+      "union_info": null,
+      "processing_steps": [],
+      "is_trimmed": false,
+      "wave_step": null,
+      "spectral_resolution": null
+    },
+    "FIRE": {
+      "name": "FIRE",
+      "fwhm": 4.0,
+      "description": "",
+      "filename": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J159_7921_FIRE_OI1302.json",
+      "filepath": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples/J159_7921_FIRE_OI1302.json",
+      "basename": "J159_7921_FIRE_OI1302.json",
+      "file_directory": "/Users/bordoloi/WORK/python/rbvfit/src/rbvfit/examples",
+      "has_data": true,
+      "current_wavelength_range": [
+        1295.6775434286212,
+        1308.6538130672964
+      ],
+      "current_data_points": 240,
+      "original_wavelength_range": [
+        1295.6775434286212,
+        1308.6538130672964
+      ],
+      "original_data_points": 240,
+      "trim_range": null,
+      "union_info": null,
+      "processing_steps": [],
+      "is_trimmed": false,
+      "wave_step": null,
+      "spectral_resolution": null
     }
   },
   "config_systems": {
-    "hires": [
+    "XShooter": [
       {
         "z": 0.0,
         "ion": "OI",
+        "components": 1,
         "transitions": [
-          1302.5
+          1302.168
         ],
-        "id": "OI_z0.000000"
+        "id": "0.000000_OI"
       }
     ],
-    "xshooter": [
-      {
-        "z": 0.0,
-        "ion": "OI",
-        "transitions": [
-          1302.5
-        ],
-        "id": "OI_z0.000000"
-      }
-    ]
+    "FIRE": []
   },
   "config_parameters": {
-    "hires___OI_z0.000000": {
-      "data": [],
-      "columns": [
-        "Component",
-        "N",
-        "b",
-        "v"
-      ]
-    },
-    "xshooter___OI_z0.000000": {
+    "XShooter___0.000000_OI": {
       "data": [
         {
           "Component": "1.0",
-          "N": 13.34,
-          "b": 22.0,
-          "v": -174.2
-        },
-        {
-          "Component": "2.0",
-          "N": 13.95,
-          "b": 22.0,
-          "v": -108.1
-        },
-        {
-          "Component": "3.0",
-          "N": 13.16,
-          "b": 22.0,
-          "v": -22.6
+          "N": 14.006613086170667,
+          "b": 12.0,
+          "v": 216.1290322580645
         }
       ],
       "columns": [
@@ -110,44 +88,19 @@
       ]
     }
   },
-  "current_config": "xshooter",
-  "current_system_id": "OI_z0.000000",
+  "current_config": "XShooter",
+  "current_system_id": "0.000000_OI",
   "master_theta": [
-    13.34,
-    13.95,
-    13.16,
+    14.006613086170667,
     22.0,
-    22.0,
-    22.0,
-    -174.2,
-    -108.1,
-    -22.6
+    216.1290322580645
   ],
-  "collection_result_info": {
-    "n_systems": 1,
-    "n_params": 9,
-    "n_instruments": 2,
-    "system_info": [
-      {
-        "z": 0.0,
-        "ion": "OI",
-        "transitions": [
-          1302.5
-        ],
-        "components": 3,
-        "source_instrument": "xshooter"
-      }
-    ]
-  },
-  "gui_state": {
-    "current_tab": 0,
-    "tab_enabled": [
-      true,
-      true,
-      true,
-      false
-    ]
-  },
-  "saved_at": "2025-07-01T12:26:31.822066",
-  "rbvfit_version": "2.0"
+  "current_tab": 3,
+  "tab_enabled": [
+    true,
+    true,
+    true,
+    true
+  ],
+  "saved_at": "2025-07-14T13:42:24.982054"
 }

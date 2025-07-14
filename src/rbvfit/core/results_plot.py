@@ -546,8 +546,6 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
         
         # Get model
         model = results.reconstruct_model(inst_name if results.is_multi_instrument else None)
-        print(inst_name)
-        print(model.get_info())
         
         # Get model output with components if requested
         if show_components:

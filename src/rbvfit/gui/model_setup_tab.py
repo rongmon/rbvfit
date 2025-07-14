@@ -32,59 +32,44 @@ except ImportError:
     HAS_INTERACTIVE_DIALOG = False
 
 
-# Ion templates with full flexibility
 ION_TEMPLATES = {
-    "Custom (manual entry)": {
-        "ion": "",
-        "transitions": []
-    },
-    "CIV": {
-        "ion": "CIV", 
-        "transitions": [1548.2, 1550.8]
-    },
-    "SiIV": {
-        "ion": "SiIV",
-        "transitions": [1393.8, 1402.8]
-    },
-    "OI": {
-        "ion": "OI",
-        "transitions": [1302.2]
-    },
-    "SiII": {
-        "ion": "SiII", 
-        "transitions": [1260.4, 1304.4, 1526.7]
-    },
-    "FeII": {
-        "ion": "FeII",
-        "transitions": [1608.5, 2374.5, 2382.8, 2586.7, 2600.2]
-    },
-    "MgII": {
-        "ion": "MgII",
-        "transitions": [2796.4, 2803.5]
-    },
-    "AlIII": {
-        "ion": "AlIII",
-        "transitions": [1854.7, 1862.8]
-    },
-    "CIII": {
-        "ion": "CIII",
-        "transitions": [977.0]
-    },
-    "NV": {
-        "ion": "NV", 
-        "transitions": [1238.8, 1242.8]
-    },
-    "OVI": {
-        "ion": "OVI",
-        "transitions": [1031.9, 1037.6]
-    },
-    "Lyman-α": {
+    "Custom (manual entry)": {"ion": "", "transitions": []},
+
+    # Low-ionization species
+    "CII":     {"ion": "CII",     "transitions": [1334.532]},
+    "CIII":    {"ion": "CIII",    "transitions": [977.020]},
+    "CIV":     {"ion": "CIV",     "transitions": [1548.195, 1550.770]},
+    "OI":      {"ion": "OI",      "transitions": [1302.168]},
+    "SiII":    {"ion": "SiII",    "transitions": [1190.416, 1193.290, 1260.422, 1304.370, 1526.707, 1808.012]},
+    "SiIV":    {"ion": "SiIV",    "transitions": [1393.755, 1402.770]},
+    "AlIII":   {"ion": "AlIII",   "transitions": [1854.716, 1862.790]},
+    "FeII":    {"ion": "FeII",    "transitions": [1608.451, 2344.214, 2374.461, 2382.765, 2586.650, 2600.173]},
+    "FeIII":   {"ion": "FeIII",   "transitions": [1122.526]},
+    "MgII":    {"ion": "MgII",    "transitions": [2796.352, 2803.531]},
+
+    # Intermediate/high-ionization species
+    "NV":      {"ion": "NV",      "transitions": [1238.821, 1242.804]},
+    "OVI":     {"ion": "OVI",     "transitions": [1031.926, 1037.617]},
+    "OV":      {"ion": "OV",      "transitions": [629.730]},
+    "OIV":     {"ion": "OIV",     "transitions": [608.397, 787.711]},
+    "OIII":    {"ion": "OIII",    "transitions": [832.927]},
+    "SIV":     {"ion": "SIV",     "transitions": [1062.664]},
+    "SV":      {"ion": "SV",      "transitions": [786.468, 933.378]},
+    "SVI":     {"ion": "SVI",     "transitions": [933.378, 944.523]},
+    "NeVIII":  {"ion": "NeVIII",  "transitions": [770.409, 780.324]},
+    "MgX":     {"ion": "MgX",     "transitions": [609.793, 624.941]},
+    "ArVIII":  {"ion": "ArVIII",  "transitions": [700.242]},
+    "NIII":    {"ion": "NIII",    "transitions": [989.799]},
+
+    # Hydrogen series
+    "Lyman-α": {"ion": "HI",      "transitions": [1215.670]},
+    "Lyman-β": {"ion": "HI",      "transitions": [1025.722]},
+    "HI-series": {
         "ion": "HI",
-        "transitions": [1215.7]
-    },
-    "Lyman-β": {
-        "ion": "HI", 
-        "transitions": [1025.7]
+        "transitions": [
+            917.180, 918.129, 919.351, 920.963, 923.150, 926.226,
+            930.748, 937.803, 949.743, 972.537, 1025.722, 1215.670
+        ]
     }
 }
 

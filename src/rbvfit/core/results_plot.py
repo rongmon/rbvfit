@@ -147,7 +147,7 @@ def chain_trace_plot(results, figure=None, show=True, **kwargs):
 
 
 
-def corner_plot(results, **kwargs) -> plt.Figure:
+def corner_plot(results,save_path: Optional[str] = None, **kwargs) -> plt.Figure:
     """
     Create corner plot of parameter posteriors.
     
@@ -194,7 +194,14 @@ def corner_plot(results, **kwargs) -> plt.Figure:
                  fontsize=14, y=0.96)
     
     fig.tight_layout(rect=[0, 0, 1, 0.98])  # Leave room at top for suptitle
-    plt.show()
+
+    if save_path:
+        fig.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"✅ Saved corner plot to {save_path}")
+    else:
+        plt.show()
+
+
     return fig
 
 
@@ -454,7 +461,7 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
 
 def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple[float, float]] = None,
                   y_range: Optional[Tuple[float, float]] = None, show_components: bool = False,
-                  show_residuals: bool = True, save_path: Optional[str] = None) -> plt.Figure:
+                  show_residuals: bool = True, show_legends: bool = False,save_path: Optional[str] = None) -> plt.Figure:
     """
     Create residuals plot showing model vs data comparison.
     
@@ -472,6 +479,8 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
         Whether to show individual components
     show_residuals : bool
         Whether to show residuals panel (default: True)
+    show_legends : bool
+        Whether to show legends (default: False)        
     save_path : str, optional
         Path to save the plot
         
@@ -576,7 +585,7 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
                 v_value = comp_info['v_value']
                 label = f'λ{lambda0:.1f} (z={z_total:.4f}, v={v_value:.1f})'
                 
-                ax_data.plot(wave_plot, component_plot, '--', color=color, linewidth=1.5, 
+                ax_data.plot(wave_plot, component_plot, '--', color=color, linewidth=0.5, 
                            alpha=0.7, label=label)
         
         # Add rail system
@@ -590,12 +599,13 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
         if y_range is not None:
             ax_data.set_ylim(y_range)
         
-        # Handle legend - components can make it crowded
-        if show_components and 'model_components' in locals() and len(model_components) > 5:
-            # If many components, put legend outside plot
-            ax_data.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-        else:
-            ax_data.legend()
+        if show_legends:
+            # Handle legend - components can make it crowded
+            if show_components and 'model_components' in locals() and len(model_components) > 5:
+                # If many components, put legend outside plot
+                ax_data.legend(bbox_to_anchor=(1.05, 1), loc='lower right')
+            else:
+                ax_data.legend()
         
         # Residuals plot (only if show_residuals is True)
         if show_residuals:
@@ -610,7 +620,8 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
             ax_res.axhline(-3, color='red', linestyle=':', alpha=0.5)
             
             ax_res.set_ylabel('Residuals/σ')
-            ax_res.legend()
+            if show_legends:
+                ax_res.legend()
             ax_res.grid(True, alpha=0.3)
             
             # Set x-range for residuals panel
@@ -672,7 +683,7 @@ def _add_rail_system(ax,results, wave_data):
         # Plotting config
         colors = ['blue', 'green', 'red', 'orange', 'purple', 'brown', 'pink', 'gray']
         y_rail_base = 1.2
-        rail_spacing = 0.5
+        rail_spacing = 0.1
         tick_len = 0.2
 
         # Track global component index
@@ -721,9 +732,9 @@ def _add_rail_system(ax,results, wave_data):
                 ax.text(rail_center,
                         y_rail + 0.02,
                         f"{ion_name}\nz = {z:.3f}",
-                        ha='right',
+                        ha='center',
                         va='bottom',
-                        fontsize=9,
+                        fontsize=8,
                         weight='medium',
                         bbox=dict(
                             boxstyle='round,pad=0.25',
@@ -754,7 +765,7 @@ def _add_rail_system(ax,results, wave_data):
                                 #        ha='center', va='top', fontsize=9, 
                                 #        color=color, rotation=90)
                                 ax.text(obs_wave,
-                                        y_rail + 1.5 * tick_len,
+                                        y_rail + 0.25 * tick_len,
                                         f'c{comp_local_idx+1} ({v_comp:.0f} km/s)',
                                         ha='center',
                                         va='bottom',

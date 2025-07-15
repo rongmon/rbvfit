@@ -73,17 +73,16 @@ from rbvfit.core.voigt_model import VoigtModel
 import rbvfit.vfit_mcmc as mc
 
 # Set up configuration with FWHM at the start
-config = FitConfiguration(FWHM='2.5')  # Define resolution at configuration stage (pixels)
+config = FitConfiguration() 
 config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 
+FWHM_pixels='6.5'#FWHM in pixels
 # Note: If you have FWHM in km/s, convert to pixels:
 # from rbvfit.core.voigt_model import mean_fwhm_pixels
 # FWHM_pixels = mean_fwhm_pixels(FWHM_vel_kms, wave_obs_grid)
-# config = FitConfiguration(FWHM=str(FWHM_pixels))
 
 # Create model (FWHM automatically extracted from configuration)
-model = VoigtModel(config)
-compiled = model.compile()
+model = VoigtModel(config,FWHM=FWHM_pixels)
 
 # Set initial parameter guesses
 nguess = [14.2, 14.5]  # log10(column density) in cm^-2
@@ -94,14 +93,38 @@ vguess = [0., 0.]      # Velocity offset in km/s
 bounds, lb, ub = mc.set_bounds(nguess, bguess, vguess)
 theta_guess = np.concatenate([nguess, bguess, vguess])
 
+# Create Instrument Data dictionary for fitter
+instrument_data = {
+    'COS': {
+        'model': model,
+        'wave': wave, # Wavelength grid in Angstroms
+        'flux': flux, # Normalized flux array
+        'error': error # Normalized error array
+    }
+}
+
 # Fit with MCMC
-fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
-fitter.runmcmc()
+fitter = mc.vfit(
+    instrument_data, theta, lb, ub,
+    no_of_Chain=n_walkers, 
+    no_of_steps=n_steps,
+    sampler='zeus',
+    perturbation=1e-4
+)
+
+
+
+        
+# Run MCMC
+fitter.runmcmc(optimize=True, verbose=True, use_pool=False)
+
+
 
 # Analyze results
-from rbvfit.core import fit_results as fr
-results = fr.FitResults(fitter, model)
-results.print_fit_summary()
+from rbvfit.core import unified_results as u 
+results = u.UnifiedResults(fitter)
+results.print_summary()   
+results.help()
 ```
 
 ## What's New in Version 2.0
@@ -138,8 +161,9 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **voigt_model.py**: Main model class for creating and evaluating Voigt profiles with automatic ion parameter tying
 - **fit_configuration.py**: Configuration system for defining multi-system absorption setups with FWHM integration
 - **parameter_manager.py**: Handles parameter mapping between configurations and fitting arrays
-- **fit_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
+- **unified_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
 - **quick_fit_interface.py**: Fast scipy.optimize-based fitting interface
+- **results_plot.py**: Advanced plotting utilities for fit diagnostics and visualizations
 
 **Interactive Tools**:
 - **guess_profile_parameters_interactive.py**: **Enhanced interactive parameter estimation with GUI support**
@@ -150,10 +174,6 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 **Utility Modules**:
 - **rb_setline.py**: Line properties reader using approximate rest wavelength guess (active in v2.0)
 
-**Legacy Modules (Version 1.0 - still available)**:
-- **rb_model.py**: Original top-level code for complex multi-component/multi-species Voigt profiles
-- **rb_vfit.py**: General code to create individual Voigt profiles
-- **rb_interactive_vpfit.py**: Interactive Voigt profile fitter with least squares and MCMC options
 
 **Key Version 2.0 Improvements**:
 - **🎯 Enhanced Interactive Tools**: Visual component identification with cross-platform GUI support
@@ -183,13 +203,12 @@ from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 
 # Configure with FWHM at setup stage
-config = FitConfiguration(FWHM='2.5')
+config = FitConfiguration()
 config.add_system(z=zabs, ion='CIV', transitions=[1548.2, 1550.3], 
                   components=len(tab.nguess))
 
 # Create model (FWHM automatically extracted from configuration)
-model = VoigtModel(config)
-model_compiled = model.compile()
+model = VoigtModel(config,FWHM='2.5')
 ```
 
 ### 3. MCMC Fitting
@@ -199,18 +218,29 @@ import rbvfit.vfit_mcmc as mc
 theta = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
 bounds, lb, ub = mc.set_bounds(tab.nguess, tab.bguess, tab.vguess)
 
-fitter = mc.vfit(model_compiled.model_flux, theta, lb, ub, wave, flux, error)
+instrument_data = {
+    'COS': {
+        'model': model,
+        'wave': wave,  # Wavelength grid in Angstroms
+        'flux': flux,  # Normalized flux array
+        'error': error  # Normalized error array
+    }
+}
+fitter = mc.vfit(instrument_data, theta, lb, ub)
 fitter.runmcmc()
 ```
 
 ### 4. Results Analysis
 ```python
-from rbvfit.core import fit_results as f
+from rbvfit.core import unified_results as u 
+results = u.UnifiedResults(fitter)
 
-results = f.FitResults(fitter, model)
-results.print_fit_summary()
-results.corner_plot()
-results.plot_velocity_fits()
+results.help() # Help and documentation
+results.print_summary()   # Print fit summary
+
+out = results.convergence_diagnostics() # convergence diagnostics
+results.corner_plot() # Corner plot of parameters
+results.velocity_plot() # Velocity plot of fitted components
 ```
 
 ## 🎮 Interactive Mode
@@ -252,7 +282,7 @@ tab = g.gui_set_clump(wave, flux, error, z_abs=0.5, wrest=1548.5)
 tab.input_b_guess()  # Use GUI to adjust N, b, v values
 
 # Step 4: Extract parameters for fitting
-config = FitConfiguration(FWHM='2.5')
+config = FitConfiguration()
 config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], 
                   components=len(tab.nguess))
 

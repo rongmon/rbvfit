@@ -31,7 +31,7 @@ import rbvfit.vfit_mcmc as mc
 print("Creating synthetic absorption spectrum...")
 
 # Set up the physical system with instrumental resolution
-config = FitConfiguration(FWHM='2.5')  # Define FWHM at configuration stage
+config = FitConfiguration()
 config.add_system(
     z=0.348,                          # Redshift
     ion='MgII',                       # Ion species  
@@ -39,9 +39,9 @@ config.add_system(
     components=2                       # Number of velocity components
 )
 
-# Create model (FWHM automatically extracted from configuration)
-model = VoigtModel(config)
-compiled_model = model.compile()
+# Create model with instrumental resolution
+FWHM_pixels = '2.5'  # FWHM in pixels
+model = VoigtModel(config, FWHM=FWHM_pixels)
 
 # Define wavelength grid (observed frame)
 wave = np.linspace(3760, 3800, 1500)  # Around MgII at z=0.348
@@ -54,7 +54,7 @@ true_params = np.array([
 ])
 
 # Generate clean synthetic spectrum
-flux_clean = compiled_model.model_flux(true_params, wave)
+flux_clean = model.evaluate(true_params, wave)
 
 # Add realistic noise
 np.random.seed(42)  # For reproducible results
@@ -78,9 +78,9 @@ v_guess = [-30.0, +20.0]   # Velocity offsets
 # Set parameter bounds
 bounds, lb, ub = mc.set_bounds(
     N_guess, b_guess, v_guess,
-    Nlow=[12.0, 12.0], Nhi=[16.0, 16.0], #optional custom bounds
-    blow=[5.0, 5.0], bhi=[80.0, 80.0], #optional custom bounds
-    vlow=[-150.0, -150.0], vhi=[150.0, 150.0]#optional custom bounds
+    Nlow=[12.0, 12.0], Nhi=[16.0, 16.0],    # Optional custom bounds
+    blow=[5.0, 5.0], bhi=[80.0, 80.0],      # Optional custom bounds
+    vlow=[-150.0, -150.0], vhi=[150.0, 150.0] # Optional custom bounds
 )
 
 # Combine into theta array
@@ -89,34 +89,41 @@ print(f"Initial guess: {theta_guess}")
 print(f"True values:   {true_params}")
 ```
 
-### 4. Run the Fit
+### 4. Run the Fit (Unified Interface)
 
 ```python
-# Create fitter
+# Create Instrument Data dictionary for unified interface
+instrument_data = {
+    'COS': {
+        'model': model,     # VoigtModel object
+        'wave': wave,       # Wavelength grid in Angstroms
+        'flux': flux_obs,   # Normalized flux array
+        'error': error      # Normalized error array
+    }
+}
+
+# Create fitter with unified interface
 fitter = mc.vfit(
-    compiled_model.model_flux, theta_guess, 
-    lb, ub, wave, flux_obs, error,sampler='emcee'
+    instrument_data, theta_guess, lb, ub,
+    no_of_Chain=20,      # Number of walkers
+    no_of_steps=500,     # Number of MCMC steps
+    sampler='emcee',     # or 'zeus'
+    perturbation=1e-4
 )
-
-
-# Set MCMC parameters
-fitter.no_of_Chain = 20    # Number of walkers
-fitter.no_of_steps = 500   # Number of MCMC steps
 
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True)
-
 ```
 
 ### 5. Analyze Results
 
 ```python
-# Create results object
-from rbvfit.core import fit_results as fr
-results = fr.FitResults(fitter, model)
+# Create results object with unified interface
+from rbvfit.core import unified_results as u 
+results = u.UnifiedResults(fitter)
 
 # Print parameter summary
-results.print_fit_summary()
+results.print_summary()
 
 # Quick visualization
 import matplotlib.pyplot as plt
@@ -126,8 +133,8 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8),
                                gridspec_kw={'height_ratios': [3, 1]})
 
 # Best-fit model
-best_params = results.parameter_summary().best_fit
-flux_best = compiled_model.model_flux(best_params, wave)
+best_params = results.best_fit
+flux_best = model.evaluate(best_params, wave)
 
 # Main plot
 ax1.plot(wave, flux_obs, 'k-', alpha=0.7, label='Synthetic Data')
@@ -177,10 +184,13 @@ Now that you have rbvfit2 working, explore these topics:
 # Load your own spectrum
 wave, flux, error = load_your_spectrum()  # Replace with your data loading
 
-# Configure for your absorption system
-config = FitConfiguration(FWHM='3.0')  # Adjust FWHM for your instrument
+# Configure for your absorption system  
+config = FitConfiguration()
 config.add_system(z=your_redshift, ion='YourIon', 
                   transitions=[rest_wavelengths], components=N_components)
+
+# Create model with your instrument's FWHM
+model = VoigtModel(config, FWHM='3.0')  # Adjust FWHM for your instrument
 ```
 
 ### 🎮 **Interactive Parameter Estimation**
@@ -199,23 +209,40 @@ v_guess = tab.vguess
 
 ### 🔭 **Multi-Instrument Fitting**
 ```python
-# Joint fitting of data from multiple telescopes
-config_A = FitConfiguration(FWHM='2.2')  # XShooter
-config_A.add_system(z=z_abs, ion='OI', transitions=[1302.17], components=1)
+# Joint fitting of data from multiple telescopes using unified interface
+config = FitConfiguration()
+config.add_system(z=z_abs, ion='OI', transitions=[1302.17], components=1)
 
-config_B = FitConfiguration(FWHM='4.0')  # FIRE  
-config_B.add_system(z=z_abs, ion='OI', transitions=[1302.17], components=1)
+# Create models with different FWHM for each instrument
+model_xshooter = VoigtModel(config, FWHM='2.2')  # XShooter
+model_fire = VoigtModel(config, FWHM='4.0')      # FIRE  
 
-# Models automatically use correct FWHM from configurations
-model_A = VoigtModel(config_A)
-model_B = VoigtModel(config_B)
+# Unified instrument data dictionary
+instrument_data = {
+    'XShooter': {
+        'model': model_xshooter,
+        'wave': wave_xshooter,
+        'flux': flux_xshooter,
+        'error': error_xshooter
+    },
+    'FIRE': {
+        'model': model_fire,
+        'wave': wave_fire,
+        'flux': flux_fire,
+        'error': error_fire
+    }
+}
+
+# Same fitting interface for multi-instrument!
+fitter = mc.vfit(instrument_data, theta_guess, lb, ub)
+fitter.runmcmc()
 ```
 
 ### 📊 **Advanced Analysis**
 ```python
 # Comprehensive results analysis
 results.corner_plot(save_path='corner_plot.pdf')
-results.plot_velocity_fits(save_path='velocity_plot.pdf')
+results.velocity_plot(save_path='velocity_plot.pdf') 
 results.convergence_diagnostics()
 
 # Save results for later
@@ -227,26 +254,29 @@ results.save('my_first_fit.h5')
 ### Single Ion, Multiple Components
 ```python
 # Multiple velocity components of same ion
-config = FitConfiguration(FWHM='2.5')
+config = FitConfiguration()
 config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], components=3)
+model = VoigtModel(config, FWHM='2.5')
 # Fits: [N1, N2, N3, b1, b2, b3, v1, v2, v3]
 ```
 
 ### Multiple Ions, Same Redshift  
 ```python
 # Different ions at same redshift (shared kinematics)
-config = FitConfiguration(FWHM='3.0')
+config = FitConfiguration()
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
+model = VoigtModel(config, FWHM='3.0')
 # Shared velocity structure between ions
 ```
 
 ### Multiple Redshift Systems
 ```python
 # Independent systems at different redshifts
-config = FitConfiguration(FWHM='2.8')
+config = FitConfiguration()
 config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=1)
-config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2) 
+config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2)
+model = VoigtModel(config, FWHM='2.8')
 # Independent velocity structures
 ```
 
@@ -283,8 +313,8 @@ if np.any(best_params <= lb) or np.any(best_params >= ub):
 # Expand bounds if needed
 bounds, lb, ub = mc.set_bounds(
     N_guess, b_guess, v_guess,
-    Nlow=[10.0, 10.0], Nhi=[18.0, 18.0],  # Wider N range
-    blow=[3.0, 3.0], bhi=[100.0, 100.0],  # Wider b range
+    Nlow=[10.0, 10.0], Nhi=[18.0, 18.0],    # Wider N range
+    blow=[3.0, 3.0], bhi=[100.0, 100.0],    # Wider b range
     vlow=[-300.0, -300.0], vhi=[300.0, 300.0]  # Wider v range
 )
 ```
@@ -305,7 +335,7 @@ bounds, lb, ub = mc.set_bounds(
 
 ---
 
-**🎉 Congratulations!** You've successfully run your first rbvfit2 absorption line fit. 
+**🎉 Congratulations!** You've successfully run your first rbvfit2 absorption line fit using the new unified interface.
 
 **Next recommended steps:**
 1. Try the [Interactive Tutorial](tutorials.md#3-single-instrument-analysis) 

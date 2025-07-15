@@ -349,6 +349,7 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
             
             # Check if this transition is covered by this instrument
             if not (wave_data.min() <= obs_wavelength <= wave_data.max()):
+                print(wave_data.min(),obs_wavelength,wave_data.max())
                 # Transition not covered by this instrument
                 ax.text(0.5, 0.5, f'{ion_name} {rest_wavelength:.1f}\nnot covered', 
                        ha='center', va='center', transform=ax.transAxes,

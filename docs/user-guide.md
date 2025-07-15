@@ -28,7 +28,7 @@ rbvfit separates **physical** absorption properties from **instrumental** effect
 - **v**: Velocity offset [km/s] - relative to systemic redshift
 
 **Instrumental Parameters:**
-- **FWHM**: Spectral resolution [pixels or km/s] - defined at configuration stage
+- **FWHM**: Spectral resolution [pixels or km/s] - defined at model creation
 - **LSF**: Line spread function shape (Gaussian default)
 
 ### Automatic Ion Parameter Tying
@@ -40,14 +40,17 @@ Key innovation in rbvfit: **Same ion at same redshift = shared parameters**
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
 
-#Analysis module import
-from rbvfit.core import fit_results as fr
+# Analysis module import
+from rbvfit.core import unified_results as u
 ```
 
 ```python
-# This configuration automatically ties MgII parameters and sets FWHM
-config = FitConfiguration(FWHM='2.5')
+# This configuration automatically ties MgII parameters
+config = FitConfiguration()
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
+
+# Create model with FWHM
+model = VoigtModel(config, FWHM='2.5')
 
 # Result: Fits [N1, N2, b1, b2, v1, v2] shared between both transitions
 # NOT separate parameters for each transition
@@ -59,9 +62,12 @@ Handle complex contamination naturally:
 
 ```python
 # Foreground MgII + background CIV with instrument-specific FWHM
-config = FitConfiguration(FWHM='2.2')
+config = FitConfiguration()
 config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
+
+# Create model with FWHM
+model = VoigtModel(config, FWHM='2.2')
 
 # Total parameters: [N_Mg1, N_Mg2, N_CIV, b_Mg1, b_Mg2, b_CIV, v_Mg1, v_Mg2, v_CIV]
 ```
@@ -74,31 +80,40 @@ config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 4. Parameter Setup → 5. Fitting (Quick/MCMC) → 6. Results Analysis
 ```
 
-### Typical Session
+### Typical Session (Unified Interface)
 
 ```python
 # 1. Load and prepare data
 wave, flux, error = load_your_spectrum()
 
-# 2. Configure physical systems with instrumental setup
-config = FitConfiguration(FWHM='2.0')
+# 2. Configure physical systems
+config = FitConfiguration()
 config.add_system(z=redshift, ion='Ion', transitions=[...], components=N)
 
-# 3. Create model (FWHM automatically extracted from config)
-model = VoigtModel(config)
-compiled = model.compile()
+# 3. Create model with FWHM
+model = VoigtModel(config, FWHM='2.0')
 
 # 4. Set up parameters and bounds
 theta_guess = [N_values, b_values, v_values]
-bounds = mc.set_bounds(N_guess, b_guess, v_guess)
+bounds, lb, ub = mc.set_bounds(N_guess, b_guess, v_guess)
 
-# 5. Fit
-fitter = mc.vfit(compiled.model_flux, theta_guess, bounds, wave, flux, error)
+# 5. Create instrument data dictionary (UNIFIED INTERFACE)
+instrument_data = {
+    'INSTRUMENT_NAME': {
+        'model': model,         # VoigtModel object
+        'wave': wave,           # Wavelength array
+        'flux': flux,           # Normalized flux array
+        'error': error          # Error array
+    }
+}
+
+# 6. Fit with unified interface
+fitter = mc.vfit(instrument_data, theta_guess, lb, ub)
 fitter.runmcmc()  # or fitter.fit_quick()
 
-# 6. Analyze results
-results = fr.FitResults(fitter, model)
-results.print_fit_summary()
+# 7. Analyze results
+results = u.UnifiedResults(fitter)
+results.print_summary()
 ```
 
 ## Data Preparation
@@ -150,23 +165,29 @@ error_norm = error / p(wave)
 ### Basic Ion System
 
 ```python
-# Single ion system with FWHM configuration
-config = FitConfiguration(FWHM='3.0')  # Define resolution at configuration
+# Single ion system configuration
+config = FitConfiguration()
 config.add_system(
     z=0.348,                         # Absorption redshift
     ion='MgII',                      # Ion species
     transitions=[2796.3, 2803.5],   # Rest wavelengths [Å]
     components=2                     # Number of velocity components
 )
+
+# Create model with FWHM
+model = VoigtModel(config, FWHM='3.0')
 ```
 
 ### Multi-Ion Systems
 
 ```python
 # Multiple ions at same redshift
-config = FitConfiguration(FWHM='4.5')
+config = FitConfiguration()
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
+
+# Create model - same FWHM applies to all systems
+model = VoigtModel(config, FWHM='4.5')
 # Note: Same z means shared kinematics (v1, v2) between MgII and FeII
 ```
 
@@ -174,9 +195,12 @@ config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
 
 ```python
 # Foreground and background systems
-config = FitConfiguration(FWHM='2.8')
+config = FitConfiguration()
 config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=1)
 config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2)
+
+# Create model
+model = VoigtModel(config, FWHM='2.8')
 # Independent velocity structure for each redshift
 ```
 
@@ -184,7 +208,7 @@ config.add_system(z=1.2, ion='CIV', transitions=[1548.2, 1550.3], components=2)
 
 ```python
 # Custom line selection and validation
-config = FitConfiguration(FWHM='6.0')
+config = FitConfiguration()
 config.add_system(
     z=0.8, 
     ion='SiII', 
@@ -192,6 +216,8 @@ config.add_system(
     components=3,
     validate_ion=True  # Verify transitions belong to declared ion
 )
+
+model = VoigtModel(config, FWHM='6.0')
 ```
 
 ## Model Creation
@@ -201,12 +227,11 @@ config.add_system(
 ```python
 from rbvfit.core.voigt_model import VoigtModel
 
-# Create model (FWHM automatically extracted from configuration)
-config = FitConfiguration(FWHM='2.5')
+# Create model with FWHM specification
+config = FitConfiguration()
 config.add_system(z=0.5, ion='CIV', transitions=[1548.2, 1550.3], components=2)
 
-model = VoigtModel(config)  # No FWHM parameter needed
-compiled = model.compile()
+model = VoigtModel(config, FWHM='2.5')  # FWHM in pixels
 ```
 
 ### Parameter Structure
@@ -226,9 +251,11 @@ theta_example = [13.5, 13.2, 15.0, 25.0, -150.0, 20.0]
 
 ```python
 # Example: 2-comp MgII + 1-comp CIV
-config = FitConfiguration(FWHM='3.0')
+config = FitConfiguration()
 config.add_system(z=0.3, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
+
+model = VoigtModel(config, FWHM='3.0')
 
 # theta = [N_Mg1, N_Mg2, N_CIV, b_Mg1, b_Mg2, b_CIV, v_Mg1, v_Mg2, v_CIV]
 #         |------ N ------|  |------ b ------|  |------ v ------|
@@ -240,7 +267,7 @@ config.add_system(z=1.5, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 # Generate synthetic spectrum
 wave = np.linspace(3700, 3820, 10000)
 theta = [13.5, 13.2, 15.0, 25.0, -150.0, 20.0]
-flux_model = compiled.model_flux(theta, wave)
+flux_model = model.evaluate(theta, wave)
 
 # Plot comparison
 import matplotlib.pyplot as plt
@@ -303,8 +330,17 @@ v_guess = tab.vguess
 Fast approximate fitting using least-squares optimization:
 
 ```python
-# Quick fit for initial exploration
-fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
+# Quick fit for initial exploration - works with unified interface
+instrument_data = {
+    'COS': {
+        'model': model,
+        'wave': wave,
+        'flux': flux,
+        'error': error
+    }
+}
+
+fitter = mc.vfit(instrument_data, theta_guess, lb, ub)
 result = fitter.fit_quick()
 
 print(f"Best-fit parameters: {result.x}")
@@ -313,22 +349,34 @@ print(f"Reduced chi-squared: {result.fun / (len(wave) - len(theta_guess))}")
 
 **When to use**: Initial parameter estimation, simple systems, quick checks
 
-### MCMC Fitting (emcee/zeus)
+### MCMC Fitting (emcee/zeus) - Unified Interface
 
 Robust Bayesian parameter estimation with full uncertainty quantification:
 
 ```python
-# Set up MCMC
-fitter = mc.vfit(compiled.model_flux, theta_guess, lb, ub, wave, flux, error)
-fitter.no_of_Chain = 50     # Number of walkers
-fitter.no_of_steps = 1000   # Number of MCMC steps
-fitter.sampler = 'emcee'    # or 'zeus'
+# Set up MCMC with unified interface
+instrument_data = {
+    'INSTRUMENT_NAME': {
+        'model': model,      # VoigtModel object
+        'wave': wave,        # Wavelength array
+        'flux': flux,        # Normalized flux array
+        'error': error       # Error array
+    }
+}
+
+fitter = mc.vfit(
+    instrument_data, theta_guess, lb, ub,
+    no_of_Chain=50,      # Number of walkers
+    no_of_steps=1000,    # Number of MCMC steps
+    sampler='emcee',     # or 'zeus'
+    perturbation=1e-4
+)
 
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True)
 
 # Create results object
-results = fr.FitResults(fitter, model)
+results = u.UnifiedResults(fitter)
 ```
 
 **When to use**: Final analysis, complex systems, publication-quality uncertainties
@@ -349,13 +397,12 @@ results = fr.FitResults(fitter, model)
 
 ```python
 # Print summary
-results.print_fit_summary()
+results.print_summary()
 
-# Parameter summary
-param_summary = results.parameter_summary()
-print(param_summary.names)
-print(param_summary.best_fit)
-print(param_summary.errors)
+# Parameter access
+best_params = results.best_fit
+uncertainties = results.bounds_84th - results.bounds_16th  # 1-sigma errors
+parameter_names = results.parameter_names
 ```
 
 ### Visualization
@@ -364,8 +411,12 @@ print(param_summary.errors)
 # Corner plot (parameter correlations)
 results.corner_plot(save_path='corner.pdf')
 
-# Model comparison
-mc.plot_model(model, fitter, show_residuals=True)
+# Velocity plots for multi-instrument
+if results.is_multi_instrument:
+    for instrument in results.instrument_names:
+        results.velocity_plot(instrument, save_path=f'velocity_{instrument}.pdf')
+else:
+    results.velocity_plot(save_path='velocity.pdf')
 
 # Convergence diagnostics
 results.convergence_diagnostics()
@@ -381,7 +432,7 @@ results.chain_trace_plot()
 results.save('my_fit_results.h5')
 
 # Load later
-results = fr.FitResults.load('my_fit_results.h5')
+results = u.UnifiedResults.load('my_fit_results.h5')
 
 # Export parameter table
 results.export_parameter_table('parameters.txt')
@@ -389,32 +440,41 @@ results.export_parameter_table('parameters.txt')
 
 ## Advanced Topics
 
-### Multi-Instrument Fitting
+### Multi-Instrument Fitting (Unified Interface)
 
-Joint fitting of data from multiple telescopes:
+Joint fitting of data from multiple telescopes using the unified interface:
 
 ```python
-# See detailed examples in:
-# - rbvfit2-multi-instrument-tutorial.py
-# - rbvfit2-multi-instrument-tutorial2.py
+# Configure shared physical system
+config = FitConfiguration()
+config.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
 
-# Basic concept: Each instrument gets its own configuration with FWHM
-config_A = FitConfiguration(FWHM='2.2')  # XShooter configuration
-config_A.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
+# Create models with different FWHM for each instrument
+model_xshooter = VoigtModel(config, FWHM='2.2')  # XShooter
+model_fire = VoigtModel(config, FWHM='4.0')      # FIRE
 
-config_B = FitConfiguration(FWHM='4.0')  # FIRE configuration
-config_B.add_system(z=0.0, ion='OI', transitions=[1302.17], components=1)
-
-# Create models (FWHM extracted from configurations)
-model_A = VoigtModel(config_A)  # Uses FWHM='2.2'
-model_B = VoigtModel(config_B)  # Uses FWHM='4.0'
-
-# Multi-instrument compilation with automatic FWHM handling
-instrument_configs = {
-    'XShooter': config_A,
-    'FIRE': config_B
+# Unified instrument data dictionary
+instrument_data = {
+    'XShooter': {
+        'model': model_xshooter,    # Model with XShooter FWHM
+        'wave': wave_xshooter,      # XShooter wavelength array
+        'flux': flux_xshooter,      # XShooter flux array
+        'error': error_xshooter     # XShooter error array
+    },
+    'FIRE': {
+        'model': model_fire,        # Model with FIRE FWHM
+        'wave': wave_fire,          # FIRE wavelength array
+        'flux': flux_fire,          # FIRE flux array
+        'error': error_fire         # FIRE error array
+    }
 }
-compiled = model_A.compile(instrument_configs=instrument_configs)
+
+# Same fitting interface for multi-instrument!
+fitter = mc.vfit(instrument_data, theta_guess, lb, ub)
+fitter.runmcmc()
+
+# Results automatically handle multi-instrument
+results = u.UnifiedResults(fitter)
 ```
 
 ### Custom Line Lists
@@ -435,10 +495,10 @@ print(f"f-value: {line_info['fval'][0]:.3e}")
 ```python
 # Vectorized evaluation for large datasets
 wave_grid = np.linspace(1200, 1600, 50000)  # High-resolution grid
-flux_model = compiled.model_flux(theta, wave_grid)
+flux_model = model.evaluate(theta, wave_grid)
 
 # Parallel MCMC (automatic on multi-core systems)
-fitter.no_of_Chain = 100  # More walkers for better sampling
+fitter = mc.vfit(instrument_data, theta_guess, lb, ub, no_of_Chain=100)  # More walkers for better sampling
 ```
 
 ### Systematic Effects
@@ -457,7 +517,7 @@ wave_corrected = wave + wave_shift
 
 ```python
 # Multiple redshift systems with contamination
-config = FitConfiguration(FWHM='2.5')
+config = FitConfiguration()
 
 # Primary absorption system
 config.add_system(z=0.5, ion='MgII', transitions=[2796.3, 2803.5], components=3)
@@ -468,16 +528,77 @@ config.add_system(z=0.8, ion='CIV', transitions=[1548.2, 1550.3], components=1)
 
 # Background quasar system  
 config.add_system(z=2.1, ion='LyA', transitions=[1215.7], components=2)
+
+# Create model
+model = VoigtModel(config, FWHM='2.5')
 ```
 
 ---
+
+## Unified Interface Key Features
+
+### Single Interface for All Cases
+
+The unified interface automatically handles:
+
+```python
+# Works for single instrument
+instrument_data = {
+    'COS': {'model': model, 'wave': wave, 'flux': flux, 'error': error}
+}
+
+# Works for multiple instruments
+instrument_data = {
+    'HIRES': {'model': model_hires, 'wave': wave1, 'flux': flux1, 'error': error1},
+    'FIRE': {'model': model_fire, 'wave': wave2, 'flux': flux2, 'error': error2},
+    'UVES': {'model': model_uves, 'wave': wave3, 'flux': flux3, 'error': error3}
+}
+
+# Same fitting call for both!
+fitter = mc.vfit(instrument_data, theta, lb, ub)
+```
+
+### Automatic Model Compilation
+
+```python
+# VoigtModel objects are automatically compiled during fitting
+model = VoigtModel(config, FWHM='2.5')  # Not compiled yet
+
+instrument_data = {
+    'COS': {
+        'model': model,  # Will be compiled automatically by vfit
+        'wave': wave,
+        'flux': flux,
+        'error': error
+    }
+}
+
+# No need to call model.compile() manually
+fitter = mc.vfit(instrument_data, theta, lb, ub)
+```
+
+### Results Object Compatibility
+
+```python
+# UnifiedResults works with both single and multi-instrument fits
+results = u.UnifiedResults(fitter)
+
+# Automatic detection of number of instruments
+if results.is_multi_instrument:
+    print(f"Multi-instrument fit with {len(results.instrument_names)} instruments")
+    for name in results.instrument_names:
+        results.velocity_plot(name)  # Individual instrument plots
+else:
+    print("Single instrument fit")
+    results.velocity_plot()  # Single plot
+```
 
 ## Troubleshooting
 
 ### Common Issues
 
 **Poor Convergence**:
-- Increase MCMC steps: `fitter.no_of_steps = 2000`
+- Increase MCMC steps: `no_of_steps = 2000`
 - Better initial guess: Use interactive parameter estimation
 - Check parameter bounds: Ensure physically reasonable ranges
 
@@ -500,6 +621,35 @@ config.add_system(z=2.1, ion='LyA', transitions=[1215.7], components=2)
 - Save intermediate results frequently
 - Monitor convergence diagnostics
 
+### Unified Interface Troubleshooting
+
+**Instrument Data Format Errors**:
+```python
+# Correct format
+instrument_data = {
+    'INSTRUMENT_NAME': {
+        'model': voigt_model_object,  # Must be VoigtModel
+        'wave': wave_array,           # 1D numpy array
+        'flux': flux_array,           # 1D numpy array  
+        'error': error_array          # 1D numpy array
+    }
+}
+
+# Common mistakes to avoid:
+# - Missing required keys ('model', 'wave', 'flux', 'error')
+# - Arrays with different lengths
+# - Model not a VoigtModel object
+```
+
+**Multi-Instrument FWHM Issues**:
+```python
+# Each model needs its own FWHM
+model_a = VoigtModel(config, FWHM='2.2')  # High resolution
+model_b = VoigtModel(config, FWHM='4.0')  # Lower resolution
+
+# Don't reuse models with different FWHM requirements
+```
+
 ---
 
 ## Best Practices
@@ -510,5 +660,7 @@ config.add_system(z=2.1, ion='LyA', transitions=[1215.7], components=2)
 4. **Check convergence**: Monitor MCMC diagnostics
 5. **Save everything**: Use HDF5 persistence for reproducibility
 6. **Document assumptions**: Record modeling choices and limitations
+7. **Use unified interface**: Consistent workflow for single and multi-instrument
+8. **Leverage automatic compilation**: Let rbvfit handle model compilation
 
 For more examples and advanced techniques, see the [Tutorials](tutorials.md) and [Examples Gallery](examples-gallery.md).

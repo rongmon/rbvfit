@@ -98,6 +98,8 @@ class UnifiedResults:
         self.samples, self.chain = self._extract_samples_and_chain(fitter)
         self.instrument_data = self._extract_instrument_data(fitter)
         self.config_metadata = self._extract_config_metadata(fitter)
+        self.bounds_lb, self.bounds_ub = self._extract_bounds(fitter)
+
 
         
         # Extract diagnostics (sampler-specific)
@@ -125,6 +127,31 @@ class UnifiedResults:
             return np.array(fitter.theta)
         else:
             raise ValueError("No parameter values found in fitter")
+
+
+    def _extract_bounds(self, fitter) -> Tuple[np.ndarray, np.ndarray]:
+        """Extract parameter bounds from fitter object."""
+        if hasattr(fitter, 'lb') and hasattr(fitter, 'ub'):
+            return np.array(fitter.lb), np.array(fitter.ub)
+        else:
+            # Fallback to reasonable defaults if bounds not available
+            n_params = len(self.best_fit)
+            n_comp = n_params // 3
+            
+            # Default bounds: N=[10,20], b=[1,100], v=[-500,500]
+            lb = np.concatenate([
+                np.full(n_comp, 10.0),    # N bounds
+                np.full(n_comp, 1.0),     # b bounds  
+                np.full(n_comp, -500.0)   # v bounds
+            ])
+            ub = np.concatenate([
+                np.full(n_comp, 20.0),    # N bounds
+                np.full(n_comp, 100.0),   # b bounds
+                np.full(n_comp, 500.0)    # v bounds
+            ])
+            
+            return lb, ub
+
     
     def _extract_samples_and_chain(self, fitter) -> Tuple[np.ndarray, np.ndarray]:
         """Extract both flattened samples and full chain."""
@@ -1085,6 +1112,322 @@ class UnifiedResults:
         
         print("=" * 60)
 
+
+
+
+    def export_script(self, output_path: Optional[str] = None, 
+                     include_data_files: bool = False) -> str:
+        """
+        Export a Python script that reproduces the entire fitting workflow.
+        
+        This method generates a standalone Python script that can recreate
+        the complete MCMC fitting workflow from command line, including:
+        - Data loading/creation
+        - Model configuration
+        - Parameter bounds
+        - MCMC settings
+        - Results analysis
+        
+        Parameters
+        ----------
+        output_path : str, optional
+            Path to save the script file. If None, returns script as string.
+        include_data_files : bool, optional
+            If True, saves data arrays to separate files and loads them in script.
+            If False, embeds small arrays directly in script (default).
+            
+        Returns
+        -------
+        str
+            Generated Python script content
+            
+        Examples
+        --------
+        >>> # Export to file
+        >>> results.export_script('reproduce_analysis.py')
+        
+        >>> # Get script as string
+        >>> script_content = results.export_script()
+        >>> print(script_content)
+        """
+        
+        if self.config_metadata is None:
+            raise ValueError("Cannot export script: no configuration metadata available")
+        
+        # Generate script content
+        script_lines = []
+        
+        # Header and imports
+        script_lines.extend([
+            '#!/usr/bin/env python',
+            '"""',
+            'Automatically generated script to reproduce rbvfit 2.0 MCMC analysis.',
+            '',
+            f'Generated from UnifiedResults containing:',
+            f'- {len(self.instrument_names)} instrument(s): {", ".join(self.instrument_names)}',
+            f'- {len(self.best_fit)} parameters',
+            f'- {self.sampler_name} sampler, {self.n_walkers} walkers, {self.n_steps} steps',
+            '',
+            'This script reproduces the complete fitting workflow.',
+            '"""',
+            '',
+            'import numpy as np',
+            'import rbvfit.vfit_mcmc as mc',
+            'from rbvfit.core.fit_configuration import FitConfiguration',
+            'from rbvfit.core.voigt_model import VoigtModel',
+            'from rbvfit.core.unified_results import UnifiedResults',
+            '',
+            'def main():',
+            '    """Main fitting workflow"""',
+            '    print("Reproducing rbvfit 2.0 analysis...")',
+            ''
+        ])
+        
+        # Data creation/loading section
+        script_lines.extend([
+            '    # ================================================================',
+            '    # DATA SETUP',
+            '    # ================================================================',
+            ''
+        ])
+        
+        if include_data_files:
+            # Save data to files and load them
+            script_lines.append('    # Load observational data from files')
+            
+            # Actually save the data files
+            if output_path:
+                save_dir = Path(output_path).parent
+            else:
+                save_dir = Path('.')
+                
+            for inst_name in self.instrument_names:
+                data = self.instrument_data[inst_name]
+                data_filename = f'{inst_name.lower()}_data.npz'
+                data_path = save_dir / data_filename
+                
+                # Save the data file
+                np.savez(data_path, 
+                        wave=data['wave'], 
+                        flux=data['flux'], 
+                        error=data['error'])
+                
+                script_lines.extend([
+                    f'    {inst_name.lower()}_data = np.load("{data_filename}")',
+                    f'    wave_{inst_name.lower()} = {inst_name.lower()}_data["wave"]',
+                    f'    flux_{inst_name.lower()} = {inst_name.lower()}_data["flux"]',
+                    f'    error_{inst_name.lower()} = {inst_name.lower()}_data["error"]',
+                    ''
+                ])
+        else:
+            # Embed data arrays directly (for smaller datasets)
+            script_lines.append('    # Observational data (embedded arrays)')
+            for inst_name in self.instrument_names:
+                data = self.instrument_data[inst_name]
+                
+                # Only embed if arrays are reasonably small
+                if len(data['wave']) < 10000:
+                    wave_str = np.array2string(data['wave'], separator=', ', threshold=np.inf)
+                    flux_str = np.array2string(data['flux'], separator=', ', threshold=np.inf)
+                    error_str = np.array2string(data['error'], separator=', ', threshold=np.inf)
+                    
+                    script_lines.extend([
+                        f'    wave_{inst_name.lower()} = np.array({wave_str})',
+                        f'    flux_{inst_name.lower()} = np.array({flux_str})',
+                        f'    error_{inst_name.lower()} = np.array({error_str})',
+                        ''
+                    ])
+                else:
+                    script_lines.extend([
+                        f'    # Data arrays too large for embedding - load from file:',
+                        f'    # wave_{inst_name.lower()}, flux_{inst_name.lower()},     error_{inst_name.lower()} = load_your_data()',
+                        f'    raise NotImplementedError("Large data arrays need external loading")',
+                        ''
+                    ])
+        
+        # Model configuration section
+        script_lines.extend([
+            '    # ================================================================',
+            '    # MODEL CONFIGURATION',
+            '    # ================================================================',
+            '',
+            '    # Create fit configuration',
+            '    config = FitConfiguration()',
+            ''
+        ])
+        
+        # Add systems
+        for system in self.config_metadata['systems']:
+            z = system['redshift']
+            for ion_group in system['ion_groups']:
+                ion_name = ion_group['ion_name']
+                transitions = ion_group['transitions']
+                components = ion_group['components']
+                
+                transitions_str = '[' + ', '.join(f'{t:.3f}' for t in transitions) + ']'
+                script_lines.append(
+                    f'    config.add_system(z={z:.6f}, ion="{ion_name}", '
+                    f'transitions={transitions_str}, components={components})'
+                )
+        
+        script_lines.append('')
+        
+        # Model creation section
+        script_lines.extend([
+            '    # Create VoigtModel objects for each instrument',
+            '    models = {}',
+            ''
+        ])
+        
+        for inst_name in self.instrument_names:
+            # Get FWHM from config metadata
+            fwhm = '6.5'  # default
+            if ('instrument_params' in self.config_metadata and 
+                inst_name in self.config_metadata['instrument_params']):
+                fwhm = self.config_metadata['instrument_params'][inst_name].get('FWHM', '6.5')
+            
+            script_lines.extend([
+                f'    models["{inst_name}"] = VoigtModel(config, FWHM={fwhm})',
+                f'    models["{inst_name}"].compile()'
+            ])
+        
+        script_lines.append('')
+        
+        # Instrument data dictionary
+        script_lines.extend([
+            '    # Create instrument data dictionary for vfit',
+            '    instrument_data = {'
+        ])
+
+        for i, inst_name in enumerate(self.instrument_names):
+            comma = ',' if i < len(self.instrument_names) - 1 else ''
+            line = f'        "{inst_name}": {{"model": models["{inst_name}"], "wave":     wave_{inst_name.lower()}, "flux": flux_{inst_name.lower()}, "error":     error_{inst_name.lower()}}}'
+            script_lines.append(line)
+            
+            script_lines.extend([
+                '    }',
+                ''
+            ])
+
+        
+        # Parameters and bounds section  
+        script_lines.extend([
+            '    # ================================================================',
+            '    # PARAMETERS AND BOUNDS',
+            '    # ================================================================',
+            ''
+        ])
+        
+        # Extract bounds from fitter (we need to add this to __init__)
+        if hasattr(self, 'bounds_lb') and hasattr(self, 'bounds_ub'):
+            lb, ub = self.bounds_lb, self.bounds_ub
+        else:
+            # Fallback to reasonable defaults
+            n_params = len(self.best_fit)
+            n_comp = n_params // 3
+            lb = np.concatenate([
+                np.full(n_comp, 10.0), np.full(n_comp, 1.0), np.full(n_comp, -500.0)
+            ])
+            ub = np.concatenate([
+                np.full(n_comp, 20.0), np.full(n_comp, 100.0), np.full(n_comp, 500.0)
+            ])
+        
+        # Format parameter arrays
+        theta_str = np.array2string(self.best_fit, separator=', ', precision=4, threshold=np.inf)
+        lb_str = np.array2string(lb, separator=', ', precision=1, threshold=np.inf)
+        ub_str = np.array2string(ub, separator=', ', precision=1, threshold=np.inf)
+        
+        script_lines.extend([
+            '    # Initial parameter guess (from fitted results)',
+            f'    theta = np.array({theta_str})',
+            '',
+            '    # Parameter bounds',
+            f'    lb = np.array({lb_str})',
+            f'    ub = np.array({ub_str})',
+            ''
+        ])
+        
+        # MCMC fitting section
+        script_lines.extend([
+            '    # ================================================================',
+            '    # MCMC FITTING',
+            '    # ================================================================',
+            '',
+            '    print(f"Starting MCMC fitting with {len(instrument_data)} instrument(s)...")',
+            '',
+            '    # Create vfit object',
+            '    fitter = mc.vfit(',
+            '        instrument_data,',
+            '        theta, lb, ub,',
+            f'        no_of_Chain={self.n_walkers},',
+            f'        no_of_steps={self.n_steps},',
+            f'        sampler="{self.sampler_name}",',
+            '        perturbation=1e-4',
+            '    )',
+            '',
+            '    # Run MCMC',
+            '    fitter.runmcmc(optimize=True)',
+            '    print("MCMC fitting completed!")',
+            ''
+        ])
+        
+        # Results and analysis section
+        script_lines.extend([
+            '    # ================================================================',
+            '    # RESULTS ANALYSIS',
+            '    # ================================================================',
+            '',
+            '    # Create unified results',
+            '    results = UnifiedResults(fitter)',
+            '',
+            '    # Save results',
+            '    results.save("reproduced_analysis.h5")',
+            '    print("Results saved to reproduced_analysis.h5")',
+            '',
+            '    # Quick analysis',
+            '    results.print_summary()',
+            '    results.convergence_diagnostics()',
+            '',
+            '    # Generate plots',
+            '    try:',
+            '        results.corner_plot(save_path="corner_plot.png")',
+            '        results.velocity_plot(save_path="velocity_plot.png")',
+            '        print("Plots saved: corner_plot.png, velocity_plot.png")',
+            '    except Exception as e:',
+            '        print(f"Plot generation failed: {e}")',
+            '',
+            '    return results',
+            '',
+            '',
+            'if __name__ == "__main__":',
+            '    results = main()',
+            '    print("\\nScript completed successfully!")',
+            '    print("Use results.help() for analysis options")'
+        ])
+        
+        # Join all lines
+        script_content = '\n'.join(script_lines)
+        
+        # Save to file if requested
+        if output_path:
+            output_path = Path(output_path)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(output_path, 'w') as f:
+                f.write(script_content)
+            
+            print(f"✅ Analysis script exported to {output_path}")
+            print(f"   Run with: python {output_path}")
+            
+            # Make executable on Unix systems
+            try:
+                import stat
+                output_path.chmod(output_path.stat().st_mode | stat.S_IEXEC)
+            except Exception:
+                pass
+        
+        return script_content    
+
     # =========================================================================
     # Plotting Methods (delegate to results_plot module)
     # =========================================================================
@@ -1403,14 +1746,21 @@ class UnifiedResults:
         """Save/load operations help."""
         print(f"\nSave/Load Methods - Persistent Results Storage")
         print("=" * 50)
-        print(f"💾 Current status: {'Loaded from file' if hasattr(self,     '_loaded_from_file') else 'Created from fitter'}")
+        print(f"💾 Current status: {'Loaded from file' if hasattr(self, '_loaded_from_file') else 'Created from fitter'}")
         
         print(f"\n📁 Save Options:")
-        print(f"  results.save('my_analysis.h5')           # Save everything (    recommended)")
+        print(f"  results.save('my_analysis.h5')           # Save everything (recommended)")
         print(f"  results.save('/path/to/results.h5')     # Full path")
         print(f"")
         print(f"  # Convenience functions:")
         print(f"  save_unified_results(fitter, model, 'results.h5')  # During fitting")
+        
+        print(f"\n📜 Script Export:")
+        print(f"  results.export_script('reproduce.py')    # Complete workflow script")
+        print(f"  results.export_script()                  # Return as string")
+        print(f"")
+        print(f"  # Advanced options:")
+        print(f"  results.export_script('script.py', include_data_files=True)  # Save data separately")
         
         print(f"\n📂 Load Options:")
         print(f"  results = UnifiedResults.load('my_analysis.h5')")
@@ -1422,7 +1772,8 @@ class UnifiedResults:
         print(f"  • MCMC samples & chain (full reconstruction capability)")
         print(f"  • Best-fit parameters & uncertainties")
         print(f"  • All instrument data (wave, flux, error arrays)")
-        print(f"  • Model configuration ({'✓ included' if self.config_metadata else '✗     missing'})")
+        print(f"  • Model configuration ({'✓ included' if self.config_metadata else '✗ missing'})")
+        print(f"  • Complete Python workflow (script export option)")
         
         # Show actual diagnostics being saved
         saved_diags = []
@@ -1433,21 +1784,26 @@ class UnifiedResults:
         if self.acceptance_fraction is not None:
             saved_diags.append(f"acceptance fraction")
         
-        print(f"  • {self.sampler_name} diagnostics ({', '.join(saved_diags) if     saved_diags else 'none available'})")
-        print(f"  • Convergence metadata ({self.n_walkers} walkers, {self.n_steps}     steps)")
+        print(f"  • {self.sampler_name} diagnostics ({', '.join(saved_diags) if saved_diags else 'none available'})")
+        print(f"  • Convergence metadata ({self.n_walkers} walkers, {self.n_steps} steps)")
         
         print(f"\n🔄 Perfect Roundtrip:")
         print(f"  results.save('backup.h5')               # Save current state")
         print(f"  loaded = UnifiedResults.load('backup.h5') # Load identical copy")
         print(f"  loaded.corner_plot()                    # Works exactly the same")
         
+        print(f"\n📜 Reproducible Workflow:")
+        print(f"  results.export_script('my_analysis.py') # Export complete workflow")
+        print(f"  # Generated script: data + model + MCMC settings + analysis")
+        print(f"  # Run anywhere: python my_analysis.py (standalone!)")
+        
         print(f"\n💡 Pro Tips:")
-        print(f"  • Always save with model: UnifiedResults(fitter, model)")
         print(f"  • HDF5 format = fast, compact, cross-platform")
+        print(f"  • Script export = human-readable, executable, shareable")
         print(f"  • Loaded results work identically to fresh results")
         print(f"  • No fitter object needed after loading")
-        print()
-    
+        print(f"  • Use export_script() for reproducibility and automation")
+        print()    
     def _help_data(self) -> None:
         """Data access help."""
         print(f"\nData Access - Your {len(self.instrument_names)} Instrument(s)")

@@ -167,4 +167,4 @@ results.convergence_diagnostics() # Check zeus     convergence
 results.velocity_plot(velocity_range=(-5200, 5200),show_components=True)
 
 results.residuals_plot()
-#results.save('my_fit.h5')
+results.save('my_fit.h5')

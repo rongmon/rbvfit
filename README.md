@@ -47,6 +47,14 @@ cd rbvfit
 pip install -r requirements.txt
 pip install -e .
 ```
+
+> ⚠️ If you choose to install individual packages manually, make sure to **quote version specifiers** to avoid issues in Zsh and similar shells:
+> ```bash
+> conda install "numpy>=1.18.0"
+> ```
+---
+
+
 ### Alternative Installation Methods
 
 **Legacy method**:

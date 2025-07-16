@@ -441,7 +441,7 @@ class FittingTab(QWidget):
         # Plot model if available
         if current_theta is not None:
             try:
-                data['model'].print_info()
+                #data['model'].print_info()
                 model_flux = data['model'].evaluate(current_theta, wave)
                 ax.plot(wave, model_flux, 'b-', linewidth=2, label='Model')
             except Exception as e:

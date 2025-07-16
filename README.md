@@ -22,6 +22,13 @@ Version 2.0 introduces:
 
 ---
 
+## 📖 Citation
+
+If you use `rbvfit` in your research, please **cite the following Concept DOI**. This ensures your citation is counted and attributed correctly in the Zenodo repository:
+
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403231.svg)](https://doi.org/10.5281/zenodo.10403231)
+
+
 ## 📋 Quick Navigation
 
 | Section                | Link                                      |
@@ -31,7 +38,7 @@ Version 2.0 introduces:
 | 🎮 Interactive Mode    | [Jump to Interactive Mode](#-interactive-mode) |
 | 📚 Documentation       | [Jump to Documentation](#-documentation) |
 | 📁 Examples            | [Jump to Examples](#-examples)           |
-
+| 🖥️ GUI Tutorial           | [Jump to GUI Tutorial](docs/help_gui.md) |
 ---
 ## Installation
 
@@ -85,6 +92,7 @@ config = FitConfiguration()
 config.add_system(z=0.348, ion='MgII', transitions=[2796.3, 2803.5], components=2)
 
 FWHM_pixels='6.5'#FWHM in pixels
+
 # Note: If you have FWHM in km/s, convert to pixels:
 # from rbvfit.core.voigt_model import mean_fwhm_pixels
 # FWHM_pixels = mean_fwhm_pixels(FWHM_vel_kms, wave_obs_grid)
@@ -112,21 +120,15 @@ instrument_data = {
 }
 
 # Fit with MCMC
-fitter = mc.vfit(
-    instrument_data, theta, lb, ub,
+fitter = mc.vfit(instrument_data, theta, lb, ub,
     no_of_Chain=n_walkers, 
     no_of_steps=n_steps,
     sampler='zeus',
     perturbation=1e-4
 )
-
-
-
         
 # Run MCMC
 fitter.runmcmc(optimize=True, verbose=True, use_pool=False)
-
-
 
 # Analyze results
 from rbvfit.core import unified_results as u 
@@ -255,6 +257,14 @@ results.velocity_plot() # Velocity plot of fitted components
 
 rbvfit provides powerful interactive tools for visual parameter estimation:
 
+### Full self contained GUI Mode
+```bash
+# Launch the GUI
+```bash
+>rbvfit_gui
+```
+For detailed usage, see the [GUI Tutorial](docs/help_gui.md).
+
 ### Jupyter Notebook Interface
 ```python
 # Perfect for exploratory analysis
@@ -309,15 +319,6 @@ theta_guess = np.concatenate([tab.nguess, tab.bguess, tab.vguess])
 
 Comprehensive documentation available in [`docs/`](docs/):
 
-- **[Quick Start Guide](docs/quick-start-guide.md)** - Get running in 5 minutes
-- **[User Guide](docs/user-guide.md)** - Complete feature overview
-- **[Tutorials](docs/tutorials.md)** - Step-by-step examples
-- **[Examples Gallery](docs/examples-gallery.md)** - Curated use cases
-- **[API Reference](docs/api-reference.md)** - Detailed function documentation
-- **[Interactive Mode Guide](docs/interactive-mode-guide.md)** - GUI tools walkthrough
-
-### Quick Documentation Links
-
 | Topic | Link | Description |
 |-------|------|-------------|
 | First Steps | [Quick Start](docs/quick-start-guide.md) | 5-minute introduction |
@@ -325,12 +326,8 @@ Comprehensive documentation available in [`docs/`](docs/):
 | Learning Path | [Tutorials](docs/tutorials.md) | Progressive examples |
 | Use Cases | [Examples](docs/examples-gallery.md) | Real-world applications |
 | Interactive Tools | [Interactive Guide](docs/interactive-mode-guide.md) | GUI documentation |
+| GUI Overview | [GUI Tutorial](docs/help_gui.md) | Graphical interface guide |
 
-## Citation
-
-If you use rbvfit in your research, please cite:
-
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10403231.svg)](https://doi.org/10.5281/zenodo.10403231)
 
 ## Support
 

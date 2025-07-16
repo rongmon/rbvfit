@@ -1755,13 +1755,15 @@ class UnifiedResults:
         print(f"  # Convenience functions:")
         print(f"  save_unified_results(fitter, model, 'results.h5')  # During fitting")
         
+        print("=" * 50)
         print(f"\n📜 Script Export:")
         print(f"  results.export_script('reproduce.py')    # Complete workflow script")
         print(f"  results.export_script()                  # Return as string")
         print(f"")
         print(f"  # Advanced options:")
         print(f"  results.export_script('script.py', include_data_files=True)  # Save data separately")
-        
+        print("=" * 50)
+
         print(f"\n📂 Load Options:")
         print(f"  results = UnifiedResults.load('my_analysis.h5')")
         print(f"")

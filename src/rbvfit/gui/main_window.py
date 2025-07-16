@@ -7,6 +7,7 @@ Key Changes:
 - Better error handling and status reporting
 - Improved project save/load functionality
 - Clean separation of concerns between tabs
+- Command-line argument support for loading config files
 """
 import json
 import datetime
@@ -41,9 +42,9 @@ class GuiSignals(QObject):
 class UpdatedRbvfitGUI(QMainWindow):
     """Updated main GUI window with unified vfit interface support"""
     
-    def __init__(self):
+    def __init__(self, config_file=None):
         super().__init__()
-        self.setWindowTitle("rbvfit 2.0 - Voigt Profile Fitting (Unified Interface)")
+        self.setWindowTitle("rbvfit - Voigt Profile Fitting")
         self.setGeometry(100, 100, 1600, 1000)
         
         # Data storage
@@ -59,6 +60,92 @@ class UpdatedRbvfitGUI(QMainWindow):
         self.setup_ui()
         self.setup_menu()
         self.setup_connections()
+        
+        # Load config file if provided
+        if config_file:
+            self.load_config_file_on_startup(config_file)
+        
+    def load_config_file_on_startup(self, config_file):
+        """Load config file provided via command line"""
+        try:
+            config_path = Path(config_file)
+            if config_path.exists():
+                # Use a QTimer to load after the GUI is fully initialized
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(100, lambda: self.load_project_file(str(config_path)))
+            else:
+                self.status_bar.showMessage(f"Warning: Config file not found: {config_file}")
+        except Exception as e:
+            self.status_bar.showMessage(f"Error loading config file: {e}")
+    
+    def load_project_file(self, filename):
+        """Load project file (used by startup loader)"""
+        try:
+            # Load and validate using io
+            project_data = io.load_project_data(filename)
+            
+            # Clear current state
+            self._clear_all_tabs()
+            
+            # Restore configurations with auto-loading
+            configs_data = project_data.get('configurations', {})
+            restored_configs, missing_files = io.deserialize_configurations(configs_data)
+            
+            # Set configurations
+            self.configurations = restored_configs
+            self.config_data_tab.configurations = restored_configs
+            self.config_data_tab.update_config_display()
+            if hasattr(self.config_data_tab, 'update_status'):
+                self.config_data_tab.update_status()
+            
+            # Restore model setup
+            config_systems = project_data.get('config_systems', {})
+            config_parameters = io.deserialize_parameters(project_data.get('config_parameters', {}))
+            
+            self.model_setup_tab.config_systems = config_systems
+            self.model_setup_tab.config_parameters = config_parameters
+            self.model_setup_tab.current_config = project_data.get('current_config')
+            self.model_setup_tab.current_system_id = project_data.get('current_system_id')
+            
+            # Restore master theta if available
+            master_theta_data = project_data.get('master_theta')
+            if master_theta_data:
+                self.model_setup_tab.master_theta = io.deserialize_master_theta(master_theta_data)
+            
+            # Update model setup displays
+            self.model_setup_tab.set_configurations(restored_configs)
+            
+            # Restore GUI state
+            current_tab = project_data.get('current_tab', 0)
+            tab_enabled = project_data.get('tab_enabled', [True, False, False, False])
+            
+            for i, enabled in enumerate(tab_enabled):
+                if i < 4:
+                    self.tab_widget.setTabEnabled(i, enabled)
+            
+            if current_tab < 4:
+                self.tab_widget.setCurrentIndex(current_tab)
+            
+            # Show results
+            loaded_configs = sum(1 for config in restored_configs.values() if config['wave'] is not None)
+            total_configs = len(restored_configs)
+            
+            if missing_files:
+                missing_text = "\n".join(missing_files)
+                QMessageBox.warning(self, "Some Files Missing", 
+                                  f"Project loaded with {loaded_configs}/{total_configs} data files.\n\n"
+                                  f"Missing files:\n{missing_text}\n\n"
+                                  f"Reload these files in Configuration & Data tab.")
+            else:
+                QMessageBox.information(self, "Project Loaded",
+                                      f"Project loaded successfully!\n\n"
+                                      f"Configurations: {total_configs}\n"
+                                      f"Data loaded: {loaded_configs}/{total_configs}")
+            
+            self.status_bar.showMessage(f"Project loaded: {Path(filename).name}")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
         
     def setup_ui(self):
         """Create main interface"""
@@ -284,75 +371,10 @@ class UpdatedRbvfitGUI(QMainWindow):
             "rbvfit Projects (*.rbv);;JSON files (*.json)")
         
         if filename:
-            try:
-                # Load and validate using io
-                project_data = io.load_project_data(filename)
-                
-                # Clear current state
-                self._clear_all_tabs()
-                
-                # Restore configurations with auto-loading
-                configs_data = project_data.get('configurations', {})
-                restored_configs, missing_files = io.deserialize_configurations(configs_data)
-                
-                # Set configurations
-                self.configurations = restored_configs
-                self.config_data_tab.configurations = restored_configs
-                self.config_data_tab.update_config_display()
-                if hasattr(self.config_data_tab, 'update_status'):
-                    self.config_data_tab.update_status()
-                
-                # Restore model setup
-                config_systems = project_data.get('config_systems', {})
-                config_parameters = io.deserialize_parameters(project_data.get('config_parameters', {}))
-                
-                self.model_setup_tab.config_systems = config_systems
-                self.model_setup_tab.config_parameters = config_parameters
-                self.model_setup_tab.current_config = project_data.get('current_config')
-                self.model_setup_tab.current_system_id = project_data.get('current_system_id')
-                
-                # Restore master theta if available
-                master_theta_data = project_data.get('master_theta')
-                if master_theta_data:
-                    self.model_setup_tab.master_theta = io.deserialize_master_theta(master_theta_data)
-                
-                # Update model setup displays
-                self.model_setup_tab.set_configurations(restored_configs)
-                
-                # Restore GUI state
-                current_tab = project_data.get('current_tab', 0)
-                tab_enabled = project_data.get('tab_enabled', [True, False, False, False])
-                
-                for i, enabled in enumerate(tab_enabled):
-                    if i < 4:
-                        self.tab_widget.setTabEnabled(i, enabled)
-                
-                if current_tab < 4:
-                    self.tab_widget.setCurrentIndex(current_tab)
-                
-                # Show results
-                loaded_configs = sum(1 for config in restored_configs.values() if config['wave'] is not None)
-                total_configs = len(restored_configs)
-                
-                if missing_files:
-                    missing_text = "\n".join(missing_files)
-                    QMessageBox.warning(self, "Some Files Missing", 
-                                      f"Project loaded with {loaded_configs}/{total_configs} data files.\n\n"
-                                      f"Missing files:\n{missing_text}\n\n"
-                                      f"Reload these files in Configuration & Data tab.")
-                else:
-                    QMessageBox.information(self, "Project Loaded",
-                                          f"Project loaded successfully!\n\n"
-                                          f"Configurations: {total_configs}\n"
-                                          f"Data loaded: {loaded_configs}/{total_configs}")
-                
-                self.status_bar.showMessage(f"Project loaded: {Path(filename).name}")
-                    
-            except Exception as e:
-                QMessageBox.critical(self, "Load Error", f"Failed to load project:\n{str(e)}")
+            self.load_project_file(filename)
     
     def export_configuration(self):
-        """Export configuration metadata - using io.py"""
+        """Export configuration metadata only - clean version"""
         if not self.configurations:
             QMessageBox.warning(self, "No Configurations", "No configurations to export")
             return
@@ -363,13 +385,31 @@ class UpdatedRbvfitGUI(QMainWindow):
         
         if filename:
             try:
-                # Export using io serialization
+                # Export only configuration metadata (no data arrays)
                 export_data = {
                     'version': v.__version__,
                     'exported': datetime.datetime.now().isoformat(),
                     'type': 'rbvfit_configuration_export',
-                    'configurations': io.serialize_configurations(self.configurations)
+                    'configurations': {}
                 }
+                
+                for name, config in self.configurations.items():
+                    export_data['configurations'][name] = {
+                        'name': config['name'],
+                        'fwhm': config['fwhm'],
+                        'description': config.get('description', ''),
+                        'filename': config.get('filename', ''),
+                        'filepath': config.get('filepath', ''),
+                        'basename': config.get('basename', ''),
+                        'file_directory': config.get('file_directory', ''),
+                        'has_data': config['wave'] is not None,
+                        'current_data_points': len(config['wave']) if config['wave'] is not None else 0,
+                        'current_wavelength_range': [float(config['wave'].min()), float(config['wave'].max())] if config['wave'] is not None else None,
+                        'original_wavelength_range': [float(config['wave_original'].min()), float(config['wave_original'].max())] if config.get('wave_original') is not None else None,
+                        'trim_range': config.get('trim_range'),
+                        'processing_steps': config.get('processing_steps', []),
+                        'is_trimmed': config.get('wave_original') is not None and config['wave'] is not None and len(config['wave']) != len(config['wave_original'])
+                    }
                 
                 with open(filename, 'w') as f:
                     json.dump(export_data, f, indent=2)
@@ -400,62 +440,6 @@ class UpdatedRbvfitGUI(QMainWindow):
         self.tab_widget.setTabEnabled(2, False)  # Fitting  
         self.tab_widget.setTabEnabled(3, False)  # Results
         self.tab_widget.setCurrentIndex(0)       # Go to first tab    
-
-
-
-    def export_configuration(self):
-        """Export configuration metadata only - clean version"""
-        if not self.configurations:
-            QMessageBox.warning(self, "No Configurations", "No configurations to export")
-            return
-            
-        filename, _ = QFileDialog.getSaveFileName(
-            self, "Export Configuration", "",
-            "JSON files (*.json);;All files (*)")
-        
-        if filename:
-            try:
-                # Export only configuration metadata (no data arrays)
-                export_data = {
-                    'version': v.__version__,
-                    'exported': datetime.now().isoformat(),
-                    'type': 'rbvfit_configuration_export',
-                    'configurations': {}
-                }
-                
-                for name, config in self.configurations.items():
-                    export_data['configurations'][name] = {
-                        'name': config['name'],
-                        'fwhm': config['fwhm'],
-                        'description': config.get('description', ''),
-                        'filename': config.get('filename', ''),
-                        'filepath': config.get('filepath', ''),
-                        'basename': config.get('basename', ''),
-                        'file_directory': config.get('file_directory', ''),
-                        'has_data': config['wave'] is not None,
-                        'current_data_points': len(config['wave']) if config['wave'] is not None else 0,
-                        'current_wavelength_range': [float(config['wave'].min()), float(config['wave'].max())] if config['wave'] is not     None else None,
-                        'original_wavelength_range': [float(config['wave_original'].min()), float(config['wave_original'].max())] if     config.get('wave_original') is not None else None,
-                        'trim_range': config.get('trim_range'),
-                        'processing_steps': config.get('processing_steps', []),
-                        'is_trimmed': config.get('wave_original') is not None and config['wave'] is not None and len(config['wave']) !=     len(config['wave_original'])
-                    }
-                
-                with open(filename, 'w') as f:
-                    json.dump(export_data, f, indent=2)
-                    
-                QMessageBox.information(self, "Export Complete", 
-                                      f"Configuration exported to {Path(filename).name}\n\n"
-                                      f"Exported {len(export_data['configurations'])} configurations")
-                    
-            except Exception as e:
-                QMessageBox.critical(self, "Export Error", f"Failed to export configuration:\n{str(e)}")
-    
-
-    
-    
-    
-
 
     def export_results(self):
         """Export fitting results"""
@@ -550,13 +534,13 @@ UNIFIED INTERFACE BENEFITS:
         
     def show_about(self):
         """Show about dialog"""
-        about_text = """
+        about_text = f"""
 rbvfit 2.0 - Voigt Profile Fitting (Unified Interface)
 
 A Python package for fitting Voigt profiles to absorption line spectra
 with support for multi-instrument datasets and MCMC parameter estimation.
 
-Version: 2.0 (Unified Interface)
+Version: {getattr(v, '__version__', '2.0')} (Unified Interface)
 Author: rbvfit Development Team
 
 Features:
@@ -597,18 +581,23 @@ https://github.com/rbvfit/rbvfit
 
 
 def main():
-    """Main application entry point"""
+    """Main application entry point with command-line argument support"""
     app = QApplication(sys.argv)
     app.setApplicationName("rbvfit 2.0")
-    app.setApplicationVersion("2.0_unified")
+    app.setApplicationVersion(getattr(v, '__version__', '2.0'))
     
     # Set application icon if available
     icon_path = Path(__file__).parent / "icons" / "rbvfit.png"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
     
+    # Check for config file argument
+    config_file = None
+    if len(sys.argv) > 1:
+        config_file = sys.argv[1]
+    
     # Create and show main window
-    window = UpdatedRbvfitGUI()
+    window = UpdatedRbvfitGUI(config_file=config_file)
     window.show()
     
     # Start event loop

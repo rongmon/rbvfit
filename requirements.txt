@@ -10,3 +10,4 @@ astropy>=5.3.3
 # linetools>=0.3.0         # For HST/COS LSF support
 zeus-mcmc>=2.3.0         # Alternative high-performance MCMC sampler
 h5py>=2.10.0            # For HDF5 results persistence
+PyQt5>=5.12.0

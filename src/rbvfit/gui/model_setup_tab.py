@@ -205,7 +205,7 @@ class SystemDialog(QDialog):
             for trans in transitions_text.split(','):
                 try:
                     wavelength = float(trans.strip())
-                    line = rb.rb_setline(wavelength, 'closest')  # Fix import
+                    line = rb_setline.rb_setline(wavelength, 'closest')  # Fix import
                     name = line['name'][0].split(' ')
                     transitions.append(line['wave'][0])
                     

@@ -153,6 +153,9 @@ class vfit:
         
         # Validate input
         self._validate_unified_instrument_data(instrument_data)
+
+        #validate initial guesses
+        self._validate_guesses(theta, lb, ub)
         
         # Compile models and extract configurations
         self.instrument_data = self._compile_models(instrument_data)
@@ -215,6 +218,19 @@ class vfit:
             if len(data['flux']) != wave_len or len(data['error']) != wave_len:
                 raise ValueError(f"instrument_data['{name}']: wave, flux, and error must have same length")
     
+    def _validate_guesses(self,theta, lb, ub):
+        """Validate initial guesses against bounds."""
+        theta = np.asarray(theta)
+        lb = np.asarray(lb)
+        ub = np.asarray(ub)
+        if len(theta) != len(lb) or len(theta) != len(ub):
+            raise ValueError("theta, lb, and ub must have the same length")
+        if np.any(theta < lb) or np.any(theta > ub):
+            raise ValueError("Initial guess theta must be within bounds lb and ub")
+        
+
+
+
     def _compile_models(self, instrument_data):
         """Compile VoigtModel objects into evaluation functions."""
         compiled_data = {}

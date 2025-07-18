@@ -222,19 +222,19 @@ class FittingTab(QWidget):
         
         # Number of walkers
         self.walkers_spin = QSpinBox()
-        self.walkers_spin.setRange(10, 500)
+        self.walkers_spin.setRange(10, 10000)
         self.walkers_spin.setValue(self.mcmc_params['n_walkers'])
         mcmc_layout.addRow("Walkers:", self.walkers_spin)
         
         # Number of steps
         self.steps_spin = QSpinBox()
-        self.steps_spin.setRange(100, 10000)
+        self.steps_spin.setRange(100, 1000000)
         self.steps_spin.setValue(self.mcmc_params['n_steps'])
         mcmc_layout.addRow("Steps:", self.steps_spin)
         
         # Perturbation
         self.perturbation_spin = QDoubleSpinBox()
-        self.perturbation_spin.setRange(1e-6, 1e-2)
+        self.perturbation_spin.setRange(1e-6, 1e-1)
         self.perturbation_spin.setDecimals(6)
         self.perturbation_spin.setValue(self.mcmc_params['perturbation'])
         mcmc_layout.addRow("Perturbation:", self.perturbation_spin)
@@ -270,11 +270,13 @@ class FittingTab(QWidget):
         
         # Parameter bounds table
         bounds_group = QGroupBox("Parameter Bounds")
+        bounds_group.setToolTip("Edit initial guesses and bounds as needed below")
         bounds_layout = QVBoxLayout()
         bounds_group.setLayout(bounds_layout)
         controls_layout.addWidget(bounds_group)
         
         self.param_bounds_table = ParameterBoundsTable()
+        self.param_bounds_table.setToolTip("Edit initial guesses and bounds as needed")
         bounds_layout.addWidget(self.param_bounds_table)
         
     def setup_plot_panel(self, parent):

@@ -633,7 +633,7 @@ class vfit:
         # Gelman-Rubin R-hat (zeus)
         if self.sampler_name == 'zeus':
             try:
-                import zeus.diagnostics
+                import zeus
                 chain = self.sampler.get_chain().transpose(1, 0, 2)
                 rhat = zeus.diagnostics.gelman_rubin(chain)
                 max_rhat = np.max(rhat)

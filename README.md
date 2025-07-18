@@ -176,25 +176,14 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - **results_plot.py**: Advanced plotting utilities for fit diagnostics and visualizations
 
 **Interactive Tools**:
-- **guess_profile_parameters_interactive.py**: **Enhanced interactive parameter estimation with GUI support**
+- **guess_profile_parameters_interactive.py**: Command line interactive parameter estimation with GUI support
+- **rbvfit_gui.py**: Full-featured PyQT5 GUI for interactive fitting and analysis
 
 **Fitting Engine**:
 - **vfit_mcmc.py**: MCMC fitter supporting emcee and zeus samplers for Bayesian parameter estimation
 
 **Utility Modules**:
-- **rb_setline.py**: Line properties reader using approximate rest wavelength guess (active in v2.0)
-
-
-**Key Version 2.0 Improvements**:
-- **🎯 Enhanced Interactive Tools**: Visual component identification with cross-platform GUI support
-- **Ion-specific model setup**: Clean configuration system with automatic ion detection and parameter organization
-- **Enhanced multi-instrument support**: Full N-instrument joint fitting (v1.0 limited to 2 instruments)  
-- **Multi-redshift parameter tying**: Automatic parameter sharing for same ions across different redshift systems
-- **Multiple fitting algorithms**: Support for emcee, zeus (MCMC) and scipy curve_fit (quick fitting)
-- **Advanced results analysis**: Comprehensive fit diagnostics, convergence analysis, and publication-quality visualization
-- **HDF5 persistence**: Complete save/load functionality for complex fitting results
-- **Modular architecture**: Clean separation between models, fitting, and analysis components
-- **Streamlined FWHM configuration**: FWHM defined at configuration stage for better multi-instrument handling
+- **rb_setline.py**: Line properties reader using approximate rest wavelength guess
 
 ## 🎯 Typical Workflow
 
@@ -258,6 +247,8 @@ results.velocity_plot() # Velocity plot of fitted components
 rbvfit provides powerful interactive tools for visual parameter estimation:
 
 ### Full self contained GUI Mode
+
+*This is the recommended interactive mode for most users*
 ```bash
 # Launch the GUI
 ```bash
@@ -336,7 +327,7 @@ Comprehensive documentation available in [`docs/`](docs/):
 
 **Note**: 
 - **Version 1.0**: Written By: Rongmon Bordoloi. July 2019. Tested on: Python 3.7+
-- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.8+
+- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.9+
 
 ## ![License](https://img.shields.io/badge/license-MIT-green)
 

@@ -194,11 +194,40 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
             try:
                 # Try to get individual components from model
                 component_result = model.evaluate(best_theta, wave, return_components=True)
+                
                 if isinstance(component_result, dict) and 'components' in component_result:
                     components = component_result['components']
+                    model_comp_info = component_result['component_info']
+                    
+                    # Plot components and add tick marks in single loop
+                    y_tick_base = 1.05
+                    y_tick_top = 1.2
+                    tick_spacing = 0.02  # Small horizontal offset for multiple components
+                    
                     for i, comp_flux in enumerate(components):
-                        ax1.plot(wave, comp_flux, '--', alpha=0.7, linewidth=1, 
-                               label=f'Component {i+1}')
+                        # Plot component without label
+                        ax1.plot(wave, comp_flux, '--', alpha=0.7, linewidth=1)
+                        
+                        # Get component info for exact wavelength calculation
+                        comp_info = model_comp_info[i]
+                        lambda0 = comp_info['lambda0']
+                        z_total = comp_info['z_total']
+                        v_value = comp_info['v_value']
+                        
+                        # Calculate exact observed wavelength: λ_obs = λ0 * (1 + z) * (1 + v/c)
+                        c_kms = 299792.458  # speed of light in km/s
+                        tick_x = lambda0 * (1 + z_total) * (1 + v_value / c_kms) #+ i * tick_spacing
+                        
+                        # Draw vertical tick mark
+                        ax1.plot([tick_x, tick_x], [y_tick_base, y_tick_top], 'k-', linewidth=1.5)
+                        
+                        # Create label with component info
+                        #label = f'λ{lambda0:.1f} (z={z_total:.4f})'
+                        
+                        # Add rotated text label
+                        #ax1.text(tick_x, y_tick_top + 0.02, label, 
+                        #        rotation=90, ha='center', va='bottom', fontsize=6)
+                                
             except Exception:
                 # Model doesn't support component decomposition
                 pass
@@ -206,7 +235,7 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
         ax1.set_ylabel('Normalized Flux')
         ax1.legend(loc='upper right', fontsize=8)
         ax1.grid(True, alpha=0.3)
-        ax1.set_title('Model vs Data Comparison')
+        #ax1.set_title('Model vs Data Comparison')
         
         if not show_residuals:
             ax1.set_xlabel('Wavelength (Å)')
@@ -222,7 +251,7 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
             ax2.legend(fontsize=8)
             ax2.grid(True, alpha=0.3)
             
-        figure.tight_layout()
+        #figure.tight_layout()
         
     except Exception as e:
         ax = figure.add_subplot(111)

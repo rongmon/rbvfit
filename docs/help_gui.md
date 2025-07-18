@@ -43,15 +43,19 @@ The interface follows a 4-tab workflow: **Data → Model → Fitting → Results
 
 ### Add Ion Systems
 1. Select a configuration from the dropdown
-2. Click "Add System" to create a new absorption system
-3. Enter the system redshift
-4. Add ion species (e.g., CIV, HI, MgII) with their transitions
-5. Set the number of velocity components for each ion
+2. Click "Add System" to create new absorption systems
+3. Enter system redshift and add ion species (CIV, HI, MgII, etc.)
+4. Set velocity components for each ion
+5. Add all systems to the same configuration to share across instruments
+
+*Tip: Configure absorbers once - automatically applied to all instruments.*
 
 ### Parameter Estimation
-1. Use the interactive estimation tools to set initial parameter guesses
-2. Adjust column densities (N), Doppler parameters (b), and velocities (v)
-3. Click "Compile Models" when ready to proceed
+1. If there are multiple systems, first select the system from the parameter estimation dropdown menu.
+2. Use the interactive estimation tools to set initial parameter guesses
+3. Adjust column densities (N), Doppler parameters (b), and velocities (v)
+4. Repeat for each system as needed 
+4. Click "Compile Models" when ready to proceed
 
 ![Ion system setup](images/ion_system_setup.png)
 
@@ -61,9 +65,10 @@ The interface follows a 4-tab workflow: **Data → Model → Fitting → Results
 
 ### MCMC Fitting (Tab 3)
 1. Review compiled models and parameter bounds
-2. Choose sampler (emcee or zeus) and set number of walkers/steps
-3. Click "Start Fitting" to begin MCMC analysis
-4. Monitor convergence diagnostics during the run
+2. Adjust initial parameters and bounds as needed 
+3. Choose sampler (emcee or zeus) and set number of walkers/steps
+4. Click "Start Fitting" to begin MCMC analysis
+5. Monitor convergence diagnostics during the run
 
 ![Fitting progress](images/fitting_progress.png)
 

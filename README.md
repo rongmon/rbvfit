@@ -151,7 +151,7 @@ results.help()
 | Data Persistence         | Manual             | ✅ HDF5 w/ metadata            |
 | Code Architecture        | Monolithic         | ✅ Modular                     |
 | Fitting Engine           | Standard           | ✅ Vectorized +optimized       |
-|FWHM Configuration        | ✗ Manual handling  |✅ Automatic at setup stage    |
+|FWHM Configuration        | ✗ Manual handling  | ✅ Automatic at setup stage    |
 
 ## 📁 Examples
 
@@ -163,27 +163,6 @@ Explore working examples in [`src/rbvfit/examples/`](src/rbvfit/examples/):
 - `rbvfit2-single-instrument-interactive-tutorial.py` - **Interactive mode demonstration**
 - `rbvfit2-multi-instrument-tutorial.py` - Joint fitting multiple datasets
 
-## Description
-
-**Main Modules (Version 2.0)**:
-
-**Core Architecture (`rbvfit/core/`)**:
-- **voigt_model.py**: Main model class for creating and evaluating Voigt profiles with automatic ion parameter tying
-- **fit_configuration.py**: Configuration system for defining multi-system absorption setups with FWHM integration
-- **parameter_manager.py**: Handles parameter mapping between configurations and fitting arrays
-- **unified_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
-- **quick_fit_interface.py**: Fast scipy.optimize-based fitting interface
-- **results_plot.py**: Advanced plotting utilities for fit diagnostics and visualizations
-
-**Interactive Tools**:
-- **guess_profile_parameters_interactive.py**: Command line interactive parameter estimation with GUI support
-- **rbvfit_gui.py**: Full-featured PyQT5 GUI for interactive fitting and analysis
-
-**Fitting Engine**:
-- **vfit_mcmc.py**: MCMC fitter supporting emcee and zeus samplers for Bayesian parameter estimation
-
-**Utility Modules**:
-- **rb_setline.py**: Line properties reader using approximate rest wavelength guess
 
 ## 🎯 Typical Workflow
 
@@ -318,6 +297,29 @@ Comprehensive documentation available in [`docs/`](docs/):
 | Use Cases | [Examples](docs/examples-gallery.md) | Real-world applications |
 | Interactive Tools | [Interactive Guide](docs/interactive-mode-guide.md) | GUI documentation |
 | GUI Overview | [GUI Tutorial](docs/help_gui.md) | Graphical interface guide |
+
+
+## Description
+
+**Main Modules (Version 2.0)**:
+
+**Core Architecture (`rbvfit/core/`)**:
+- **voigt_model.py**: Main model class for creating and evaluating Voigt profiles with automatic ion parameter tying
+- **fit_configuration.py**: Configuration system for defining multi-system absorption setups with FWHM integration
+- **parameter_manager.py**: Handles parameter mapping between configurations and fitting arrays
+- **unified_results.py**: Enhanced results management with HDF5 persistence and analysis capabilities
+- **quick_fit_interface.py**: Fast scipy.optimize-based fitting interface
+- **results_plot.py**: Advanced plotting utilities for fit diagnostics and visualizations
+
+**Interactive Tools**:
+- **guess_profile_parameters_interactive.py**: Command line interactive parameter estimation with GUI support
+- **rbvfit_gui.py**: Full-featured PyQT5 GUI for interactive fitting and analysis
+
+**Fitting Engine**:
+- **vfit_mcmc.py**: MCMC fitter supporting emcee and zeus samplers for Bayesian parameter estimation
+
+**Utility Modules**:
+- **rb_setline.py**: Line properties reader using approximate rest wavelength guess
 
 
 ## Support

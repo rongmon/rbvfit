@@ -572,7 +572,7 @@ UNIFIED INTERFACE BENEFITS:
     def show_about(self):
         """Show about dialog"""
         about_text = f"""
-rbvfit 2.0 - Voigt Profile Fitting (Unified Interface)
+rbvfit - Voigt Profile Fitting 
 
 A Python package for fitting Voigt profiles to absorption line spectra
 with support for multi-instrument datasets and MCMC parameter estimation.

@@ -137,6 +137,15 @@ results.print_summary()
 results.help()
 ```
 
+
+If you want to load a saved fit, you can use the `UnifiedResults` class to load the results from an HDF5 file:
+
+```python
+from rbvfit.core import unified_results as u
+results = u.u.load_unified_results('path/to/your/results.h5')
+#To see options available
+results.help()
+```
 ## What's New in Version 2.0
 
 | Feature                  | v1.0               | v2.0                          |

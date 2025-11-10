@@ -125,7 +125,7 @@ class SystemDialog(QDialog):
         
         # Components
         self.components_spin = QSpinBox()
-        self.components_spin.setRange(1, 10)
+        self.components_spin.setRange(1, 99)
         self.components_spin.setValue(self.system_data.get('components', 1))
         layout.addRow("Components:", self.components_spin)
         

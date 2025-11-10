@@ -15,9 +15,9 @@ def get_rbvfit_version():
     """Get rbvfit version, fallback to 2.0 if not available"""
     try:
         import rbvfit
-        return getattr(rbvfit, '__version__', '2.0.0')
+        return getattr(rbvfit, '__version__', '2.0.1')
     except ImportError:
-        return '2.0.0'
+        return '2.0.1'
 
 
 def main():

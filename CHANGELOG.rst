@@ -1,6 +1,10 @@
 =========
 Changelog
 =========
+Version 2.0.1
+==============
+- GUI bug fix: Resolved limited x-axis range in model comparison plots
+
 
 Version 2.0.0
 ==============

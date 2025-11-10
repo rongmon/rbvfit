@@ -72,23 +72,23 @@ class RangeDialog(QDialog):
         self.setLayout(layout)
         
         self.xmin_spin = QDoubleSpinBox()
-        self.xmin_spin.setRange(-10000, 10000)
+        self.xmin_spin.setRange(-100000, 100000)
         self.xmin_spin.setValue(current_xlim[0])
         layout.addRow("X min:", self.xmin_spin)
         
         self.xmax_spin = QDoubleSpinBox()
-        self.xmax_spin.setRange(-10000, 10000)
+        self.xmax_spin.setRange(-100000, 100000)
         self.xmax_spin.setValue(current_xlim[1])
         layout.addRow("X max:", self.xmax_spin)
         
         self.ymin_spin = QDoubleSpinBox()
-        self.ymin_spin.setRange(-20000, 20000)
+        self.ymin_spin.setRange(-100, 100)
         self.ymin_spin.setDecimals(3)
         self.ymin_spin.setValue(current_ylim[0])
         layout.addRow("Y min:", self.ymin_spin)
         
         self.ymax_spin = QDoubleSpinBox()
-        self.ymax_spin.setRange(-2, 2)
+        self.ymax_spin.setRange(-100, 100)
         self.ymax_spin.setDecimals(3)
         self.ymax_spin.setValue(current_ylim[1])
         layout.addRow("Y max:", self.ymax_spin)

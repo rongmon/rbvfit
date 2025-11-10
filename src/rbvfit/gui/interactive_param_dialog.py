@@ -14,6 +14,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from rbvfit import guess_profile_parameters_interactive as g
 from rbvfit import rb_setline as line
+import re
 
 def calculate_velocity(wave, wrest, zabs):
     """Calculate velocity array from wavelength"""
@@ -24,41 +25,43 @@ def calculate_velocity(wave, wrest, zabs):
 
 
 
+
 def _get_default_b_from_transition(transition_name: str) -> float:
     """
-    Get default b-parameter based on transition ionization state.
-    
-    Parameters
-    ----------
-    transition_name : str
-        Transition name from rb_setline, e.g., 'HI 1215', 'OVI 1031'
-        
-    Returns
-    -------
-    float
-        Default b-parameter in km/s
+    Get default b-parameter based on ionization stage in the line label.
+    Example inputs: 'HI 1215', 'OVI 1031', 'MgII 2796'
     """
-    # Default fallback value
+
+    # Default fallback
     default_b = 25.0
-    
-    # Extract ionization state (roman numerals)
-    if 'I ' in transition_name or transition_name.endswith('I'):
-        # Neutral species (I)
-        default_b = 22.0
-    elif 'II ' in transition_name or transition_name.endswith('II'):
-        # Singly ionized (II) 
-        default_b = 15.0
-    elif 'III ' in transition_name or transition_name.endswith('III'):
-        # Doubly ionized (III)
-        default_b = 25.0
-    elif 'IV ' in transition_name or transition_name.endswith('IV'):
-        # Triply ionized (IV)
-        default_b = 30.0
-    elif any(ion in transition_name for ion in ['V ', 'VI ', 'VII ', 'VIII ']):
-        # Higher ionization states
-        default_b = 40.0
-        
-    return default_b
+
+    # Find the element-ion part (first token)
+    tokens = transition_name.split()
+    if not tokens:
+        return default_b
+
+    ion_part = tokens[0]  # e.g. "MgII", "OVI", "HI"
+
+    # Extract roman numerals at end
+    match_str = re.search(r'(I+)$', ion_part)
+    if not match_str:
+        return default_b  # no ionization state found
+
+    roman_number = match_str.group(1)  # 'I', 'II', 'III', 'IV', ...
+
+    # Map ionization stage to default b
+    ion_map = {
+        'I':   22.0,  # neutral
+        'II':  15.0,  # singly ionized
+        'III': 25.0,  # doubly ionized
+        'IV':  30.0,  # triply ionized
+    }
+
+    # Higher ionization (V, VI, VII, VIII, ...)
+    if roman_number in ion_map:
+        return ion_map[roman_number]
+    else:
+        return 40.0  # higher ionization species
 
 class RangeDialog(QDialog):
     """Dialog for setting plot ranges"""
@@ -308,6 +311,8 @@ class InteractiveParameterDialog(QDialog):
         
         self.setup_ui()
         self.start_selection()
+        self.activateWindow()
+        self.raise_()
         
     def setup_ui(self):
         """Create UI"""
@@ -425,6 +430,7 @@ class InteractiveParameterDialog(QDialog):
                 
             self.canvas.draw()
             
+
     def on_click(self, event):
         """Handle mouse clicks"""
         if not self.velocity_selector or not event.inaxes:
@@ -440,15 +446,34 @@ class InteractiveParameterDialog(QDialog):
             
         elif event.button == 3:  # Right click - remove nearest component
             if self.velocity_selector.vel_guess:  # Only if components exist
-                self.velocity_selector.remove_nearest(event.xdata)
-    
-            # Redraw all remaining components
-            for vel in self.velocity_selector.vel_guess:
-                self.velocity_selector.add_component(vel)
-            self.canvas.draw()
-            self.update_status()
+                # Create a new VelocitySelector with same data but empty markers
+                old_selector = self.velocity_selector
+                wrest = self.get_current_transition()
                 
-
+                # Create new selector with same data
+                self.velocity_selector = VelocitySelector(
+                    old_selector.wave, 
+                    old_selector.flux, 
+                    old_selector.error, 
+                    old_selector.zabs, 
+                    wrest
+                )
+                
+                # Setup the plot again
+                self.velocity_selector.setup_plot(self.ax)
+                
+                # Remove the nearest component from original data
+                distances = [abs(v - event.xdata) for v in old_selector.vel_guess]
+                nearest_idx = distances.index(min(distances))
+                vel_list = old_selector.vel_guess.copy()
+                vel_list.pop(nearest_idx)
+                
+                # Add all remaining components to new selector
+                for vel in vel_list:
+                    self.velocity_selector.add_component(vel)
+                    
+                self.canvas.draw()
+                self.update_status()
     def on_key(self, event):
         """Handle key presses"""
         print(f"Key pressed: '{event.key}'")  # DEBUG

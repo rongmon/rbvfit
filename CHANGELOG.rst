@@ -4,7 +4,8 @@ Changelog
 Version 2.0.1
 ==============
 - GUI bug fix: Resolved limited x-axis range in model comparison plots
-
+- GUI bug fix: Fixed issue with correctly auto assigning b values during interactive component selection
+-GUI bug fix: Fixed crash issue with while deleting interactive components [patch applied]
 
 Version 2.0.0
 ==============

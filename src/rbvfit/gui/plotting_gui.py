@@ -189,49 +189,42 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
                        alpha=0.3, color='gray', label='1σ Error')
         ax1.plot(wave, model_flux, 'r-', linewidth=2, label='Best-fit Model')
         
+        # Determine y range from plot_ranges (used for ticks and ylim)
+        y_max = plot_ranges.get('y_max', 1.2) if plot_ranges else 1.2
+        y_min = plot_ranges.get('y_min', -0.02) if plot_ranges else -0.02
+        y_tick_base = y_max + 0.05
+        y_tick_top = y_max + 0.20
+
         # Add individual components if requested and available
         if show_components:
             try:
                 # Try to get individual components from model
                 component_result = model.evaluate(best_theta, wave, return_components=True)
-                
+
                 if isinstance(component_result, dict) and 'components' in component_result:
                     components = component_result['components']
                     model_comp_info = component_result['component_info']
-                    
-                    # Plot components and add tick marks in single loop
-                    y_tick_base = 1.05
-                    y_tick_top = 1.2
-                    tick_spacing = 0.02  # Small horizontal offset for multiple components
-                    
+
                     for i, comp_flux in enumerate(components):
                         # Plot component without label
                         ax1.plot(wave, comp_flux, '--', alpha=0.7, linewidth=1)
-                        
+
                         # Get component info for exact wavelength calculation
                         comp_info = model_comp_info[i]
                         lambda0 = comp_info['lambda0']
                         z_total = comp_info['z_total']
-                        v_value = comp_info['v_value']
-                        
-                        # Calculate exact observed wavelength: λ_obs = λ0 * (1 + z) * (1 + v/c)
-                        c_kms = 299792.458  # speed of light in km/s
-                        tick_x = lambda0 * (1 + z_total) * (1 + v_value / c_kms) #+ i * tick_spacing
-                        
+
+                        # z_total already incorporates the velocity: z_total = z_sys*(1+v/c) - 1
+                        tick_x = lambda0 * (1 + z_total)
+
                         # Draw vertical tick mark
                         ax1.plot([tick_x, tick_x], [y_tick_base, y_tick_top], 'k-', linewidth=1.5)
-                        
-                        # Create label with component info
-                        #label = f'λ{lambda0:.1f} (z={z_total:.4f})'
-                        
-                        # Add rotated text label
-                        #ax1.text(tick_x, y_tick_top + 0.02, label, 
-                        #        rotation=90, ha='center', va='bottom', fontsize=6)
-                                
+
             except Exception:
                 # Model doesn't support component decomposition
                 pass
-                
+
+        ax1.set_ylim(y_min, y_tick_top + 0.04)
         ax1.set_ylabel('Normalized Flux')
         ax1.legend(loc='upper right', fontsize=8)
         ax1.grid(True, alpha=0.3)
@@ -263,14 +256,10 @@ def plot_model_comparison_custom(figure, results, show_components=True, show_res
     if plot_ranges:
         if hasattr(figure, 'get_axes') and figure.get_axes():
             ax = figure.get_axes()[0]  # Main plot axis
-            
-            # Apply x-axis limits
+
+            # Apply x-axis limits only (ylim already set with tick extension above)
             if plot_ranges.get('x_min') is not None and plot_ranges.get('x_max') is not None:
                 ax.set_xlim(plot_ranges['x_min'], plot_ranges['x_max'])
-            
-            # Apply y-axis limits  
-            if plot_ranges.get('y_min') is not None and plot_ranges.get('y_max') is not None:
-                ax.set_ylim(plot_ranges['y_min'], plot_ranges['y_max'])
 
 
 
@@ -432,27 +421,36 @@ def plot_velocity_space_custom(figure, results, velocity_range=None, show_compon
             if show_components and 'components' in model_output and len(model_output['components']) > 0:
                 model_components = model_output['components']
                 model_comp_info = model_output['component_info']
-                
+
                 for j, (component_flux, comp_info) in enumerate(zip(model_components, model_comp_info)):
                     # Only plot components that match this transition
                     comp_lambda0 = comp_info.get('lambda0', 0)
                     if abs(comp_lambda0 - rest_wavelength) < 0.1:  # Match transition
                         component_plot = component_flux[vel_mask]
                         color = component_colors[j % len(component_colors)]
-                        
+
                         # Create label with component info
                         v_value = comp_info.get('v_value', 0)
                         label = f'comp {j+1} (v={v_value:.1f})'
-                        
-                        ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5, 
+
+                        ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5,
                                alpha=0.7, label=label)
-            
+
+            # Component tick marks above panel (same aesthetics as model vs data plot)
+            n_comp = len(results.best_fit) // 3
+            v_list = results.best_fit[2*n_comp:3*n_comp]
+            tick_base = yrange[1] + 0.05
+            tick_top = yrange[1] + 0.20
+            for k, v_comp in enumerate(v_list):
+                if velocity_range[0] <= v_comp <= velocity_range[1]:
+                    ax.plot([v_comp, v_comp], [tick_base, tick_top], 'k-', linewidth=1.5)
+            ax.set_ylim(yrange[0], tick_top + 0.04)
+
             # Mark the reference transition at v=0
             ax.axvline(0, color='blue', linestyle=':', alpha=0.8, linewidth=2)
             
             # Format subplot
             ax.grid(True, alpha=0.3)
-            ax.set_ylim(yrange)
             ax.set_xlim(velocity_range)
             
             # Hide tick labels for cleaner layout

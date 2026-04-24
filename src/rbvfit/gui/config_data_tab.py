@@ -350,35 +350,60 @@ class ConfigurationDialog(QDialog):
         """Create dialog interface"""
         layout = QFormLayout()
         self.setLayout(layout)
-        
+
         # Configuration name
         self.name_edit = QLineEdit()
         self.name_edit.setText(self.config_data.get('name', ''))
         layout.addRow("Configuration Name:", self.name_edit)
-        
-        # FWHM setting
+
+        # FWHM value + unit selector on the same row
+        fwhm_widget = QWidget()
+        fwhm_layout = QHBoxLayout()
+        fwhm_layout.setContentsMargins(0, 0, 0, 0)
+        fwhm_widget.setLayout(fwhm_layout)
+
         self.fwhm_spin = QDoubleSpinBox()
-        self.fwhm_spin.setRange(0.1, 50.0)
         self.fwhm_spin.setDecimals(2)
+        self.fwhm_unit_combo = QComboBox()
+        self.fwhm_unit_combo.addItems(['pixels', 'km/s'])
+
+        current_unit = self.config_data.get('fwhm_unit', 'pixels')
+        self.fwhm_unit_combo.setCurrentText(current_unit)
+        self._update_fwhm_spin_range(current_unit)
         self.fwhm_spin.setValue(self.config_data.get('fwhm', 2.5))
-        layout.addRow("FWHM (pixels):", self.fwhm_spin)
-        
+
+        fwhm_layout.addWidget(self.fwhm_spin)
+        fwhm_layout.addWidget(self.fwhm_unit_combo)
+        layout.addRow("FWHM:", fwhm_widget)
+
         # Description
         self.desc_edit = QLineEdit()
         self.desc_edit.setText(self.config_data.get('description', ''))
         layout.addRow("Description:", self.desc_edit)
-        
+
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addRow(buttons)
-        
+
+        self.fwhm_unit_combo.currentTextChanged.connect(self._update_fwhm_spin_range)
+
+    def _update_fwhm_spin_range(self, unit):
+        """Adjust spinbox range when unit changes."""
+        if unit == 'km/s':
+            self.fwhm_spin.setRange(1.0, 500.0)
+            self.fwhm_spin.setSuffix(' km/s')
+        else:
+            self.fwhm_spin.setRange(0.1, 50.0)
+            self.fwhm_spin.setSuffix(' px')
+
     def get_config_data(self):
         """Return configuration data"""
         return {
             'name': self.name_edit.text().strip(),
             'fwhm': self.fwhm_spin.value(),
+            'fwhm_unit': self.fwhm_unit_combo.currentText(),
             'description': self.desc_edit.text().strip(),
             'wave': None,
             'flux': None,
@@ -825,7 +850,8 @@ class ConfigurationDataTab(QWidget):
             config_data = self.configurations[config_name]
             
             info_text = f"Name: {config_data['name']}\n"
-            info_text += f"FWHM: {config_data['fwhm']} pixels\n"
+            fwhm_unit = config_data.get('fwhm_unit', 'pixels')
+            info_text += f"FWHM: {config_data['fwhm']} {fwhm_unit}\n"
             info_text += f"Description: {config_data.get('description', 'None')}\n"
             
             if config_data['filename']:

@@ -19,7 +19,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
 # Import rbvfit components
-from rbvfit.core.voigt_model import VoigtModel
+from rbvfit.core.voigt_model import VoigtModel, mean_fwhm_pixels
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.parameter_manager import ParameterManager
 import rbvfit.vfit_mcmc as mc
@@ -625,7 +625,12 @@ class ModelSetupTab(QWidget):
                 continue
                 
             # Create VoigtModel with instrument-specific FWHM
-            model = VoigtModel(self.master_config, FWHM=str(config_data['fwhm']))
+            fwhm_unit = config_data.get('fwhm_unit', 'pixels')
+            if fwhm_unit == 'km/s':
+                fwhm_pix = mean_fwhm_pixels(config_data['fwhm'], config_data['wave'])
+            else:
+                fwhm_pix = config_data['fwhm']
+            model = VoigtModel(self.master_config, FWHM=str(fwhm_pix))
             
             # Compile model
             #compiled_model = model.compile(verbose=False)

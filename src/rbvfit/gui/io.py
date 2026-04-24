@@ -285,6 +285,7 @@ def serialize_configurations(configurations: Dict[str, Dict]) -> Dict[str, Any]:
         config_data = {
             'name': config['name'],
             'fwhm': config['fwhm'],
+            'fwhm_unit': config.get('fwhm_unit', 'pixels'),
             'description': config.get('description', ''),
             
             # Multiple file path formats for robust restoration
@@ -352,6 +353,7 @@ def deserialize_configurations(serialized: Dict[str, Any]) -> Tuple[Dict[str, Di
         config = {
             'name': config_data['name'],
             'fwhm': config_data['fwhm'],
+            'fwhm_unit': config_data.get('fwhm_unit', 'pixels'),
             'description': config_data.get('description', ''),
             'filename': config_data.get('filename', ''),
             'filepath': config_data.get('filepath', config_data.get('filename', '')),

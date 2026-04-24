@@ -396,30 +396,39 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
             if show_components and 'components' in model_output and len(model_output['components']) > 0:
                 model_components = model_output['components']
                 model_comp_info = model_output['component_info']
-                
+
                 for j, (component_flux, comp_info) in enumerate(zip(model_components, model_comp_info)):
                     # Only plot components that match this transition
                     comp_lambda0 = comp_info.get('lambda0', 0)
                     if abs(comp_lambda0 - rest_wavelength) < 0.1:  # Match transition
                         component_plot = component_flux[vel_mask]
                         color = component_colors[j % len(component_colors)]
-                        
+
                         # Create label with component info
                         v_value = comp_info.get('v_value', 0)
                         label = f'comp {j+1} (v={v_value:.1f})'
-                        
-                        ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5, 
+
+                        ax.plot(vel_plot, component_plot, '--', color=color, linewidth=0.5,
                                alpha=0.7, label=label)
-            
+
+            # Component tick marks above panel (same aesthetics as model vs data plot)
+            n_comp = len(results.best_fit) // 3
+            v_list = results.best_fit[2*n_comp:3*n_comp]
+            tick_base = y_range[1] + 0.05
+            tick_top = y_range[1] + 0.20
+            for k, v_comp in enumerate(v_list):
+                if velocity_range[0] <= v_comp <= velocity_range[1]:
+                    ax.plot([v_comp, v_comp], [tick_base, tick_top], 'k-', linewidth=1.5)
+
             # Mark the reference transition at v=0
             ax.axvline(0, color='blue', linestyle=':', alpha=0.8, linewidth=2)
-            ax.text(0, y_range[1]*0.95, f'{ion_name}\n{rest_wavelength:.1f}', 
+            ax.text(0, y_range[1]*0.95, f'{ion_name}\n{rest_wavelength:.1f}',
                    ha='center', va='top', fontsize=9, fontweight='bold',
                    bbox=dict(boxstyle="round,pad=0.2", facecolor="lightblue", alpha=0.8))
-            
+
             # Format subplot
             ax.grid(True, alpha=0.3)
-            ax.set_ylim(y_range)
+            ax.set_ylim(y_range[0], tick_top + 0.04)
             ax.set_xlim(velocity_range)
             
             # Add labels

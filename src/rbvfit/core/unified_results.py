@@ -1286,10 +1286,9 @@ class UnifiedResults:
                 inst_name in self.config_metadata['instrument_params']):
                 fwhm = self.config_metadata['instrument_params'][inst_name].get('FWHM', '6.5')
             
-            script_lines.extend([
-                f'    models["{inst_name}"] = VoigtModel(config, FWHM={fwhm})',
-                f'    models["{inst_name}"].compile()'
-            ])
+            script_lines.append(
+                f'    models["{inst_name}"] = VoigtModel(config, FWHM=\'{fwhm}\')'
+            )
         
         script_lines.append('')
         
@@ -1301,13 +1300,16 @@ class UnifiedResults:
 
         for i, inst_name in enumerate(self.instrument_names):
             comma = ',' if i < len(self.instrument_names) - 1 else ''
-            line = f'        "{inst_name}": {{"model": models["{inst_name}"], "wave":     wave_{inst_name.lower()}, "flux": flux_{inst_name.lower()}, "error":     error_{inst_name.lower()}}}'
+            line = (f'        "{inst_name}": {{"model": models["{inst_name}"], '
+                    f'"wave": wave_{inst_name.lower()}, '
+                    f'"flux": flux_{inst_name.lower()}, '
+                    f'"error": error_{inst_name.lower()}}}{comma}')
             script_lines.append(line)
-            
-            script_lines.extend([
-                '    }',
-                ''
-            ])
+
+        script_lines.extend([
+            '    }',
+            ''
+        ])
 
         
         # Parameters and bounds section  

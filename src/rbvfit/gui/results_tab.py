@@ -159,6 +159,12 @@ class ResultsTab(QWidget):
             'x_min': None, 'x_max': None,
             'y_min': -0.02, 'y_max': 1.5  # Default y-ranges as requested
         }
+
+        # Velocity plot ranges (persisted across redraws)
+        self.velocity_plot_ranges = {
+            'vel_min': -600, 'vel_max': 600,
+            'y_min': -0.02, 'y_max': 1.5
+        }
         
         # Comparison plot canvas
         self.comparison_figure = Figure(figsize=(12, 8))
@@ -222,8 +228,8 @@ class ResultsTab(QWidget):
         vel_controls = QHBoxLayout()
         velocity_layout.addLayout(vel_controls)
         
-        self.set_velocity_ranges_btn = QPushButton("Set Velocity Ranges")
-        self.set_velocity_ranges_btn.setToolTip("Set custom velocity plot ranges")
+        self.set_velocity_ranges_btn = QPushButton("Set Plot Range")
+        self.set_velocity_ranges_btn.setToolTip("Set custom velocity and flux plot ranges")
         vel_controls.addWidget(self.set_velocity_ranges_btn)
         vel_controls.addStretch()
 
@@ -322,30 +328,16 @@ class ResultsTab(QWidget):
 
     def set_velocity_plot_ranges(self):
         """Set plot ranges specifically for velocity plots"""
-        
-        # Get current ranges from the velocity figure if it exists and has axes
-        current_xlim = None
-        current_ylim = None
-        
-        if self.velocity_figure and self.velocity_figure.get_axes():
-            # Get the first (main) axes from the figure
-            ax = self.velocity_figure.get_axes()[0]
-            current_xlim = ax.get_xlim()
-            current_ylim = ax.get_ylim()
-        
-        # If no current figure or ranges, use defaults
-        if current_xlim is None:
-            current_xlim = (-600, 600)
-        if current_ylim is None:
-            current_ylim = (-0.05, 1.5)
-        
-        # Default ranges for velocity plots
-        original_xlim = (-600, 600)  # Default velocity range
-        original_ylim = (-0.02, 1.5)  # Default flux range
-        
+
+        # Always initialize from stored ranges (not axes, which are tick-extended)
+        current_xlim = (self.velocity_plot_ranges['vel_min'], self.velocity_plot_ranges['vel_max'])
+        current_ylim = (self.velocity_plot_ranges['y_min'], self.velocity_plot_ranges['y_max'])
+        original_xlim = (-600, 600)
+        original_ylim = (-0.02, 1.5)
+
         dialog = PlotRangeDialog(
             current_xlim=current_xlim,
-            current_ylim=current_ylim, 
+            current_ylim=current_ylim,
             original_xlim=original_xlim,
             original_ylim=original_ylim,
             parent=self
@@ -354,8 +346,15 @@ class ResultsTab(QWidget):
         # Use blocking dialog
         if dialog.exec_() == QDialog.Accepted:
             xlim, ylim = dialog.get_ranges()
-        
-            self.update_velocity_plot(velocity_range=xlim,yrange=ylim)  # Refresh plot with new ranges
+
+            if xlim:
+                self.velocity_plot_ranges['vel_min'] = xlim[0]
+                self.velocity_plot_ranges['vel_max'] = xlim[1]
+            if ylim:
+                self.velocity_plot_ranges['y_min'] = ylim[0]
+                self.velocity_plot_ranges['y_max'] = ylim[1]
+
+            self.update_velocity_plot()  # Refresh plot with persisted ranges
     
         
 
@@ -824,20 +823,13 @@ class ResultsTab(QWidget):
         self.comparison_canvas.draw()
 
 
-    def update_velocity_plot(self,velocity_range=None,yrange=None):
-        """Update velocity space plot with custom ranges"""
+    def update_velocity_plot(self):
+        """Update velocity space plot using persisted ranges"""
         if not HAS_MATPLOTLIB or self.results is None:
             return
-        
-        # Get velocity range from stored values
-        if velocity_range:
-            velocity_range = velocity_range
-        else:
-            velocity_range = (-600, 600)  # Default range
-        if yrange:
-            yrange=yrange
-        else:
-            yrange=(-0.02,1.5)
+
+        velocity_range = (self.velocity_plot_ranges['vel_min'], self.velocity_plot_ranges['vel_max'])
+        yrange = (self.velocity_plot_ranges['y_min'], self.velocity_plot_ranges['y_max'])
         
         show_components = self.show_components_check.isChecked()
         selected_instrument = self.instrument_combo.currentText()

@@ -1,6 +1,18 @@
 =========
 Changelog
 =========
+Version 2.1.0
+==============
+
+GUI Enhancements
+----------------
+- **FWHM unit toggle**: Configurations now support FWHM entry in km/s or pixels; km/s is converted to pixels at compile time via ``mean_fwhm_pixels``; each configuration can independently use different units
+- **Component tick marks**: Velocity space plot and model vs data plot now draw vertical tick marks at each component's position
+- **Tick mark bug fix**: Fixed incorrect tick positions in model vs data plot (velocity was applied twice via ``z_total``); ticks are now correctly placed at ``λ0 × (1 + z_total)``
+- **Consistent tick aesthetics**: Tick marks in velocity space and model vs data plots use the same style (black, linewidth 1.5) and are positioned relative to the y-axis maximum
+- **Velocity plot range controls**: "Set Plot Range" button in velocity space tab now correctly persists x and y range changes across redraws; dialog initializes from stored user ranges rather than tick-extended axes limits
+- **export_script() fix**: Fixed broken Python output for multi-instrument cases (closing brace was inside loop; FWHM value was unquoted)
+
 Version 2.0.1
 ==============
 - GUI bug fix: Resolved limited x-axis range in model comparison plots

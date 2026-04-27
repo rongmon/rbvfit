@@ -53,7 +53,7 @@ class ParameterSummary:
     names: List[str]
     best_fit: np.ndarray
     errors: np.ndarray
-    percentiles: Dict[str, np.ndarray]  # 16th, 50th, 84th percentiles
+    percentiles: Dict[str, np.ndarray] # 16th, 50th, 84th percentiles
     mean: np.ndarray
     std: np.ndarray
     
@@ -136,20 +136,27 @@ class UnifiedResults:
         else:
             # Fallback to reasonable defaults if bounds not available
             n_params = len(self.best_fit)
+            if n_params % 3 != 0:
+                warnings.warn(
+                    f"Parameter count ({n_params}) not divisible by 3 — "
+                    "cannot infer N/b/v structure for default bounds. "
+                    "Using generic [-1e6, 1e6] bounds."
+                )
+                return np.full(n_params, -1e6), np.full(n_params, 1e6)
+
             n_comp = n_params // 3
-            
             # Default bounds: N=[10,20], b=[1,100], v=[-500,500]
             lb = np.concatenate([
-                np.full(n_comp, 10.0),    # N bounds
-                np.full(n_comp, 1.0),     # b bounds  
-                np.full(n_comp, -500.0)   # v bounds
+                np.full(n_comp, 10.0), # N bounds
+                np.full(n_comp, 1.0), # b bounds
+                np.full(n_comp, -500.0) # v bounds
             ])
             ub = np.concatenate([
-                np.full(n_comp, 20.0),    # N bounds
-                np.full(n_comp, 100.0),   # b bounds
-                np.full(n_comp, 500.0)    # v bounds
+                np.full(n_comp, 20.0), # N bounds
+                np.full(n_comp, 100.0), # b bounds
+                np.full(n_comp, 500.0) # v bounds
             ])
-            
+
             return lb, ub
 
     
@@ -161,7 +168,7 @@ class UnifiedResults:
         try:
             # Get full chain first
             if hasattr(fitter.sampler, 'get_chain'):
-                chain = fitter.sampler.get_chain()  # (n_steps, n_walkers, n_params)
+                chain = fitter.sampler.get_chain() # (n_steps, n_walkers, n_params)
             else:
                 raise AttributeError("Sampler has no get_chain method")
             
@@ -228,17 +235,17 @@ class UnifiedResults:
                     rhat = zeus.diagnostics.gelman_rubin(chain)
                 except AttributeError:
                     # Implement simple R-hat calculation (fallback)
-                    chain = fitter.sampler.get_chain()  # (n_steps, n_walkers, n_params)
+                    chain = fitter.sampler.get_chain() # (n_steps, n_walkers, n_params)
                     
                     if len(chain.shape) == 3 and chain.shape[0] >= 100:
                         n_steps, n_walkers, n_params = chain.shape
                         r_hat_values = []
                         
                         for param_idx in range(n_params):
-                            param_chains = chain[:, :, param_idx]  # (n_steps, n_walkers)
+                            param_chains = chain[:, :, param_idx] # (n_steps, n_walkers)
                             
                             # Between-chain variance
-                            chain_means = np.mean(param_chains, axis=0)  # Mean for each walker
+                            chain_means = np.mean(param_chains, axis=0) # Mean for each walker
                             grand_mean = np.mean(chain_means)
                             B = n_steps * np.var(chain_means, ddof=1)
                             
@@ -271,13 +278,13 @@ class UnifiedResults:
                 acceptance_fraction = np.mean(af) if hasattr(af, '__len__') else float(af)
             elif hasattr(fitter.sampler, 'get_chain'):
                 # zeus-style: estimate manually
-                chain = fitter.sampler.get_chain()  # shape: (n_steps, n_walkers, n_params)
+                chain = fitter.sampler.get_chain() # shape: (n_steps, n_walkers, n_params)
                 n_steps, n_walkers, n_params = chain.shape
                 n_accepted = 0
                 n_total = 0
         
                 for w in range(n_walkers):
-                    walker_chain = chain[:, w, :]  # shape: (n_steps, n_params)
+                    walker_chain = chain[:, w, :] # shape: (n_steps, n_params)
                     for i in range(1, n_steps):
                         n_total += 1
                         if not np.allclose(walker_chain[i], walker_chain[i-1]):
@@ -294,14 +301,80 @@ class UnifiedResults:
     def correlation_matrix(self) -> np.ndarray:
         """Calculate parameter correlation matrix."""
         return np.corrcoef(self.samples.T)
-    
+
+    def chi_squared(self, instrument_name: str = None) -> Dict[str, float]:
+        """
+        Calculate reduced chi-squared (χ²/ν) for one or all instruments.
+
+        Parameters
+        ----------
+        instrument_name : str, optional
+            Instrument to evaluate. If None, evaluates all instruments and
+            returns a combined value as well.
+
+        Returns
+        -------
+        dict
+            Keys: instrument name(s) plus 'combined' (when all instruments used).
+            Values: reduced chi-squared (float).
+
+        Raises
+        ------
+        ValueError
+            If config metadata is missing (model cannot be reconstructed).
+        """
+        if self.config_metadata is None:
+            raise ValueError(
+                "chi_squared() requires config metadata for model reconstruction. "
+                "None is available — the fitter may not have stored instrument_configs."
+            )
+
+        # Determine which instruments to evaluate
+        if instrument_name is not None:
+            if instrument_name not in self.instrument_data:
+                raise ValueError(
+                    f"Instrument '{instrument_name}' not found. "
+                    f"Available: {self.instrument_names}"
+                )
+            inst_names = [instrument_name]
+        else:
+            inst_names = self.instrument_names
+
+        n_params = len(self.best_fit)
+        results = {}
+        total_chi2 = 0.0
+        total_n = 0
+
+        for name in inst_names:
+            model = self.reconstruct_model(name)
+            data = self.instrument_data[name]
+            wave = data['wave']
+            flux_obs = data['flux']
+            flux_err = data['error']
+
+            flux_model = model.evaluate(self.best_fit, wave)
+            residuals = (flux_obs - flux_model) / flux_err
+            chi2 = float(np.sum(residuals ** 2))
+            n_data = len(wave)
+            dof = max(n_data - n_params, 1)
+            results[name] = chi2 / dof
+
+            total_chi2 += chi2
+            total_n += n_data
+
+        if instrument_name is None and len(inst_names) > 1:
+            total_dof = max(total_n - n_params, 1)
+            results['combined'] = total_chi2 / total_dof
+
+        return results
+
     def _extract_config_metadata(self, fitter) -> Optional[Dict]:
         """Extract model configuration metadata from V2 vfit."""
         try:
             config_data = {
                 'rbvfit_version': get_rbvfit_version(),
                 'systems': [],
-                'instrument_params': {}  # Per-instrument FWHM storage
+                'instrument_params': {} # Per-instrument FWHM storage
             }
             
             # V2 vfit stores instrument configs in instrument_configs attribute
@@ -364,7 +437,7 @@ class UnifiedResults:
     def _estimate_burnin_from_chain(self, chain) -> int:
         """Estimate burn-in from chain shape."""
         n_steps = chain.shape[0]
-        return int(0.2 * n_steps)  # Conservative 20%
+        return int(0.2 * n_steps) # Conservative 20%
     
     # =========================================================================
     # Properties (Computed on-demand)
@@ -561,16 +634,16 @@ class UnifiedResults:
                     results.config_metadata = json.loads(config_group.attrs['config_data'])
             
             # Load diagnostics (with None defaults)
-            diag = f.get('diagnostics', {})
-            results.autocorr_time = diag.get('autocorr_time', [None])[:]
-            results.rhat = diag.get('rhat', [None])[:]
-            results.acceptance_fraction = diag.attrs.get('acceptance_fraction', None)
-            
-            # Handle None arrays
-            if results.autocorr_time is not None and len(results.autocorr_time) == 1 and results.autocorr_time[0] is None:
-                results.autocorr_time = None
-            if results.rhat is not None and len(results.rhat) == 1 and results.rhat[0] is None:
-                results.rhat = None
+            results.autocorr_time = None
+            results.rhat = None
+            results.acceptance_fraction = None
+            if 'diagnostics' in f:
+                diag = f['diagnostics']
+                if 'autocorr_time' in diag:
+                    results.autocorr_time = diag['autocorr_time'][:]
+                if 'rhat' in diag:
+                    results.rhat = diag['rhat'][:]
+                results.acceptance_fraction = diag.attrs.get('acceptance_fraction', None)
         
         return results
 
@@ -599,19 +672,19 @@ class UnifiedResults:
         # 1. Acceptance fraction analysis
         diagnostics['acceptance_fraction'] = {
             'mean': self.acceptance_fraction,
-            'individual': self.acceptance_fraction  # Single value for our storage
+            'individual': self.acceptance_fraction # Single value for our storage
         }
         
         if self.acceptance_fraction is not None:
             mean_accept = self.acceptance_fraction
             if mean_accept < 0.2:
-                recommendations.append("❌ Low acceptance fraction (<0.2). Consider reducing step size or relaxing bounds.")
+                recommendations.append("[FAIL] Low acceptance fraction (<0.2). Consider reducing step size or relaxing bounds.")
             elif mean_accept > 0.7:
-                recommendations.append("⚠️ High acceptance fraction (>0.7). Consider increasing step size for better mixing.")
+                recommendations.append("[WARN] High acceptance fraction (>0.7). Consider increasing step size for better mixing.")
             else:
-                recommendations.append("✅ Good acceptance fraction (0.2-0.7).")
+                recommendations.append("[OK] Good acceptance fraction (0.2-0.7).")
         else:
-            recommendations.append("❓ Could not calculate acceptance fraction.")
+            recommendations.append("[?] Could not calculate acceptance fraction.")
         
         # 2. Autocorrelation time analysis (emcee only)
         diagnostics['autocorr_time'] = {
@@ -628,17 +701,17 @@ class UnifiedResults:
                 if chain_length_ratio < 50:
                     recommended_length = int(50 * mean_tau)
                     recommendations.append(
-                        f"⏱️ Chain too short. Current: {self.n_steps} steps, "
+                        f"[TIME] Chain too short. Current: {self.n_steps} steps, "
                         f"Recommended: >{recommended_length} steps (50x autocorr time)"
                     )
                 else:
-                    recommendations.append("✅ Chain length adequate (>50x autocorr time).")
+                    recommendations.append("[OK] Chain length adequate (>50x autocorr time).")
             else:
-                recommendations.append("❓ Could not determine autocorrelation time.")
+                recommendations.append("[?] Could not determine autocorrelation time.")
         elif self.sampler_name.lower() == 'emcee':
-            recommendations.append("❓ Autocorrelation time could not be calculated - chain likely too short")
+            recommendations.append("[?] Autocorrelation time could not be calculated - chain likely too short")
             recommended_steps = self.n_steps * 3
-            recommendations.append(f"⏱️ Recommend running 2-3x longer (try {recommended_steps} steps)")
+            recommendations.append(f"[TIME] Recommend running 2-3x longer (try {recommended_steps} steps)")
         
         # 3. Gelman-Rubin R-hat analysis (zeus only)
         diagnostics['gelman_rubin'] = {
@@ -649,15 +722,15 @@ class UnifiedResults:
         if self.rhat is not None:
             max_r_hat = np.max(self.rhat)
             if max_r_hat <= 1.1:
-                recommendations.append("✅ Excellent convergence (R-hat ≤ 1.1)")
+                recommendations.append("[OK] Excellent convergence (R-hat ≤ 1.1)")
             elif max_r_hat <= 1.2:
-                recommendations.append("⚠️ Marginal convergence (1.1 < R-hat ≤ 1.2). Consider longer chains.")
+                recommendations.append("[WARN] Marginal convergence (1.1 < R-hat ≤ 1.2). Consider longer chains.")
             else:
-                recommendations.append("❌ Poor convergence (R-hat > 1.2). Chains have not converged.")
+                recommendations.append("[FAIL] Poor convergence (R-hat > 1.2). Chains have not converged.")
                 recommended_steps = self.n_steps * 2
-                recommendations.append(f"🔄 Recommend running 2x longer ({recommended_steps} steps)")
+                recommendations.append(f"Recommend running 2x longer ({recommended_steps} steps)")
         elif self.sampler_name.lower() == 'zeus':
-            recommendations.append("❓ R-hat could not be calculated")
+            recommendations.append("[?] R-hat could not be calculated")
         
         # 4. Effective sample size
         try:
@@ -672,16 +745,16 @@ class UnifiedResults:
                 threshold = 50 if self.sampler_name.lower() == 'zeus' else 100
                 
                 if min_eff >= threshold:
-                    recommendations.append(f"✅ Good effective sample size (min: {min_eff:.0f})")
+                    recommendations.append(f"[OK] Good effective sample size (min: {min_eff:.0f})")
                 elif min_eff >= threshold/2:
-                    recommendations.append(f"⚠️ Marginal effective sample size (min: {min_eff:.0f})")
+                    recommendations.append(f"[WARN] Marginal effective sample size (min: {min_eff:.0f})")
                 else:
-                    recommendations.append(f"❌ Low effective sample size (min: {min_eff:.0f})")
+                    recommendations.append(f"[FAIL] Low effective sample size (min: {min_eff:.0f})")
             else:
-                recommendations.append("❓ Could not calculate effective sample size")
+                recommendations.append("[?] Could not calculate effective sample size")
         except Exception:
             diagnostics['effective_sample_size'] = None
-            recommendations.append("❓ Could not calculate effective sample size")
+            recommendations.append("[?] Could not calculate effective sample size")
         
         # 5. Overall assessment
         diagnostics['overall_status'] = self._assess_overall_convergence(diagnostics)
@@ -729,7 +802,7 @@ class UnifiedResults:
         # Check acceptance fraction (common to all samplers)
         if diagnostics['acceptance_fraction'] is not None:
             mean_accept = diagnostics['acceptance_fraction']['mean']
-            if mean_accept and (mean_accept < 0.2 or mean_accept > 0.7):
+            if mean_accept is not None and (mean_accept < 0.2 or mean_accept > 0.7):
                 issues.append("acceptance_fraction")
         else:
             issues.append("acceptance_fraction_unavailable")
@@ -756,21 +829,21 @@ class UnifiedResults:
                         return "POOR"
                     elif "marginal_convergence" in issues or len(issues) >= 2:
                         return "MARGINAL"
-                    elif len(issues) <= 1:  # Allow minor acceptance issues
+                    elif len(issues) <= 1: # Allow minor acceptance issues
                         return "GOOD"
                     else:
                         return "MARGINAL"
                 else:
-                    return "UNKNOWN"  # R-hat calculation failed
+                    return "UNKNOWN" # R-hat calculation failed
             else:
-                return "UNKNOWN"  # No R-hat available for zeus
+                return "UNKNOWN" # No R-hat available for zeus
         
         else:
             # Emcee or unknown sampler: use autocorrelation-based logic
             autocorr_failed = False
             
             # Check autocorrelation time availability
-            if diagnostics['autocorr_time'] is None or diagnostics['autocorr_time']['mean_tau'] is None:
+            if diagnostics['autocorr_time']['mean_tau'] is None:
                 autocorr_failed = True
                 issues.append("autocorr_unavailable")
             else:
@@ -793,9 +866,9 @@ class UnifiedResults:
             
             # Conservative assessment logic for emcee
             if autocorr_failed and len([i for i in issues if i != "autocorr_unavailable"]) == 0:
-                return "MARGINAL"  # Conservative when missing key diagnostic
+                return "MARGINAL" # Conservative when missing key diagnostic
             elif autocorr_failed and len(issues) > 2:
-                return "UNKNOWN"  # Too many unknowns
+                return "UNKNOWN" # Too many unknowns
             elif len(issues) == 0:
                 return "GOOD"
             elif len(issues) <= 2:
@@ -806,13 +879,13 @@ class UnifiedResults:
     def _print_convergence_diagnostics(self, diagnostics):
         """Print formatted convergence diagnostics with sampler-aware recommendations."""
         status = diagnostics['overall_status']
-        status_symbols = {"GOOD": "✓", "MARGINAL": "⚠", "POOR": "✗", "UNKNOWN": "?"}
+        status_symbols = {"GOOD": "", "MARGINAL": "", "POOR": "", "UNKNOWN": "?"}
         
         print("\n" + "=" * 70)
         print("CONVERGENCE DIAGNOSTICS")
         print("=" * 70)
         
-        print(f"Overall Status: {status_symbols.get(status, '❓')} {status}")
+        print(f"Overall Status: {status_symbols.get(status, '')} {status}")
         print(f"Sampler: {self.sampler_name}")
         print(f"Walkers: {self.n_walkers}, Steps: {self.n_steps}")
         
@@ -826,18 +899,18 @@ class UnifiedResults:
                 max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
                 if max_r_hat is not None:
                     if max_r_hat <= 1.1:
-                        symbol = "✅"
+                        symbol = "[OK]"
                     elif max_r_hat <= 1.2:
-                        symbol = "⚠️"
+                        symbol = "[WARN]"
                     else:
-                        symbol = "❌"
+                        symbol = "[FAIL]"
                     print(f"Max R-hat (primary): {symbol} {max_r_hat:.3f}")
                 else:
-                    print("R-hat: ❌ Could not calculate")
+                    print("R-hat: Could not calculate")
             else:
-                print("R-hat: ❓ Not available")
+                print("R-hat: Not available")
             
-            print("Autocorr Time: ➖ Not available (zeus uses R-hat instead)")
+            print("Autocorr Time: Not available (zeus uses R-hat instead)")
             
         else:
             # Emcee: autocorr is primary
@@ -847,61 +920,61 @@ class UnifiedResults:
                     if 'chain_length_ratio' in diagnostics:
                         ratio = diagnostics['chain_length_ratio']
                         if ratio >= 50:
-                            symbol = "✅"
+                            symbol = "[OK]"
                         elif ratio >= 20:
-                            symbol = "⚠️"
+                            symbol = "[WARN]"
                         else:
-                            symbol = "❌"
+                            symbol = "[FAIL]"
                         print(f"Mean Autocorr Time (primary): {symbol} {mean_tau:.1f} steps")
                         print(f"Chain Length Ratio: {symbol} {ratio:.1f}x autocorr time")
                     else:
-                        print(f"Autocorr Time: ⚠️ {mean_tau:.1f} steps")
+                        print(f"Autocorr Time: {mean_tau:.1f} steps")
                 else:
-                    print("Autocorr Time: ❌ Could not calculate")
+                    print("Autocorr Time: Could not calculate")
             else:
-                print("Autocorr Time: ❓ Not available")
+                print("Autocorr Time: Not available")
             
             # Show R-hat as secondary for emcee
             if diagnostics['gelman_rubin'] is not None:
                 max_r_hat = diagnostics['gelman_rubin']['max_r_hat']
                 if max_r_hat is not None:
                     if max_r_hat <= 1.1:
-                        symbol = "✅"
+                        symbol = "[OK]"
                     elif max_r_hat <= 1.2:
-                        symbol = "⚠️"
+                        symbol = "[WARN]"
                     else:
-                        symbol = "❌"
+                        symbol = "[FAIL]"
                     print(f"Max R-hat (secondary): {symbol} {max_r_hat:.3f}")
             else:
-                print("R-hat: ➖ Not calculated for emcee")
+                print("R-hat: Not calculated for emcee")
         
         # Common diagnostics
         if diagnostics['acceptance_fraction'] is not None:
             mean_accept = diagnostics['acceptance_fraction']['mean']
             if mean_accept is not None:
                 if 0.2 <= mean_accept <= 0.7:
-                    symbol = "✅"
+                    symbol = "[OK]"
                 elif 0.1 <= mean_accept <= 0.8:
-                    symbol = "⚠️"
+                    symbol = "[WARN]"
                 else:
-                    symbol = "❌"
+                    symbol = "[FAIL]"
                 print(f"Acceptance Fraction: {symbol} {mean_accept:.3f}")
             else:
-                print("Acceptance Fraction: ❓ Not available")
+                print("Acceptance Fraction: Not available")
         
         if diagnostics['effective_sample_size'] is not None:
             min_eff = diagnostics['effective_sample_size']['min_n_eff']
             if min_eff is not None:
                 threshold = 50 if self.sampler_name.lower() == 'zeus' else 100
                 if min_eff >= threshold:
-                    symbol = "✅"
+                    symbol = "[OK]"
                 elif min_eff >= threshold/2:
-                    symbol = "⚠️"
+                    symbol = "[WARN]"
                 else:
-                    symbol = "❌"
+                    symbol = "[FAIL]"
                 print(f"Min Effective N: {symbol} {min_eff:.0f}")
             else:
-                print("Effective Sample Size: ❌ Could not calculate")
+                print("Effective Sample Size: Could not calculate")
         
         # Recommendations
         print(f"\nRecommendations:")
@@ -910,15 +983,15 @@ class UnifiedResults:
             print(f"{rec}")
         
         # Bottom line
-        print(f"\n{'🔥 BOTTOM LINE 🔥':^70}")
+        print(f"\n{' BOTTOM LINE ':^70}")
         if status == "GOOD":
-            print("✅ Results are reliable - proceed with analysis")
+            print("[OK] Results are reliable - proceed with analysis")
         elif status == "MARGINAL":
-            print("⚠️ Results likely reliable but consider longer chains for publication")
+            print("[WARN] Results likely reliable but consider longer chains for publication")
         elif status == "POOR":
-            print("❌ DO NOT use these results - re-run with suggested improvements")
+            print("[FAIL] DO NOT use these results - re-run with suggested improvements")
         else:
-            print("❓ Convergence unclear - examine trace plots manually")
+            print("[?] Convergence unclear - examine trace plots manually")
         
         print("=" * 70)        
 
@@ -931,7 +1004,7 @@ class UnifiedResults:
         # Calculate percentiles from samples
         percentiles = {
             '16th': np.percentile(self.samples, 16, axis=0),
-            '50th': np.percentile(self.samples, 50, axis=0),  # median
+            '50th': np.percentile(self.samples, 50, axis=0), # median
             '84th': np.percentile(self.samples, 84, axis=0)
         }
         
@@ -1025,7 +1098,7 @@ class UnifiedResults:
                     sole_instrument = next(iter(instrument_params))
                     fwhm = instrument_params[sole_instrument].get('FWHM', default_fwhm)
                 else:
-                    fwhm = default_fwhm  # Fallback if multiple instruments or none
+                    fwhm = default_fwhm # Fallback if multiple instruments or none
 
             
             # Create configuration with FWHM
@@ -1094,17 +1167,17 @@ class UnifiedResults:
             n_points = len(self.instrument_data[name]['wave'])
             wave_range = (self.instrument_data[name]['wave'].min(), 
                          self.instrument_data[name]['wave'].max())
-            print(f"  {name}: {n_points} points, {wave_range[0]:.1f}-{wave_range[1]:.1f} Å")
+            print(f" {name}: {n_points} points, {wave_range[0]:.1f}-{wave_range[1]:.1f} Å")
         
         # Model reconstruction capability
         reconstruction_available = self.config_metadata is not None
-        print(f"\nModel Reconstruction: {'✓' if reconstruction_available else '✗'}")
+        print(f"\nModel Reconstruction: {'OK' if reconstruction_available else ''}")
         
         # Diagnostics summary
         print(f"\nDiagnostics Available:")
-        print(f"  Autocorr Time: {'✓' if self.autocorr_time is not None else '✗'}")
-        print(f"  R-hat: {'✓' if self.rhat is not None else '✗'}")
-        print(f"  Acceptance: {'✓' if self.acceptance_fraction is not None else '✗'}")
+        print(f" Autocorr Time: {'OK' if self.autocorr_time is not None else ''}")
+        print(f" R-hat: {'OK' if self.rhat is not None else ''}")
+        print(f" Acceptance: {'OK' if self.acceptance_fraction is not None else ''}")
         
         # Basic parameter info
         print(f"\nParameters: {len(self.best_fit)} fitted")
@@ -1178,22 +1251,22 @@ class UnifiedResults:
             'from rbvfit.core.unified_results import UnifiedResults',
             '',
             'def main():',
-            '    """Main fitting workflow"""',
-            '    print("Reproducing rbvfit 2.0 analysis...")',
+            ' """Main fitting workflow"""',
+            ' print("Reproducing rbvfit 2.0 analysis...")',
             ''
         ])
         
         # Data creation/loading section
         script_lines.extend([
-            '    # ================================================================',
-            '    # DATA SETUP',
-            '    # ================================================================',
+            ' # ================================================================',
+            ' # DATA SETUP',
+            ' # ================================================================',
             ''
         ])
         
         if include_data_files:
             # Save data to files and load them
-            script_lines.append('    # Load observational data from files')
+            script_lines.append(' # Load observational data from files')
             
             # Actually save the data files
             if output_path:
@@ -1213,15 +1286,15 @@ class UnifiedResults:
                         error=data['error'])
                 
                 script_lines.extend([
-                    f'    {inst_name.lower()}_data = np.load("{data_filename}")',
-                    f'    wave_{inst_name.lower()} = {inst_name.lower()}_data["wave"]',
-                    f'    flux_{inst_name.lower()} = {inst_name.lower()}_data["flux"]',
-                    f'    error_{inst_name.lower()} = {inst_name.lower()}_data["error"]',
+                    f' {inst_name.lower()}_data = np.load("{data_filename}")',
+                    f' wave_{inst_name.lower()} = {inst_name.lower()}_data["wave"]',
+                    f' flux_{inst_name.lower()} = {inst_name.lower()}_data["flux"]',
+                    f' error_{inst_name.lower()} = {inst_name.lower()}_data["error"]',
                     ''
                 ])
         else:
             # Embed data arrays directly (for smaller datasets)
-            script_lines.append('    # Observational data (embedded arrays)')
+            script_lines.append(' # Observational data (embedded arrays)')
             for inst_name in self.instrument_names:
                 data = self.instrument_data[inst_name]
                 
@@ -1232,27 +1305,27 @@ class UnifiedResults:
                     error_str = np.array2string(data['error'], separator=', ', threshold=np.inf)
                     
                     script_lines.extend([
-                        f'    wave_{inst_name.lower()} = np.array({wave_str})',
-                        f'    flux_{inst_name.lower()} = np.array({flux_str})',
-                        f'    error_{inst_name.lower()} = np.array({error_str})',
+                        f' wave_{inst_name.lower()} = np.array({wave_str})',
+                        f' flux_{inst_name.lower()} = np.array({flux_str})',
+                        f' error_{inst_name.lower()} = np.array({error_str})',
                         ''
                     ])
                 else:
                     script_lines.extend([
-                        f'    # Data arrays too large for embedding - load from file:',
-                        f'    # wave_{inst_name.lower()}, flux_{inst_name.lower()},     error_{inst_name.lower()} = load_your_data()',
-                        f'    raise NotImplementedError("Large data arrays need external loading")',
+                        f' # Data arrays too large for embedding - load from file:',
+                        f' # wave_{inst_name.lower()}, flux_{inst_name.lower()}, error_{inst_name.lower()} = load_your_data()',
+                        f' raise NotImplementedError("Large data arrays need external loading")',
                         ''
                     ])
         
         # Model configuration section
         script_lines.extend([
-            '    # ================================================================',
-            '    # MODEL CONFIGURATION',
-            '    # ================================================================',
+            ' # ================================================================',
+            ' # MODEL CONFIGURATION',
+            ' # ================================================================',
             '',
-            '    # Create fit configuration',
-            '    config = FitConfiguration()',
+            ' # Create fit configuration',
+            ' config = FitConfiguration()',
             ''
         ])
         
@@ -1266,7 +1339,7 @@ class UnifiedResults:
                 
                 transitions_str = '[' + ', '.join(f'{t:.3f}' for t in transitions) + ']'
                 script_lines.append(
-                    f'    config.add_system(z={z:.6f}, ion="{ion_name}", '
+                    f' config.add_system(z={z:.6f}, ion="{ion_name}", '
                     f'transitions={transitions_str}, components={components})'
                 )
         
@@ -1274,49 +1347,49 @@ class UnifiedResults:
         
         # Model creation section
         script_lines.extend([
-            '    # Create VoigtModel objects for each instrument',
-            '    models = {}',
+            ' # Create VoigtModel objects for each instrument',
+            ' models = {}',
             ''
         ])
         
         for inst_name in self.instrument_names:
             # Get FWHM from config metadata
-            fwhm = '6.5'  # default
+            fwhm = '6.5' # default
             if ('instrument_params' in self.config_metadata and 
                 inst_name in self.config_metadata['instrument_params']):
                 fwhm = self.config_metadata['instrument_params'][inst_name].get('FWHM', '6.5')
             
             script_lines.append(
-                f'    models["{inst_name}"] = VoigtModel(config, FWHM=\'{fwhm}\')'
+                f' models["{inst_name}"] = VoigtModel(config, FWHM=\'{fwhm}\')'
             )
         
         script_lines.append('')
         
         # Instrument data dictionary
         script_lines.extend([
-            '    # Create instrument data dictionary for vfit',
-            '    instrument_data = {'
+            ' # Create instrument data dictionary for vfit',
+            ' instrument_data = {'
         ])
 
         for i, inst_name in enumerate(self.instrument_names):
             comma = ',' if i < len(self.instrument_names) - 1 else ''
-            line = (f'        "{inst_name}": {{"model": models["{inst_name}"], '
+            line = (f' "{inst_name}": {{"model": models["{inst_name}"], '
                     f'"wave": wave_{inst_name.lower()}, '
                     f'"flux": flux_{inst_name.lower()}, '
                     f'"error": error_{inst_name.lower()}}}{comma}')
             script_lines.append(line)
 
         script_lines.extend([
-            '    }',
+            ' }',
             ''
         ])
 
         
         # Parameters and bounds section  
         script_lines.extend([
-            '    # ================================================================',
-            '    # PARAMETERS AND BOUNDS',
-            '    # ================================================================',
+            ' # ================================================================',
+            ' # PARAMETERS AND BOUNDS',
+            ' # ================================================================',
             ''
         ])
         
@@ -1340,71 +1413,71 @@ class UnifiedResults:
         ub_str = np.array2string(ub, separator=', ', precision=1, threshold=np.inf)
         
         script_lines.extend([
-            '    # Initial parameter guess (from fitted results)',
-            f'    theta = np.array({theta_str})',
+            ' # Initial parameter guess (from fitted results)',
+            f' theta = np.array({theta_str})',
             '',
-            '    # Parameter bounds',
-            f'    lb = np.array({lb_str})',
-            f'    ub = np.array({ub_str})',
+            ' # Parameter bounds',
+            f' lb = np.array({lb_str})',
+            f' ub = np.array({ub_str})',
             ''
         ])
         
         # MCMC fitting section
         script_lines.extend([
-            '    # ================================================================',
-            '    # MCMC FITTING',
-            '    # ================================================================',
+            ' # ================================================================',
+            ' # MCMC FITTING',
+            ' # ================================================================',
             '',
-            '    print(f"Starting MCMC fitting with {len(instrument_data)} instrument(s)...")',
+            ' print(f"Starting MCMC fitting with {len(instrument_data)} instrument(s)...")',
             '',
-            '    # Create vfit object',
-            '    fitter = mc.vfit(',
-            '        instrument_data,',
-            '        theta, lb, ub,',
-            f'        no_of_Chain={self.n_walkers},',
-            f'        no_of_steps={self.n_steps},',
-            f'        sampler="{self.sampler_name}",',
-            '        perturbation=1e-4',
-            '    )',
+            ' # Create vfit object',
+            ' fitter = mc.vfit(',
+            ' instrument_data,',
+            ' theta, lb, ub,',
+            f' no_of_Chain={self.n_walkers},',
+            f' no_of_steps={self.n_steps},',
+            f' sampler="{self.sampler_name}",',
+            ' perturbation=1e-4',
+            ' )',
             '',
-            '    # Run MCMC',
-            '    fitter.runmcmc(optimize=True)',
-            '    print("MCMC fitting completed!")',
+            ' # Run MCMC',
+            ' fitter.runmcmc(optimize=True)',
+            ' print("MCMC fitting completed!")',
             ''
         ])
         
         # Results and analysis section
         script_lines.extend([
-            '    # ================================================================',
-            '    # RESULTS ANALYSIS',
-            '    # ================================================================',
+            ' # ================================================================',
+            ' # RESULTS ANALYSIS',
+            ' # ================================================================',
             '',
-            '    # Create unified results',
-            '    results = UnifiedResults(fitter)',
+            ' # Create unified results',
+            ' results = UnifiedResults(fitter)',
             '',
-            '    # Save results',
-            '    results.save("reproduced_analysis.h5")',
-            '    print("Results saved to reproduced_analysis.h5")',
+            ' # Save results',
+            ' results.save("reproduced_analysis.h5")',
+            ' print("Results saved to reproduced_analysis.h5")',
             '',
-            '    # Quick analysis',
-            '    results.print_summary()',
-            '    results.convergence_diagnostics()',
+            ' # Quick analysis',
+            ' results.print_summary()',
+            ' results.convergence_diagnostics()',
             '',
-            '    # Generate plots',
-            '    try:',
-            '        results.corner_plot(save_path="corner_plot.png")',
-            '        results.velocity_plot(save_path="velocity_plot.png")',
-            '        print("Plots saved: corner_plot.png, velocity_plot.png")',
-            '    except Exception as e:',
-            '        print(f"Plot generation failed: {e}")',
+            ' # Generate plots',
+            ' try:',
+            ' results.corner_plot(save_path="corner_plot.png")',
+            ' results.velocity_plot(save_path="velocity_plot.png")',
+            ' print("Plots saved: corner_plot.png, velocity_plot.png")',
+            ' except Exception as e:',
+            ' print(f"Plot generation failed: {e}")',
             '',
-            '    return results',
+            ' return results',
             '',
             '',
             'if __name__ == "__main__":',
-            '    results = main()',
-            '    print("\\nScript completed successfully!")',
-            '    print("Use results.help() for analysis options")'
+            ' results = main()',
+            ' print("\\nScript completed successfully!")',
+            ' print("Use results.help() for analysis options")'
         ])
         
         # Join all lines
@@ -1418,8 +1491,8 @@ class UnifiedResults:
             with open(output_path, 'w') as f:
                 f.write(script_content)
             
-            print(f"✅ Analysis script exported to {output_path}")
-            print(f"   Run with: python {output_path}")
+            print(f"[OK] Analysis script exported to {output_path}")
+            print(f" Run with: python {output_path}")
             
             # Make executable on Unix systems
             try:
@@ -1497,7 +1570,7 @@ class UnifiedResults:
             self._help_examples()
         else:
             print(f"Unknown category '{category}'. Available categories:")
-            print("'status', 'analysis', 'plotting', 'models', 'save', 'data',     'examples'")
+            print("'status', 'analysis', 'plotting', 'models', 'save', 'data', 'examples'")
     
     def _help_main(self) -> None:
         """Main help overview."""
@@ -1525,23 +1598,23 @@ class UnifiedResults:
         
         print(f"\nUnifiedResults Help - Your {system_info}")
         print("=" * 60)
-        print(f"📊 Your Data: {n_instruments} instrument(s), {n_params} parameters,     {self.sampler_name} sampler, {conv_status} convergence")
+        print(f"Your Data: {n_instruments} instrument(s), {n_params} parameters, {self.sampler_name} sampler, {conv_status} convergence")
         if self.config_metadata:
-            print(f"🔬 System: {system_info}")
+            print(f"System: {system_info}")
         
-        print(f"\n📚 Help Categories:")
-        print(f"  results.help('status')      # Detailed data status")
-        print(f"  results.help('analysis')    # Analysis methods") 
-        print(f"  results.help('plotting')    # Plotting functions")
-        print(f"  results.help('models')      # Model reconstruction")
-        print(f"  results.help('save')        # Save/load operations")
-        print(f"  results.help('data')        # Data access")
-        print(f"  results.help('examples')    # Quick start examples")
+        print(f"\n Help Categories:")
+        print(f" results.help('status') # Detailed data status")
+        print(f" results.help('analysis') # Analysis methods") 
+        print(f" results.help('plotting') # Plotting functions")
+        print(f" results.help('models') # Model reconstruction")
+        print(f" results.help('save') # Save/load operations")
+        print(f" results.help('data') # Data access")
+        print(f" results.help('examples') # Quick start examples")
         
-        print(f"\n🚀 Quick Start:")
-        print(f"  results.print_summary()           # Overview")
-        print(f"  results.convergence_diagnostics() # Check {self.sampler_name}     convergence")
-        print(f"  results.corner_plot()             # {n_params}-parameter posteriors")
+        print(f"\n Quick Start:")
+        print(f" results.print_summary() # Overview")
+        print(f" results.convergence_diagnostics() # Check {self.sampler_name} convergence")
+        print(f" results.corner_plot() # {n_params}-parameter posteriors")
         print()
     
     def _help_status(self) -> None:
@@ -1550,8 +1623,8 @@ class UnifiedResults:
         print("=" * 40)
         
         # File info
-        print(f"💾 Save capability: ✓ Full reconstruction available")
-        print(f"🔄 Load status: ✓ Self-contained, no fitter dependencies")
+        print(f"Save capability: Full reconstruction available")
+        print(f"Load status: Self-contained, no fitter dependencies")
         
         # Data completeness
         n_samples = len(self.samples)
@@ -1559,10 +1632,10 @@ class UnifiedResults:
         total_points = sum(len(data['wave']) for data in self.instrument_data.values())
         
         print(f"\nData Completeness:")
-        print(f"  ✓ MCMC samples: {n_samples:,} samples × {n_params} parameters")
-        print(f"  ✓ Full chain: {n_steps} steps × {n_walkers} walkers × {n_params}     parameters")
-        print(f"  ✓ Instrument data: {len(self.instrument_names)} instruments,     {total_points} total points")
-        print(f"  {'✓' if self.config_metadata else '✗'} Model config: {'Reconstruction     available' if self.config_metadata else 'No config metadata'}")
+        print(f" MCMC samples: {n_samples:,} samples × {n_params} parameters")
+        print(f" Full chain: {n_steps} steps × {n_walkers} walkers × {n_params} parameters")
+        print(f" Instrument data: {len(self.instrument_names)} instruments, {total_points} total points")
+        print(f" {'OK' if self.config_metadata else ''} Model config: {'Reconstruction available' if self.config_metadata else 'No config metadata'}")
         
         # Diagnostics status
         diag_status = []
@@ -1573,7 +1646,7 @@ class UnifiedResults:
         if self.acceptance_fraction is not None:
             diag_status.append("acceptance fraction")
         
-        print(f"  ✓ Diagnostics: {', '.join(diag_status) if diag_status else 'None     available'}")
+        print(f" Diagnostics: {', '.join(diag_status) if diag_status else 'None available'}")
         
         # Instrument details
         print(f"\nInstrument Details:")
@@ -1581,7 +1654,7 @@ class UnifiedResults:
             data = self.instrument_data[name]
             n_points = len(data['wave'])
             wave_range = (data['wave'].min(), data['wave'].max())
-            print(f"  {name}: {n_points} points, {wave_range[0]:.1f}-{wave_range[    1]:.1f} Å")
+            print(f" {name}: {n_points} points, {wave_range[0]:.1f}-{wave_range[ 1]:.1f} Å")
         print()
     
     def _help_analysis(self) -> None:
@@ -1602,33 +1675,33 @@ class UnifiedResults:
         
         print(f"\nAnalysis Methods - {self.sampler_name} Sampler Results")
         print("=" * 50)
-        print(f"Your results: {self.n_walkers} walkers × {self.n_steps} steps,     {conv_info}")
+        print(f"Your results: {self.n_walkers} walkers × {self.n_steps} steps, {conv_info}")
         
-        print(f"\n🔍 Convergence Diagnostics:")
-        print(f"  results.convergence_diagnostics()        # {self.sampler_name}     analysis")
+        print(f"\n Convergence Diagnostics:")
+        print(f" results.convergence_diagnostics() # {self.sampler_name} analysis")
         if self.sampler_name.lower() == 'zeus':
-            print(f"  # Your status: R-hat analysis, acceptance diagnostics")
+            print(f" # Your status: R-hat analysis, acceptance diagnostics")
         else:
-            print(f"  # Your status: Autocorr time analysis, acceptance diagnostics")
+            print(f" # Your status: Autocorr time analysis, acceptance diagnostics")
         
-        print(f"\n📊 Parameter Analysis:")
-        print(f"  summary = results.parameter_summary()    # Your {len(self.best_fit)}     parameters")
-        print(f"  corr = results.correlation_matrix()      # {len(self.best_fit)}×{len(    self.best_fit)} correlation matrix")
+        print(f"\n Parameter Analysis:")
+        print(f" summary = results.parameter_summary() # Your {len(self.best_fit)} parameters")
+        print(f" corr = results.correlation_matrix() # {len(self.best_fit)}×{len( self.best_fit)} correlation matrix")
         
-        print(f"\n🎯 Goodness of Fit:")
+        print(f"\n Goodness of Fit:")
         if self.config_metadata:
-            print(f"  chi2 = results.chi_squared()             # Combined χ²/ν for {len(    self.instrument_names)} instrument(s)")
+            print(f" chi2 = results.chi_squared() # Combined χ²/ν for {len( self.instrument_names)} instrument(s)")
             if len(self.instrument_names) > 1:
                 inst_example = self.instrument_names[0]
-                print(f"  chi2_{inst_example.lower()} =     results.chi_squared('{inst_example}') # Single instrument")
+                print(f" chi2_{inst_example.lower()} = results.chi_squared('{inst_example}') # Single instrument")
         else:
-            print(f"  # Model reconstruction needed for chi-squared calculation")
+            print(f" # Model reconstruction needed for chi-squared calculation")
         
-        print(f"\n📈 Direct Data Access:")
-        print(f"  results.best_fit          # {len(self.best_fit)} best-fit parameter     values")
-        print(f"  results.bounds_16th       # 16th percentiles (lower errors)")
-        print(f"  results.bounds_84th       # 84th percentiles (upper errors)")
-        print(f"  results.samples           # Full MCMC samples ({len(    self.samples)}×{len(self.best_fit)})")
+        print(f"\n Direct Data Access:")
+        print(f" results.best_fit # {len(self.best_fit)} best-fit parameter values")
+        print(f" results.bounds_16th # 16th percentiles (lower errors)")
+        print(f" results.bounds_84th # 84th percentiles (upper errors)")
+        print(f" results.samples # Full MCMC samples ({len( self.samples)}×{len(self.best_fit)})")
         print()
     
     def _help_plotting(self) -> None:
@@ -1645,92 +1718,95 @@ class UnifiedResults:
                 fwhm = "unknown FWHM"
                 if self.config_metadata and 'instrument_params' in self.config_metadata:
                     if name in self.config_metadata['instrument_params']:
-                        fwhm_val =     self.config_metadata['instrument_params'][name].get('FWHM',     'unknown')
+                        fwhm_val = self.config_metadata['instrument_params'][name].get('FWHM', 'unknown')
                         fwhm = f"FWHM={fwhm_val}"
                 inst_details.append(f"{name} ({fwhm})")
             print(", ".join(inst_details))
         else:
             print(f"Your instrument: {self.instrument_names[0]}")
         
-        print(f"\n📈 Available Plots:")
-        print(f"  results.corner_plot()                    # {len(    self.best_fit)}-parameter posterior distributions")
-        print(f"  results.chain_trace_plot()               # {self.sampler_name} walker     traces ({self.n_walkers} walkers × {self.n_steps} steps)")
+        print(f"\n Available Plots:")
+        print(f" results.corner_plot() # {len( self.best_fit)}-parameter posterior distributions")
+        print(f" results.chain_trace_plot() # {self.sampler_name} walker traces ({self.n_walkers} walkers × {self.n_steps} steps)")
         
         if len(self.instrument_names) > 1:
-            print(f"  results.velocity_plot()                  # All {len(    self.instrument_names)} instruments")
+            print(f" results.velocity_plot() # All {len( self.instrument_names)} instruments")
             # Find highest resolution instrument if possible
-            best_inst = self.instrument_names[0]  # Default to first
-            print(f"  results.velocity_plot('{best_inst}')           # Single     instrument")
-            print(f"  results.residuals_plot()                 # Model vs data     comparison")
+            best_inst = self.instrument_names[0] # Default to first
+            print(f" results.velocity_plot('{best_inst}') # Single instrument")
+            print(f" results.residuals_plot() # Model vs data comparison")
         else:
-            print(f"  results.velocity_plot()                  # Absorption line fit")
-            print(f"  results.residuals_plot()                 # Model vs data     comparison")
+            print(f" results.velocity_plot() # Absorption line fit")
+            print(f" results.residuals_plot() # Model vs data comparison")
         
-        print(f"  results.correlation_plot()               # {len(self.best_fit)}×{len(    self.best_fit)} parameter correlation matrix")
-        print(f"  results.diagnostic_summary_plot()        # {self.sampler_name}     convergence dashboard")
+        print(f" results.correlation_plot() # {len(self.best_fit)}×{len( self.best_fit)} parameter correlation matrix")
+        print(f" results.diagnostic_summary_plot() # {self.sampler_name} convergence dashboard")
         
-        print(f"\n💡 Plotting Tips:")
+        print(f"\n Plotting Tips:")
         if len(self.instrument_names) > 1:
-            print(f"  • Use specific instrument names for detailed plots")
-            print(f"  • correlation_plot() shows which of your {len(self.best_fit)}     parameters are coupled")
-        print(f"  • All plots work with loaded results (no fitter needed)")
+            print(f" • Use specific instrument names for detailed plots")
+            print(f" • correlation_plot() shows which of your {len(self.best_fit)} parameters are coupled")
+        print(f" • All plots work with loaded results (no fitter needed)")
         
-        print(f"\n📁 Save Options:")
-        print(f"  results.corner_plot(save_path='corner.png')")
+        print(f"\n Save Options:")
+        print(f" results.corner_plot(save_path='corner.png')")
         if len(self.instrument_names) > 1:
             inst_example = self.instrument_names[0]
-            print(f"  results.velocity_plot('{inst_example}',     save_path='velocity_{inst_example.lower()}.png')")
+            print(f" results.velocity_plot('{inst_example}', save_path='velocity_{inst_example.lower()}.png')")
         else:
-            print(f"  results.velocity_plot(save_path='velocity.png')")
+            print(f" results.velocity_plot(save_path='velocity.png')")
         print()
     
     def _help_models(self) -> None:
         """Model reconstruction help."""
-        print(f"\nModel Reconstruction - Your {'Multi-Instrument' if len(    self.instrument_names) > 1 else 'Single-Instrument'} Setup")
+        print(f"\nModel Reconstruction - Your {'Multi-Instrument' if len( self.instrument_names) > 1 else 'Single-Instrument'} Setup")
         print("=" * 60)
         
         if self.config_metadata is None:
-            print("❌ Model reconstruction not available (no config metadata)")
-            print("   This happens when UnifiedResults was created without a model     object")
-            print("   You'll need to manually recreate your model configuration")
+            print("[FAIL] Model reconstruction not available (no config metadata)")
+            print(" This happens when UnifiedResults was created without a model object")
+            print(" You'll need to manually recreate your model configuration")
             print()
             return
         
-        print("✓ Model reconstruction available (config metadata found)")
+        print(" Model reconstruction available (config metadata found)")
         
         if len(self.instrument_names) > 1:
-            print(f"\n🔧 Single Instrument Models:")
+            print(f"\n Single Instrument Models:")
             for name in self.instrument_names:
                 # Try to show FWHM if available
                 fwhm_info = ""
-                if 'instrument_params' in self.config_metadata and name in     self.config_metadata['instrument_params']:
-                    fwhm = self.config_metadata['instrument_params'][name].get('FWHM',     'unknown')
-                    fwhm_info = f"    # FWHM={fwhm} pixels"
-                print(f"  model_{name.lower()} =     results.reconstruct_model('{name}'){fwhm_info}")
+                if 'instrument_params' in self.config_metadata and name in self.config_metadata['instrument_params']:
+                    fwhm = self.config_metadata['instrument_params'][name].get('FWHM', 'unknown')
+                    fwhm_info = f" # FWHM={fwhm} pixels"
+                print(f" model_{name.lower()} = results.reconstruct_model('{name}'){fwhm_info}")
             
-            print(f"\n🔧 All Models at Once:")
-            print(f"  all_models = results.reconstruct_all_models()")
-            print(f"  # Returns: {dict((name, f'model_{name.lower()}') for name in     self.instrument_names)}")
+            print(f"\n All Models at Once:")
+            print(f" all_models = results.reconstruct_all_models()")
+            print(f" # Returns: {dict((name, f'model_{name.lower()}') for name in self.instrument_names)}")
         else:
-            print(f"\n🔧 Model Reconstruction:")
-            print(f"  model = results.reconstruct_model()")
+            print(f"\n Model Reconstruction:")
+            print(f" model = results.reconstruct_model()")
             # Show FWHM if available
-            if 'instrumental_params' in self.config_metadata:
-                fwhm = self.config_metadata['instrumental_params'].get('FWHM',     'unknown')
-                print(f"  # Uses FWHM={fwhm} pixels")
+            if 'instrument_params' in self.config_metadata:
+                inst_params = self.config_metadata['instrument_params']
+                if inst_params:
+                    sole = next(iter(inst_params.values()))
+                    fwhm = sole.get('FWHM', 'unknown')
+                    print(f" # Uses FWHM={fwhm} pixels")
         
-        print(f"\n🧪 Model Evaluation:")
+        print(f"\n Model Evaluation:")
         inst_example = self.instrument_names[0]
         if len(self.instrument_names) > 1:
-            print(f"  wave = results.instrument_data['{inst_example}']['wave']")
-            print(f"  flux = model_{inst_example.lower()}.evaluate(results.best_fit,     wave)")
+            print(f" wave = results.instrument_data['{inst_example}']['wave']")
+            print(f" flux = model_{inst_example.lower()}.evaluate(results.best_fit, wave)")
         else:
-            print(f"  wave = results.instrument_data['{inst_example}']['wave']")
-            print(f"  flux = model.evaluate(results.best_fit, wave)")
+            print(f" wave = results.instrument_data['{inst_example}']['wave']")
+            print(f" flux = model.evaluate(results.best_fit, wave)")
         
         # Show model details from config
         if 'systems' in self.config_metadata:
-            print(f"\n📋 Your Model Details:")
+            print(f"\n Your Model Details:")
             for sys in self.config_metadata['systems']:
                 z = sys['redshift']
                 for ion in sys['ion_groups']:
@@ -1738,46 +1814,46 @@ class UnifiedResults:
                     n_comp = ion['components']
                     transitions = ion.get('transitions', [])
                     trans_str = f", transitions: {transitions}" if transitions else ""
-                    print(f"  • {ion_name}: {n_comp} component(s) at     z={z:.6f}{trans_str}")
+                    print(f" • {ion_name}: {n_comp} component(s) at z={z:.6f}{trans_str}")
             
-            total_components = sum(sum(ion['components'] for ion in sys['ion_groups'])     for sys in self.config_metadata['systems'])
-            print(f"  • Total: {len(self.best_fit)} parameters ({total_components}     components: 3N + 3b + 3v)")
+            total_components = sum(sum(ion['components'] for ion in sys['ion_groups']) for sys in self.config_metadata['systems'])
+            print(f" • Total: {len(self.best_fit)} parameters ({total_components} components: 3N + 3b + 3v)")
         print()
     
     def _help_save(self) -> None:
         """Save/load operations help."""
         print(f"\nSave/Load Methods - Persistent Results Storage")
         print("=" * 50)
-        print(f"💾 Current status: {'Loaded from file' if hasattr(self, '_loaded_from_file') else 'Created from fitter'}")
+        print(f"Current status: {'Loaded from file' if hasattr(self, '_loaded_from_file') else 'Created from fitter'}")
         
-        print(f"\n📁 Save Options:")
-        print(f"  results.save('my_analysis.h5')           # Save everything (recommended)")
-        print(f"  results.save('/path/to/results.h5')     # Full path")
+        print(f"\n Save Options:")
+        print(f" results.save('my_analysis.h5') # Save everything (recommended)")
+        print(f" results.save('/path/to/results.h5') # Full path")
         print(f"")
-        print(f"  # Convenience functions:")
-        print(f"  save_unified_results(fitter, model, 'results.h5')  # During fitting")
+        print(f" # Convenience functions:")
+        print(f" save_unified_results(fitter, 'results.h5') # During fitting")
         
         print("=" * 50)
-        print(f"\n📜 Script Export:")
-        print(f"  results.export_script('reproduce.py')    # Complete workflow script")
-        print(f"  results.export_script()                  # Return as string")
+        print(f"\n Script Export:")
+        print(f" results.export_script('reproduce.py') # Complete workflow script")
+        print(f" results.export_script() # Return as string")
         print(f"")
-        print(f"  # Advanced options:")
-        print(f"  results.export_script('script.py', include_data_files=True)  # Save data separately")
+        print(f" # Advanced options:")
+        print(f" results.export_script('script.py', include_data_files=True) # Save data separately")
         print("=" * 50)
 
-        print(f"\n📂 Load Options:")
-        print(f"  results = UnifiedResults.load('my_analysis.h5')")
+        print(f"\n Load Options:")
+        print(f" results = UnifiedResults.load('my_analysis.h5')")
         print(f"")
-        print(f"  # Convenience function:")
-        print(f"  results = load_unified_results('my_analysis.h5')")
+        print(f" # Convenience function:")
+        print(f" results = load_unified_results('my_analysis.h5')")
         
-        print(f"\n✅ What Gets Saved:")
-        print(f"  • MCMC samples & chain (full reconstruction capability)")
-        print(f"  • Best-fit parameters & uncertainties")
-        print(f"  • All instrument data (wave, flux, error arrays)")
-        print(f"  • Model configuration ({'✓ included' if self.config_metadata else '✗ missing'})")
-        print(f"  • Complete Python workflow (script export option)")
+        print(f"\n What Gets Saved:")
+        print(f" • MCMC samples & chain (full reconstruction capability)")
+        print(f" • Best-fit parameters & uncertainties")
+        print(f" • All instrument data (wave, flux, error arrays)")
+        print(f" • Model configuration ({' included' if self.config_metadata else ' missing'})")
+        print(f" • Complete Python workflow (script export option)")
         
         # Show actual diagnostics being saved
         saved_diags = []
@@ -1788,65 +1864,65 @@ class UnifiedResults:
         if self.acceptance_fraction is not None:
             saved_diags.append(f"acceptance fraction")
         
-        print(f"  • {self.sampler_name} diagnostics ({', '.join(saved_diags) if saved_diags else 'none available'})")
-        print(f"  • Convergence metadata ({self.n_walkers} walkers, {self.n_steps} steps)")
+        print(f" • {self.sampler_name} diagnostics ({', '.join(saved_diags) if saved_diags else 'none available'})")
+        print(f" • Convergence metadata ({self.n_walkers} walkers, {self.n_steps} steps)")
         
-        print(f"\n🔄 Perfect Roundtrip:")
-        print(f"  results.save('backup.h5')               # Save current state")
-        print(f"  loaded = UnifiedResults.load('backup.h5') # Load identical copy")
-        print(f"  loaded.corner_plot()                    # Works exactly the same")
+        print(f"\n Perfect Roundtrip:")
+        print(f" results.save('backup.h5') # Save current state")
+        print(f" loaded = UnifiedResults.load('backup.h5') # Load identical copy")
+        print(f" loaded.corner_plot() # Works exactly the same")
         
-        print(f"\n📜 Reproducible Workflow:")
-        print(f"  results.export_script('my_analysis.py') # Export complete workflow")
-        print(f"  # Generated script: data + model + MCMC settings + analysis")
-        print(f"  # Run anywhere: python my_analysis.py (standalone!)")
+        print(f"\n Reproducible Workflow:")
+        print(f" results.export_script('my_analysis.py') # Export complete workflow")
+        print(f" # Generated script: data + model + MCMC settings + analysis")
+        print(f" # Run anywhere: python my_analysis.py (standalone!)")
         
-        print(f"\n💡 Pro Tips:")
-        print(f"  • HDF5 format = fast, compact, cross-platform")
-        print(f"  • Script export = human-readable, executable, shareable")
-        print(f"  • Loaded results work identically to fresh results")
-        print(f"  • No fitter object needed after loading")
-        print(f"  • Use export_script() for reproducibility and automation")
+        print(f"\n Pro Tips:")
+        print(f" • HDF5 format = fast, compact, cross-platform")
+        print(f" • Script export = human-readable, executable, shareable")
+        print(f" • Loaded results work identically to fresh results")
+        print(f" • No fitter object needed after loading")
+        print(f" • Use export_script() for reproducibility and automation")
         print()    
     def _help_data(self) -> None:
         """Data access help."""
         print(f"\nData Access - Your {len(self.instrument_names)} Instrument(s)")
         print("=" * 50)
         
-        print(f"📊 Core Arrays:")
-        print(f"  results.best_fit                         # {len(self.best_fit)}     parameter values")
-        print(f"  results.samples                          # {len(self.samples)}×{len(    self.best_fit)} MCMC samples")
-        print(f"  results.chain                            # {self.chain.shape[    0]}×{self.chain.shape[1]}×{self.chain.shape[2]} walker traces")
+        print(f"Core Arrays:")
+        print(f" results.best_fit # {len(self.best_fit)} parameter values")
+        print(f" results.samples # {len(self.samples)}×{len( self.best_fit)} MCMC samples")
+        print(f" results.chain # {self.chain.shape[ 0]}×{self.chain.shape[1]}×{self.chain.shape[2]} walker traces")
         
-        print(f"\n📈 Parameter Info:")
-        print(f"  results.parameter_names                  # {len(    self.parameter_names)} parameter labels")
-        print(f"  results.bounds_16th                      # Lower error bounds (16th     percentile)")
-        print(f"  results.bounds_84th                      # Upper error bounds (84th     percentile)")
+        print(f"\n Parameter Info:")
+        print(f" results.parameter_names # {len( self.parameter_names)} parameter labels")
+        print(f" results.bounds_16th # Lower error bounds (16th percentile)")
+        print(f" results.bounds_84th # Upper error bounds (84th percentile)")
         
-        print(f"\n🔬 Instrument Data:")
-        print(f"  results.instrument_names                 # {self.instrument_names}")
-        print(f"  results.instrument_data                  # Dictionary with all data")
+        print(f"\n Instrument Data:")
+        print(f" results.instrument_names # {self.instrument_names}")
+        print(f" results.instrument_data # Dictionary with all data")
         
         for name in self.instrument_names:
             n_points = len(self.instrument_data[name]['wave'])
-            print(f"  results.instrument_data['{name}']        # {n_points} data     points")
+            print(f" results.instrument_data['{name}'] # {n_points} data points")
         
-        print(f"\n🔍 Diagnostics:")
+        print(f"\n Diagnostics:")
         if self.autocorr_time is not None:
-            print(f"  results.autocorr_time                    # Emcee autocorrelation     times")
+            print(f" results.autocorr_time # Emcee autocorrelation times")
         if self.rhat is not None:
-            print(f"  results.rhat                             # Zeus R-hat values")
+            print(f" results.rhat # Zeus R-hat values")
         if self.acceptance_fraction is not None:
-            print(f"  results.acceptance_fraction              # Acceptance fraction:     {self.acceptance_fraction:.3f}")
+            print(f" results.acceptance_fraction # Acceptance fraction: {self.acceptance_fraction:.3f}")
         
-        print(f"\n⚙️ Metadata:")
-        print(f"  results.sampler_name                     # '{self.sampler_name}'")
-        print(f"  results.n_walkers                        # {self.n_walkers}")
-        print(f"  results.n_steps                          # {self.n_steps}")
-        print(f"  results.is_multi_instrument              #     {self.is_multi_instrument}")
+        print(f"\n Metadata:")
+        print(f" results.sampler_name # '{self.sampler_name}'")
+        print(f" results.n_walkers # {self.n_walkers}")
+        print(f" results.n_steps # {self.n_steps}")
+        print(f" results.is_multi_instrument # {self.is_multi_instrument}")
         
         if self.config_metadata:
-            print(f"  results.config_metadata                  # Model reconstruction     data")
+            print(f" results.config_metadata # Model reconstruction data")
         print()
     
     def _help_examples(self) -> None:
@@ -1864,43 +1940,43 @@ class UnifiedResults:
         print(f"\nQuick Start Examples - Your {system_info}")
         print("=" * 50)
         
-        print(f"🚀 After MCMC Fitting:")
-        print(f"  # Save your results (do this first!)")
-        print(f"  results = UnifiedResults(fitter, model)")
-        print(f"  results.save('{system_info.lower().replace('/', '_').replace(' ',     '_')}_analysis.h5')")
+        print(f"After MCMC Fitting:")
+        print(f" # Save your results (do this first!)")
+        print(f" results = UnifiedResults(fitter)")
+        print(f" results.save('{system_info.lower().replace('/', '_').replace(' ', '_')}_analysis.h5')")
         
-        print(f"\n🔄 Later Analysis Session:")
-        print(f"  # Load and analyze")
-        print(f"  results = UnifiedResults.load('{system_info.lower().replace('/',     '_').replace(' ', '_')}_analysis.h5')")
-        print(f"  results.convergence_diagnostics()      # Check {self.sampler_name}     convergence")
-        print(f"  results.corner_plot()                  # {len(    self.best_fit)}-parameter posteriors")
+        print(f"\n Later Analysis Session:")
+        print(f" # Load and analyze")
+        print(f" results = UnifiedResults.load('{system_info.lower().replace('/', '_').replace(' ', '_')}_analysis.h5')")
+        print(f" results.convergence_diagnostics() # Check {self.sampler_name} convergence")
+        print(f" results.corner_plot() # {len( self.best_fit)}-parameter posteriors")
         
         if len(self.instrument_names) > 1:
             # Find best resolution instrument (just pick first for now)
             best_inst = self.instrument_names[0]
-            print(f"  results.velocity_plot('{best_inst}')         # Single instrument     plot")
+            print(f" results.velocity_plot('{best_inst}') # Single instrument plot")
         else:
-            print(f"  results.velocity_plot()                 # Absorption line fit")
+            print(f" results.velocity_plot() # Absorption line fit")
         
-        print(f"\n📊 Model Work:")
-        print(f"  # Reconstruct and evaluate")
+        print(f"\n Model Work:")
+        print(f" # Reconstruct and evaluate")
         if len(self.instrument_names) > 1:
             inst_example = self.instrument_names[0]
-            print(f"  model = results.reconstruct_model('{inst_example}')")
-            print(f"  wave = results.instrument_data['{inst_example}']['wave']")
+            print(f" model = results.reconstruct_model('{inst_example}')")
+            print(f" wave = results.instrument_data['{inst_example}']['wave']")
         else:
             inst_example = self.instrument_names[0]
-            print(f"  model = results.reconstruct_model()")
-            print(f"  wave = results.instrument_data['{inst_example}']['wave']")
-        print(f"  flux = model.evaluate(results.best_fit, wave)")
+            print(f" model = results.reconstruct_model()")
+            print(f" wave = results.instrument_data['{inst_example}']['wave']")
+        print(f" flux = model.evaluate(results.best_fit, wave)")
         
-        print(f"\n💾 Workflow Integration:")
-        print(f"  # In fitting script:")
-        print(f"  save_unified_results(fitter, model, 'results.h5')")
+        print(f"\n Workflow Integration:")
+        print(f" # In fitting script:")
+        print(f" save_unified_results(fitter, 'results.h5')")
         print(f"")
-        print(f"  # In analysis script:")
-        print(f"  results = load_unified_results('results.h5')")
-        print(f"  results.print_summary()")
+        print(f" # In analysis script:")
+        print(f" results = load_unified_results('results.h5')")
+        print(f" results.print_summary()")
         print()        
 
 # =============================================================================
@@ -1920,9 +1996,9 @@ def save_unified_results(fitter, filename: Union[str, Path]) -> None:
     """
     results = UnifiedResults(fitter)
     results.save(filename)
-    print(f"✓ Unified results saved to {filename}")
-    print(f"  Instruments: {len(results.instrument_names)}")
-    print(f"  Reconstruction: {'✓' if results.config_metadata else '✗'}")
+    print(f"Unified results saved to {filename}")
+    print(f" Instruments: {len(results.instrument_names)}")
+    print(f" Reconstruction: {'OK' if results.config_metadata else ''}")
 
 
 def load_unified_results(filename: Union[str, Path]) -> UnifiedResults:
@@ -1940,7 +2016,7 @@ def load_unified_results(filename: Union[str, Path]) -> UnifiedResults:
         Loaded results object
     """
     results = UnifiedResults.load(filename)
-    print(f"✓ Unified results loaded from {filename}")
-    print(f"  Instruments: {len(results.instrument_names)}")
-    print(f"  Reconstruction: {'✓' if results.config_metadata else '✗'}")
+    print(f"Unified results loaded from {filename}")
+    print(f" Instruments: {len(results.instrument_names)}")
+    print(f" Reconstruction: {'OK' if results.config_metadata else ''}")
     return results

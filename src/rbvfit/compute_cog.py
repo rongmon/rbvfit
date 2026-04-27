@@ -2,10 +2,10 @@ from __future__ import print_function
 
 import matplotlib.pyplot as plt
 import numpy as np
-from importlib import reload
 from rbvfit import rb_setline as rt
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.voigt_model import VoigtModel
+from scipy.interpolate import RegularGridInterpolator
 
 #------------------------
 # Compute Curve of Growth (COG) - rbvfit v2.0
@@ -141,7 +141,7 @@ class compute_cog(object):
         # Try to detect ion automatically, fallback to manual specification
         try:
             config.add_system(z=0., ion='auto', transitions=[wave_val], components=1)
-        except:
+        except Exception:
             # If auto-detection fails, try common ions based on wavelength
             if 1200 < wave_val < 1230:
                 ion_name = 'HI'
@@ -364,10 +364,21 @@ class compute_cog(object):
         W : float
             Interpolated equivalent width (Angstroms)
         """
-        from scipy.interpolate import interp2d
+        #from scipy.interpolate import interp2d
         
-        f_interp = interp2d(self.blist, self.Nlist, self.Wlist, kind='linear')
-        return float(f_interp(b, logN))
+        #f_interp = interp2d(self.blist, self.Nlist, self.Wlist, kind='linear')
+
+        # RegularGridInterpolator expects a tuple of the 1D coordinate arrays and an ndarray of the values.
+        # Note: The shape of Wlist must match (len(blist), len(Nlist))
+        # Wlist has shape (len(Nlist), len(blist)), so axes must match
+        f_interp = RegularGridInterpolator(
+                                        (self.Nlist, self.blist),
+                                        self.Wlist, method='linear',
+                                        bounds_error=False,
+                                        fill_value=None
+                                        )
+
+        return float(f_interp([[logN, b]]))
 
 # Example usage and test function
 def test_cog_example():

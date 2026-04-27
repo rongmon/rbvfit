@@ -24,7 +24,7 @@ try:
     from rbvfit.core.voigt_model import VoigtModel, mean_fwhm_pixels
     from rbvfit import vfit_mcmc as mc
     from rbcodes.utils.rb_spectrum import rb_spectrum
-    from pkg_resources import resource_filename
+    from importlib.resources import files
 except ImportError as e:
     print(f"Error importing required modules: {e}")
     print("Make sure rbvfit and rbcodes are installed and in your path")
@@ -48,7 +48,7 @@ class SimpleVFitProfiler:
         print("Setting up exactly like your working example...")
         
         # Load real data exactly like your example
-        filename = resource_filename('rbvfit', 'example-data/test.fits')
+        filename = str(files('rbvfit').joinpath('example-data/test.fits'))
         sp = rb_spectrum.from_file(filename)
         
         # Process exactly like your example

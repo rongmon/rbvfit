@@ -20,10 +20,10 @@ except ImportError:
 
 
 from rbcodes.utils.rb_spectrum import rb_spectrum
-from pkg_resources import resource_filename
+from importlib.resources import files
 
 #read file
-filename=resource_filename('rbvfit','example-data/test.fits')
+filename=str(files('rbvfit').joinpath('example-data/test.fits'))
 sp=rb_spectrum.from_file(filename)
 
 

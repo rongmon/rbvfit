@@ -1,7 +1,7 @@
 from __future__ import print_function, absolute_import, division, unicode_literals
 import numpy as np
 from astropy.io import ascii
-from pkg_resources import resource_filename
+from importlib.resources import files
 
 
 '''
@@ -83,7 +83,7 @@ def read_line_list(label):
     if label not in file_map:
         raise ValueError("Invalid line list label. Choose from 'atom', 'LLS', 'LLS Small', or 'DLA'")
     
-    filename = resource_filename('rbvfit', file_map[label])
+    filename = str(files('rbvfit').joinpath(file_map[label]))
     data = []
     
     if label == 'atom':

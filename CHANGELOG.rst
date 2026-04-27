@@ -1,6 +1,15 @@
 =========
 Changelog
 =========
+Version 2.2.0
+==============
+
+Packaging & Compatibility
+--------------------------
+- **Removed ``pkg_resources`` dependency**: Replaced ``pkg_resources.resource_filename`` with ``importlib.resources.files`` (stdlib) in ``rb_setline``, examples, and tests
+- **Explicit package data**: Added ``package_data`` declaration in ``setup.cfg`` to reliably include line lists and example data in built distributions
+- **Python version aligned with rbcodes**: Updated ``python_requires`` to ``>=3.9.6,<3.11``
+
 Version 2.1.0
 ==============
 

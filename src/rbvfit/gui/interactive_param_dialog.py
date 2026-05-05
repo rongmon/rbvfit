@@ -274,8 +274,7 @@ class VelocitySelector:
         
         # Remove from list
         removed_vel = self.vel_guess.pop(nearest_idx)
-        print(f"Removed component at {removed_vel:.1f} km/s")  # DEBUG
-        
+
         # Just clear markers - let the parent redraw everything
         self.clear_markers()
     
@@ -476,8 +475,6 @@ class InteractiveParameterDialog(QDialog):
                 self.update_status()
     def on_key(self, event):
         """Handle key presses"""
-        print(f"Key pressed: '{event.key}'")  # DEBUG
-        
         if not self.velocity_selector:
             return
         

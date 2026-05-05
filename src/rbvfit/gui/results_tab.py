@@ -28,7 +28,6 @@ try:
 except ImportError:
     HAS_CORNER = False
 
-from rbvfit.gui.io import export_results_csv, export_results_latex
 from rbvfit.gui import plotting_gui
 
 

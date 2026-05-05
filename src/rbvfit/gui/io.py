@@ -13,7 +13,11 @@ from typing import Dict, List, Tuple, Any, Optional
 import json
 import datetime
 
-from rbcodes.utils.rb_spectrum import rb_spectrum
+try:
+    from rbcodes.utils.rb_spectrum import rb_spectrum
+    HAS_RBCODES = True
+except ImportError:
+    HAS_RBCODES = False
 
 try:
     from rbvfit import rb_setline as rb
@@ -24,6 +28,15 @@ except ImportError:
 
 def load_spectrum_file(filename: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load spectrum using rb_spectrum - handles all formats"""
+    if not HAS_RBCODES:
+        raise ImportError(
+            "The 'rbcodes' package is required to load spectrum files but was not found.\n"
+            "Please install it first:\n\n"
+            "    git clone https://github.com/rongmon/rbcodes.git\n"
+            "    cd rbcodes\n"
+            "    pip install -e .\n\n"
+            "Then restart the GUI."
+        )
     sp = rb_spectrum.from_file(filename)
     if sp.co_is_set:
         flux=sp.flux.value/sp.co.value 
@@ -141,16 +154,79 @@ def load_configuration(filename: str):
         return json.load(f)
 
 
-def export_results_csv(results, filename: str):
-    """Export fit results to CSV"""
-    # TODO: Implement when results structure is defined
-    pass
+def export_results_csv(results, filename: str) -> None:
+    """
+    Export fit results to a CSV file.
+
+    Parameters
+    ----------
+    results : UnifiedResults
+        Fitted results object with a ``parameter_summary()`` method.
+    filename : str
+        Output CSV file path.
+    """
+    summary = results.parameter_summary()
+    with open(filename, 'w', newline='') as f:
+        import csv
+        writer = csv.writer(f)
+        writer.writerow([
+            'parameter', 'best_fit',
+            'err_lower', 'err_upper',
+            'p16', 'p50', 'p84',
+            'mean', 'std'
+        ])
+        for i, name in enumerate(summary.names):
+            writer.writerow([
+                name,
+                f"{summary.best_fit[i]:.6f}",
+                f"{summary.errors_lower[i]:.6f}",
+                f"{summary.errors_upper[i]:.6f}",
+                f"{summary.percentiles['16th'][i]:.6f}",
+                f"{summary.percentiles['50th'][i]:.6f}",
+                f"{summary.percentiles['84th'][i]:.6f}",
+                f"{summary.mean[i]:.6f}",
+                f"{summary.std[i]:.6f}",
+            ])
 
 
-def export_results_latex(results, filename: str):
-    """Export results to LaTeX table"""
-    # TODO: Implement when results structure is defined
-    pass
+def export_results_latex(results, filename: str) -> None:
+    """
+    Export fit results as a LaTeX table.
+
+    Parameters
+    ----------
+    results : UnifiedResults
+        Fitted results object with a ``parameter_summary()`` method.
+    filename : str
+        Output .tex file path.
+    """
+    summary = results.parameter_summary()
+    lines = [
+        r"\begin{table}[ht]",
+        r"\centering",
+        r"\begin{tabular}{lcccc}",
+        r"\hline",
+        r"Parameter & Best Fit & $-\sigma$ & $+\sigma$ & Median \\",
+        r"\hline",
+    ]
+    for i, name in enumerate(summary.names):
+        param_latex = name.replace('_', r'\_')
+        lines.append(
+            f"{param_latex} & "
+            f"${summary.best_fit[i]:.4f}$ & "
+            f"$-{summary.errors_lower[i]:.4f}$ & "
+            f"$+{summary.errors_upper[i]:.4f}$ & "
+            f"${summary.percentiles['50th'][i]:.4f}$ \\\\"
+        )
+    lines += [
+        r"\hline",
+        r"\end{tabular}",
+        r"\caption{rbvfit best-fit parameters}",
+        r"\label{tab:rbvfit_results}",
+        r"\end{table}",
+    ]
+    with open(filename, 'w') as f:
+        f.write("\n".join(lines) + "\n")
 
 
 # ==================== PROJECT SAVE/LOAD FUNCTIONALITY ====================
@@ -177,8 +253,13 @@ def save_project_data(project_data: Dict[str, Any], filename: str) -> None:
     _validate_project_data(project_data)
     
     # Add metadata
+    try:
+        import rbvfit
+        _ver = rbvfit.__version__
+    except Exception:
+        _ver = 'unknown'
     project_data['saved_at'] = datetime.datetime.now().isoformat()
-    project_data['rbvfit_version'] = '2.0'
+    project_data['rbvfit_version'] = _ver
     
     # Save to file with custom JSON encoder
     with open(filename, 'w') as f:

@@ -1,6 +1,19 @@
 =========
 Changelog
 =========
+Version 2.2.1
+==============
+
+Bug Fixes & Cleanup
+--------------------
+- **Graceful rbcodes import**: ``gui/io.py`` now uses a try/except for the ``rbcodes`` import; missing ``rbcodes`` raises a clear ``ImportError`` with install instructions instead of crashing at startup
+- **Export functions implemented**: ``export_results_csv()`` and ``export_results_latex()`` in ``gui/io.py`` were stubs; now fully implemented using ``UnifiedResults.parameter_summary()``
+- **Removed dead import**: Unused ``export_results_csv``/``export_results_latex`` import removed from ``gui/results_tab.py``
+- **Debug prints removed**: Two ``# DEBUG`` ``print()`` calls removed from ``gui/interactive_param_dialog.py``
+- **Dependency alignment**: ``numpy`` pinned to ``>=1.22.3,<1.24`` in both ``setup.cfg`` and ``requirements.txt`` (was ``>=1.18.0`` in requirements); version specifiers added to all core deps in ``setup.cfg``
+- **Missing astropy dep**: ``astropy>=5.3.3`` added to ``setup.cfg`` ``install_requires`` (was already required by core code but not declared)
+- **Dynamic version in saved projects**: ``gui/io.py`` now writes the actual ``rbvfit.__version__`` into saved project files instead of the hardcoded string ``'2.0'``
+
 Version 2.2.0
 ==============
 

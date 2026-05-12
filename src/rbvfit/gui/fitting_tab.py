@@ -30,11 +30,11 @@ from rbvfit.gui.shared_plot_range_dialog import PlotRangeDialog
 
 class MCMCThread(QThread):
     """Thread for running MCMC to avoid blocking GUI"""
-    
+
     status_update = pyqtSignal(str)
     fitting_completed = pyqtSignal(object)  # fitter object
     fitting_error = pyqtSignal(str)
-    
+
     def __init__(self, instrument_data, theta, lb, ub, mcmc_params):
         super().__init__()
         self.instrument_data = instrument_data
@@ -42,7 +42,12 @@ class MCMCThread(QThread):
         self.lb = lb
         self.ub = ub
         self.mcmc_params = mcmc_params
-        
+        self._stop_requested = False
+
+    def request_stop(self):
+        """Signal the thread to stop after the current step."""
+        self._stop_requested = True
+
     def run(self):
         """Run MCMC fitting"""
         try:
@@ -258,9 +263,13 @@ class FittingTab(QWidget):
         button_layout = QHBoxLayout()
         self.quick_fit_btn = QPushButton("Quick Fit")
         self.fit_btn = QPushButton("Run MCMC")
-        
+        self.stop_btn = QPushButton("Stop")
+        self.stop_btn.setEnabled(False)
+        self.stop_btn.setToolTip("Request MCMC to stop after the current step")
+
         button_layout.addWidget(self.quick_fit_btn)
         button_layout.addWidget(self.fit_btn)
+        button_layout.addWidget(self.stop_btn)
         fitting_layout.addLayout(button_layout)
         
         # Progress bar
@@ -325,6 +334,7 @@ class FittingTab(QWidget):
         # Fitting controls
         self.quick_fit_btn.clicked.connect(self.run_quick_fit)
         self.fit_btn.clicked.connect(self.run_mcmc_fit)
+        self.stop_btn.clicked.connect(self.stop_mcmc_fit)
         
         # Plot controls
         self.instrument_combo.currentTextChanged.connect(self.plot_spectrum)
@@ -379,7 +389,7 @@ class FittingTab(QWidget):
         self.reset_plot_ranges()
         self.plot_spectrum()
         
-        print(f"✓ Fitting tab ready: {len(instrument_data)} instruments, {n_params} parameters")
+        print(f"Fitting tab ready: {len(instrument_data)} instruments, {n_params} parameters")
 
     def update_instrument_selector(self):
         """Update instrument selector combo"""
@@ -556,6 +566,7 @@ class FittingTab(QWidget):
             # Disable UI during fitting
             self.fit_btn.setEnabled(False)
             self.quick_fit_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
             self.progress_bar.setVisible(True)
             self.progress_bar.setRange(0, 0)  # Indeterminate
             
@@ -657,10 +668,26 @@ class FittingTab(QWidget):
         self.status_text.append(f"Fitting error: {error_msg}")
         QMessageBox.critical(self, "Fitting Error", f"MCMC fitting failed:\n{error_msg}")
         
+    def stop_mcmc_fit(self):
+        """Request MCMC thread to stop."""
+        if self.mcmc_thread is not None and self.mcmc_thread.isRunning():
+            self.stop_btn.setEnabled(False)
+            self.status_text.append("Stop requested — waiting for current step to finish...")
+            self.mcmc_thread.request_stop()
+            # Give it 5 seconds to finish gracefully, then force-terminate
+            if not self.mcmc_thread.wait(5000):
+                self.mcmc_thread.terminate()
+                self.mcmc_thread.wait()
+                self.status_text.append("MCMC forcefully terminated.")
+            else:
+                self.status_text.append("MCMC stopped.")
+            self.reset_fitting_ui()
+
     def reset_fitting_ui(self):
         """Reset UI after fitting"""
         self.fit_btn.setEnabled(True)
         self.quick_fit_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)
         
     def get_current_theta(self):
@@ -696,4 +723,5 @@ class FittingTab(QWidget):
         # Reset controls
         self.fit_btn.setEnabled(False)
         self.quick_fit_btn.setEnabled(False)
+        self.stop_btn.setEnabled(False)
         self.progress_bar.setVisible(False)

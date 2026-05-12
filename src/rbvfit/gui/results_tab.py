@@ -6,10 +6,12 @@ Interface for viewing and exporting fit results with actual MCMC data.
 """
 
 import numpy as np
+from pathlib import Path
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QGroupBox, QPushButton, QTableWidget, QTableWidgetItem,
                             QTextEdit, QTabWidget, QFileDialog, QMessageBox,
-                            QHeaderView, QLabel, QComboBox, QCheckBox, QApplication,QDialog)
+                            QHeaderView, QLabel, QComboBox, QCheckBox, QApplication,
+                            QDialog, QLineEdit)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QPixmap
 from rbvfit.gui.shared_plot_range_dialog import PlotRangeDialog  # or wherever it's located
@@ -90,7 +92,12 @@ class ResultsTab(QWidget):
         self.save_results_btn = QPushButton("Save Results")
         self.save_results_btn.setEnabled(False)
         self.save_results_btn.setToolTip("Save complete fit results to HDF5 file for later analysis")
-        control_layout.addWidget(self.save_results_btn)        
+        control_layout.addWidget(self.save_results_btn)
+
+        # Load previously saved results
+        self.load_results_btn = QPushButton("Load Results")
+        self.load_results_btn.setToolTip("Load fit results from a previously saved HDF5 file")
+        control_layout.addWidget(self.load_results_btn)
 
         # NEW: Add trace plots button
         self.trace_plots_btn = QPushButton("Show Trace Plots")
@@ -98,8 +105,22 @@ class ResultsTab(QWidget):
         self.trace_plots_btn.setToolTip("Display MCMC chain trace plots for convergence assessment")
         control_layout.addWidget(self.trace_plots_btn)
         
+        # Burn-in controls
         control_layout.addStretch()
-        
+        control_layout.addWidget(QLabel("Burn-in fraction:"))
+        self.burnin_edit = QLineEdit()
+        self.burnin_edit.setFixedWidth(60)
+        self.burnin_edit.setPlaceholderText("0.20")
+        self.burnin_edit.setToolTip("Fraction of MCMC chain to discard as burn-in (0.0 – 0.9)")
+        control_layout.addWidget(self.burnin_edit)
+
+        self.apply_burnin_btn = QPushButton("Apply")
+        self.apply_burnin_btn.setEnabled(False)
+        self.apply_burnin_btn.setToolTip("Re-compute statistics and plots with the new burn-in fraction")
+        control_layout.addWidget(self.apply_burnin_btn)
+
+        control_layout.addStretch()
+
         # Plot controls
         self.show_components_check = QCheckBox("Show Components")
         self.show_components_check.setChecked(True)
@@ -298,14 +319,17 @@ class ResultsTab(QWidget):
         
     def setup_connections(self):
         """Connect signals and slots"""
+        # Burn-in
+        self.apply_burnin_btn.clicked.connect(self.apply_burnin)
+
         # Export buttons
         self.export_csv_btn.clicked.connect(self.export_csv)
         self.export_latex_btn.clicked.connect(self.export_latex)
         self.save_plots_btn.clicked.connect(self.save_plots)
         self.trace_plots_btn.clicked.connect(self.show_trace_plots)
         self.save_results_btn.clicked.connect(self.save_results)
+        self.load_results_btn.clicked.connect(self.load_results)
 
-        
         # Plot controls
         self.show_components_check.toggled.connect(self.update_plots)
         self.show_residuals_check.toggled.connect(self.update_plots)
@@ -371,7 +395,15 @@ class ResultsTab(QWidget):
 
 
         self.populate_instrument_dropdown()
-            
+
+        # Show current burn-in fraction in the textbox
+        try:
+            burnin_frac = results.burnin_steps / results.n_steps if results.n_steps > 0 else 0.2
+            self.burnin_edit.setText(f"{burnin_frac:.2f}")
+        except Exception:
+            self.burnin_edit.setText("0.20")
+        self.apply_burnin_btn.setEnabled(True)
+
         # Enable controls
         self.export_csv_btn.setEnabled(True)
         self.export_latex_btn.setEnabled(True)
@@ -397,12 +429,14 @@ class ResultsTab(QWidget):
         self.export_csv_btn.setEnabled(False)
         self.export_latex_btn.setEnabled(False)
         self.save_plots_btn.setEnabled(False)
-        self.trace_plots_btn.setEnabled(False)  # NEW: Disable trace plots button
+        self.trace_plots_btn.setEnabled(False)
         self.update_corner_btn.setEnabled(False)
         self.export_corner_btn.setEnabled(False)
         self.copy_table_btn.setEnabled(False)
         self.export_table_btn.setEnabled(False)
         self.save_results_btn.setEnabled(False)
+        self.apply_burnin_btn.setEnabled(False)
+        self.burnin_edit.clear()
 
         if hasattr(self, 'instrument_combo'):
             self.instrument_combo.clear()
@@ -422,6 +456,48 @@ class ResultsTab(QWidget):
             self.comparison_canvas.draw()
             self.velocity_canvas.draw()
             
+    def apply_burnin(self):
+        """Re-slice MCMC chain with user-specified burn-in fraction and refresh all displays."""
+        if self.results is None:
+            return
+
+        text = self.burnin_edit.text().strip()
+        try:
+            frac = float(text)
+        except ValueError:
+            QMessageBox.warning(self, "Invalid Input",
+                                f"'{text}' is not a valid number. Enter a fraction between 0.0 and 0.9.")
+            return
+
+        if not (0.0 <= frac < 0.9):
+            QMessageBox.warning(self, "Out of Range",
+                                "Burn-in fraction must be between 0.0 and 0.9.")
+            return
+
+        try:
+            chain = self.results.chain  # (n_steps, n_walkers, n_params)
+            n_steps = chain.shape[0]
+            burnin_steps = int(frac * n_steps)
+
+            # Reslice the chain
+            post_chain = chain[burnin_steps:]
+            self.results.samples = post_chain.reshape(-1, chain.shape[-1])
+            self.results.burnin_steps = burnin_steps
+
+            # Refresh all displays
+            self.update_statistics()
+            self.update_parameter_table()
+            if HAS_MATPLOTLIB:
+                self.update_plots()
+
+            self.main_window.update_status(
+                f"Burn-in updated: {burnin_steps} steps ({frac:.0%}) discarded, "
+                f"{len(self.results.samples):,} samples remaining"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to apply burn-in:\n{str(e)}")
+
     def save_results(self):
         """Save fit results with file dialog."""
         if not hasattr(self, 'results') or self.results is None:
@@ -454,6 +530,39 @@ class ResultsTab(QWidget):
                     f"Failed to save results:\n{str(e)}"
                 )
     
+    def load_results(self):
+        """Load fit results from a previously saved HDF5 file."""
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Fit Results",
+            "",
+            "HDF5 files (*.h5 *.hdf5);;All files (*)"
+        )
+
+        if not filename:
+            return
+
+        try:
+            from rbvfit.core.unified_results import UnifiedResults
+            results = UnifiedResults.load(filename)
+
+            # Pass into the results tab and enable the Results tab in main window
+            self.update_results(results)
+            self.main_window.tab_widget.setTabEnabled(3, True)
+            self.main_window.update_status(f"Results loaded from: {Path(filename).name}")
+
+            QMessageBox.information(
+                self,
+                "Load Successful",
+                f"Results loaded from:\n{filename}\n\n"
+                f"Instruments: {list(results.instrument_data.keys())}\n"
+                f"Samples: {len(results.samples):,}\n"
+                f"Parameters: {len(results.best_fit)}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Load Failed", f"Failed to load results:\n{str(e)}")
+
     def populate_instrument_dropdown(self):
         """Populate instrument dropdown with available instruments/configurations"""
         self.instrument_combo.clear()
@@ -872,67 +981,8 @@ class ResultsTab(QWidget):
             self.update_model_comparison()
     
 
-    def update_velocity_plot_with_instrument(self, instrument_name):
-        """Update velocity plot for specific instrument"""
-        if not instrument_name:
-            # Fallback to original method if no instrument selected
-            self.update_velocity_plot()
-            return
-            
-        try:
-            # Try to use instrument-specific plotting if available
-            if hasattr(self.results, 'plot_velocity_fits'):
-                self.velocity_figure.clear()
-                
-                # Get velocity range setting
-                vel_range_text = self.vel_range_combo.currentText()
-                if vel_range_text == "±200 km/s":
-                    velocity_range = (-200, 200)
-                elif vel_range_text == "±500 km/s":
-                    velocity_range = (-500, 500)
-                elif vel_range_text == "±1000 km/s":
-                    velocity_range = (-1000, 1000)
-                else:
-                    velocity_range = None
-                    
-                show_components = self.show_components_check.isChecked()
-                
-                # Try to pass instrument parameter if supported
-                try:
-                    fig = self.results.plot_velocity_fits(
-                        show_components=show_components,
-                        velocity_range=velocity_range,
-                        show_rail_system=True,
-                        instrument=instrument_name,  # Try to pass instrument
-                        figure=self.velocity_figure
-                    )
-                except TypeError:
-                    # If instrument parameter not supported, fall back
-                    fig = self.results.plot_velocity_fits(
-                        show_components=show_components,
-                        velocity_range=velocity_range,
-                        show_rail_system=True,
-                        figure=self.velocity_figure
-                    )
-                    
-                    # Add instrument info to title
-                    axes = self.velocity_figure.get_axes()
-                    if axes and instrument_name != "Primary":
-                        current_title = axes[0].get_title()
-                        axes[0].set_title(f"{current_title} ({instrument_name})")
-                        
-                self.velocity_canvas.draw()
-            else:
-                # Fallback to original method
-                self.update_velocity_plot()
-                
-        except Exception as e:
-            print(f"Error updating velocity plot for {instrument_name}: {e}")
-            # Fallback to original method
-            self.update_velocity_plot()
-    
-    
-            
+
+
     def export_csv(self):
         """Export parameter table to CSV"""
         if not self.parameter_data:

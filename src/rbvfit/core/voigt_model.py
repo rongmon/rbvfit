@@ -487,7 +487,7 @@ class VoigtModel:
         self._compiled = True
         
         if verbose:
-            print(f"✓ VoigtModel compiled successfully")
+            print(f"VoigtModel compiled successfully")
         
         return compiled_model    
     
@@ -578,8 +578,8 @@ class VoigtModel:
         structure = self.param_manager.config_to_theta_structure()
         
         # Header with totals
-        lines.append(f"📊 Total: {structure['total_parameters']} parameters, {self.n_lines} lines, {len(self.config.systems)} system(s)")
-        lines.append(f"🔧 FWHM: {self.FWHM} pixels")
+        lines.append(f"Total: {structure['total_parameters']} parameters, {self.n_lines} lines, {len(self.config.systems)} system(s)")
+        lines.append(f"FWHM: {self.FWHM} pixels")
         lines.append("")
         
         # Track global parameter indices
@@ -587,7 +587,7 @@ class VoigtModel:
         
         for sys_idx, system in enumerate(self.config.systems):
             # System header
-            lines.append(f"🌌 System {sys_idx + 1} (z = {system.redshift:.6f})")
+            lines.append(f"System {sys_idx + 1} (z = {system.redshift:.6f})")
             lines.append("│")
             
             system_params = 0
@@ -601,14 +601,14 @@ class VoigtModel:
                 ion_params = ion_group.components * 3  # N, b, v for each component
                 ion_lines = len(ion_group.transitions) * ion_group.components
                 
-                lines.append(f"│{ion_prefix}🧪 {ion_group.ion_name} ({ion_group.components} components)")
+                lines.append(f"│{ion_prefix}{ion_group.ion_name} ({ion_group.components} components)")
                 
                 # Transitions
                 transition_str = ", ".join([f"{w:.1f}Å" for w in ion_group.transitions])
-                lines.append(f"│{'    ' if is_last_ion else '│   '}📡 Transitions: [{transition_str}]")
-                
+                lines.append(f"│{'    ' if is_last_ion else '│   '}Transitions: [{transition_str}]")
+
                 # Parameter structure
-                lines.append(f"│{'    ' if is_last_ion else '│   '}📋 Parameters ({ion_params} total):")
+                lines.append(f"│{'    ' if is_last_ion else '│   '}Parameters ({ion_params} total):")
                 
                 # Show parameter indices for each component
                 for comp in range(ion_group.components):
@@ -624,10 +624,10 @@ class VoigtModel:
                 
                 # Ion tying indicator
                 if len(ion_group.transitions) > 1:
-                    lines.append(f"│{'    ' if is_last_ion else '│   '}🔗 TIED: All {len(ion_group.transitions)} transitions share parameters")
+                    lines.append(f"│{'    ' if is_last_ion else '│   '}TIED: All {len(ion_group.transitions)} transitions share parameters")
                 
                 # Line count
-                lines.append(f"│{'    ' if is_last_ion else '│   '}📈 Lines: {ion_lines} ({len(ion_group.transitions)} trans × {ion_group.components} comp)")
+                lines.append(f"│{'    ' if is_last_ion else '│   '}Lines: {ion_lines} ({len(ion_group.transitions)} trans x {ion_group.components} comp)")
                 
                 if not is_last_ion:
                     lines.append("│")
@@ -639,16 +639,16 @@ class VoigtModel:
             
             # System summary
             lines.append("│")
-            lines.append(f"└── 📊 System {sys_idx + 1} totals: {system_params} parameters, {system_lines} lines")
+            lines.append(f"└── System {sys_idx + 1} totals: {system_params} parameters, {system_lines} lines")
             
             if sys_idx < len(self.config.systems) - 1:
                 lines.append("")
         
         lines.append("")
         lines.append("Legend:")
-        lines.append("🌌 = Absorption system    🧪 = Ion group")
-        lines.append("📡 = Transitions          📋 = Parameters")
-        lines.append("📈 = Model lines          🔗 = Parameter tying")
+        lines.append("[ sys ] = Absorption system    [ ion ] = Ion group")
+        lines.append("[ ->  ] = Transitions          [ par ] = Parameters")
+        lines.append("[ ln  ] = Model lines          [ tie ] = Parameter tying")
         lines.append("θ[i] = Parameter index in theta array")
         
         # Parameter array structure
@@ -668,4 +668,4 @@ if __name__ == "__main__":
     print("  config = FitConfiguration()")
     print("  model1 = VoigtModel(config, FWHM='2.2')  # Instrument 1")
     print("  model2 = VoigtModel(config, FWHM='4.0')  # Instrument 2")
-    print("Happy fitting! 🎉")
+    print("Happy fitting!")

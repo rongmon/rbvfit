@@ -469,73 +469,6 @@ class WavelengthTrimDialog(QDialog):
         return self.min_spin.value(), self.max_spin.value()
 
 
-class UnionBuildDialog(QDialog):
-    """Dialog for building unions of overlapping spectral regions"""
-    
-    def __init__(self, configurations, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("Build Spectral Unions")
-        self.setModal(True)
-        self.resize(500, 400)
-        
-        self.configurations = configurations
-        self.setup_ui()
-        
-    def setup_ui(self):
-        """Create dialog interface"""
-        layout = QVBoxLayout()
-        self.setLayout(layout)
-        
-        # Instructions
-        instructions = QLabel(
-            "Define overlapping wavelength regions to combine spectra.\n"
-            "Enter comma-separated ranges like: 1200-1250, 1300-1350"
-        )
-        layout.addWidget(instructions)
-        
-        # Region input
-        self.regions_edit = QTextEdit()
-        self.regions_edit.setMaximumHeight(100)
-        self.regions_edit.setPlaceholderText("1200-1250, 1300-1350")
-        layout.addWidget(self.regions_edit)
-        
-        # Configuration selector for union target
-        form_layout = QFormLayout()
-        layout.addLayout(form_layout)
-        
-        self.target_combo = QComboBox()
-        self.target_combo.addItems(list(self.configurations.keys()))
-        form_layout.addRow("Union target configuration:", self.target_combo)
-        
-        # Buttons
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-        
-    def get_union_data(self):
-        """Return union configuration data"""
-        regions_text = self.regions_edit.toPlainText().strip()
-        target_config = self.target_combo.currentText()
-        
-        # Parse regions
-        regions = []
-        if regions_text:
-            for region_str in regions_text.split(','):
-                region_str = region_str.strip()
-                if '-' in region_str:
-                    try:
-                        min_wave, max_wave = map(float, region_str.split('-'))
-                        regions.append((min_wave, max_wave))
-                    except ValueError:
-                        continue
-        
-        return {
-            'regions': regions,
-            'target_config': target_config
-        }
-
-
 class ConfigurationDataTab(QWidget):
     """Tab for configuration management and data loading"""
     
@@ -651,17 +584,14 @@ class ConfigurationDataTab(QWidget):
         data_layout.addWidget(process_group)
         
         self.trim_wavelength_btn = QPushButton("Trim Wavelengths")
-        self.build_unions_btn = QPushButton("Build Unions")
         self.reset_data_btn = QPushButton("Reset to Original")
-        
+
         process_group_layout.addWidget(self.trim_wavelength_btn)
-        process_group_layout.addWidget(self.build_unions_btn)
         process_group_layout.addWidget(self.reset_data_btn)
-        
+
         # Initially disable data controls
         self.assign_data_btn.setEnabled(False)
         self.trim_wavelength_btn.setEnabled(False)
-        self.build_unions_btn.setEnabled(False)
         self.reset_data_btn.setEnabled(False)
         
     def setup_preview_panel(self, parent):
@@ -701,7 +631,6 @@ class ConfigurationDataTab(QWidget):
         self.load_files_btn.clicked.connect(self.load_spectrum_files)
         self.assign_data_btn.clicked.connect(self.assign_data_to_config)
         self.trim_wavelength_btn.clicked.connect(self.enhanced_trim_wavelengths)
-        self.build_unions_btn.clicked.connect(self.build_unions)
         self.reset_data_btn.clicked.connect(self.reset_data)
         
         # Preview controls
@@ -728,58 +657,6 @@ class ConfigurationDataTab(QWidget):
             self.update_status()
 
 
-    def setup_fwhm_controls(self, layout):
-        """Setup FWHM controls with unit selection"""
-        
-        # FWHM Unit selector
-        fwhm_unit_layout = QHBoxLayout()
-        
-        fwhm_unit_layout.addWidget(QLabel("FWHM Unit:"))
-        self.fwhm_unit_combo = QComboBox()
-        self.fwhm_unit_combo.addItems(['pixels', 'km/s'])
-        self.fwhm_unit_combo.setCurrentText('pixels')  # Default to pixels
-        fwhm_unit_layout.addWidget(self.fwhm_unit_combo)
-        fwhm_unit_layout.addStretch()
-        
-        layout.addRow(fwhm_unit_layout)
-        
-        # FWHM value input
-        self.fwhm_spin = QDoubleSpinBox()
-        self.fwhm_spin.setRange(0.1, 20.0)  # Default range for pixels
-        self.fwhm_spin.setDecimals(2)
-        self.fwhm_spin.setValue(2.5)
-        self.fwhm_spin.setSuffix(' px')
-        layout.addRow("FWHM:", self.fwhm_spin)
-        
-        # Connect unit change to update range and suffix
-        self.fwhm_unit_combo.currentTextChanged.connect(self.on_fwhm_unit_changed)
-
-
-    def on_fwhm_unit_changed(self, unit):
-        """Handle FWHM unit change"""
-        current_value = self.fwhm_spin.value()
-        
-        if unit == 'pixels':
-            self.fwhm_spin.setRange(0.1, 20.0)
-            self.fwhm_spin.setSuffix(' px')
-            # If we had a reasonable conversion, we could do it here
-            # For now, just update the range and let user adjust
-            if hasattr(self, '_last_unit') and self._last_unit == 'km/s':
-                # Coming from km/s - suggest a reasonable pixel value
-                if current_value > 50:  # Clearly a km/s value
-                    self.fwhm_spin.setValue(2.5)  # Default pixel value
-        else:  # km/s
-            self.fwhm_spin.setRange(1.0, 300.0)
-            self.fwhm_spin.setSuffix(' km/s')
-            # If we had a reasonable conversion, we could do it here
-            if hasattr(self, '_last_unit') and self._last_unit == 'pixels':
-                # Coming from pixels - suggest a reasonable km/s value
-                if current_value < 30:  # Clearly a pixel value
-                    self.fwhm_spin.setValue(20.0)  # Default km/s value
-        
-        self._last_unit = unit
-
-            
     def edit_configuration(self):
         """Edit selected configuration"""
         current_item = self.config_list.currentItem()
@@ -1059,41 +936,6 @@ class ConfigurationDataTab(QWidget):
             
 
         
-    def build_unions(self):
-        """Build unions of overlapping spectral regions"""
-        if len(self.configurations) < 2:
-            QMessageBox.warning(self, "Insufficient Data", 
-                              "Need at least 2 configurations with data to build unions")
-            return
-            
-        # Check that configurations have data
-        configs_with_data = {name: config for name, config in self.configurations.items() 
-                           if config['wave'] is not None}
-        
-        if len(configs_with_data) < 2:
-            QMessageBox.warning(self, "Insufficient Data", 
-                              "Need at least 2 configurations with assigned data")
-            return
-            
-        dialog = UnionBuildDialog(configs_with_data, parent=self)
-        if dialog.exec_() == QDialog.Accepted:
-            union_data = dialog.get_union_data()
-            
-            if union_data['regions']:
-                self.apply_union_building(union_data)
-                self.update_preview()
-                self.update_status()
-            else:
-                QMessageBox.warning(self, "No Regions", "No valid wavelength regions specified")
-                
-    def apply_union_building(self, union_data):
-        """Apply union building to configurations"""
-        # This is a placeholder - implement union building logic
-        QMessageBox.information(self, "Union Building", 
-                              f"Union building with {len(union_data['regions'])} regions\n"
-                              f"Target: {union_data['target_config']}\n"
-                              "Implementation needed based on specific requirements")
-        
     def reset_data(self):
         """Reset all configuration data to original"""
         reply = QMessageBox.question(self, "Confirm Reset",
@@ -1200,7 +1042,6 @@ class ConfigurationDataTab(QWidget):
         has_data = any(config['wave'] is not None for config in self.configurations.values())
         
         self.trim_wavelength_btn.setEnabled(has_data)
-        self.build_unions_btn.setEnabled(has_data)
         self.reset_data_btn.setEnabled(has_data)
         
     def update_status(self):
@@ -1224,93 +1065,8 @@ class ConfigurationDataTab(QWidget):
         """Check if there are valid configurations with data"""
         return any(config['wave'] is not None for config in self.configurations.values())
 
-    #File configuration restoration from saved files
-
-    def _restore_configurations(self, configurations):
-        """Restore configurations from project load with data and wavelength     processing"""
-        self.configurations = configurations
-        
-        # First update displays
-        self.update_config_display()
-        
-        # Try to reload spectrum data and apply selections
-        missing_files = []
-        restored_configs = []
-        failed_configs = []
-        
-        for config_name, config in configurations.items():
-            filename = config.get('filename', '')
-            
-            if filename:
-                success = self._restore_configuration_data(config_name, config)
-                if success:
-                    restored_configs.append(config_name)
-                    
-                    # POPULATE GUI CONTROLS - Add to loaded_spectra for GUI consistency
-                    basename = Path(filename).name
-                    self.loaded_spectra[filename] = {
-                        'wave': config['wave'],
-                        'flux': config['flux'], 
-                        'error': config['error'],
-                        'basename': basename,
-                        'wave_original': config['wave_original'],
-                        'flux_original': config['flux_original'],
-                        'error_original': config['error_original']
-                    }
-                    
-                    # Add to file list widget
-                    if basename not in [self.file_list.item(i).text() for i in range(    self.file_list.count())]:
-                        self.file_list.addItem(basename)
-                        
-                else:
-                    failed_configs.append(config_name)
-                    if not Path(filename).exists():
-                        missing_files.append(Path(filename).name)
-        
-        # Update GUI selectors AFTER populating loaded_spectra
-        self._update_file_selector()
-        self._update_config_selector()
-        
-        # Update displays after restoration
-        self.update_config_display()
-        self.update_preview_display()
-        self.update_status()
-        
-        # Show restoration summary
-        if restored_configs:
-            self.status_label.setText(f"✓ Restored {len(restored_configs)}     configurations with data")
-        elif failed_configs:
-            self.status_label.setText(f"⚠️ {len(failed_configs)} configurations need     data reassignment")
-        
-        # Emit signal if any configs exist
-        if configurations:
-            self.configurations_updated.emit(configurations)
-    
-    def _update_file_selector(self):
-        """Update file selector dropdown"""
-        self.file_selector.clear()
-        for filename in self.loaded_spectra.keys():
-            basename = Path(filename).name
-            self.file_selector.addItem(basename, filename)  # Display basename, store     full path
-    
-    def _update_config_selector(self):
-        """Update configuration selector dropdown"""
-        self.config_selector.clear()
-        for config_name in self.configurations.keys():
-            self.config_selector.addItem(config_name)
-    
-    # Also add these helper methods for the existing workflow:
-    
-    def update_file_selector(self):
-        """Public method to update file selector - for existing code compatibility"""
-        self._update_file_selector()
-    
-    def update_config_selector(self):
-        """Public method to update config selector - for existing code compatibility"""  
-        self._update_config_selector()    
 
 
-    
     def _restore_configuration_data(self, config_name, config):
         """Restore spectrum data and wavelength processing for a single configuration"""
         filename = config.get('filename', '')

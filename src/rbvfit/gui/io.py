@@ -320,7 +320,8 @@ def validate_project_file(filename: str) -> Dict[str, Any]:
         
         # Count components
         n_configs = len(project_data.get('configurations', {}))
-        n_systems = sum(len(systems) for systems in project_data.get('config_systems', {}).values())
+        global_systems = project_data.get('global_systems', [])
+        n_systems = len(global_systems)
         n_parameters = len(project_data.get('config_parameters', {}))
         has_master_theta = project_data.get('master_theta') is not None
         
@@ -506,31 +507,35 @@ def deserialize_configurations(serialized: Dict[str, Any]) -> Tuple[Dict[str, Di
 
 
 
-def serialize_parameters(config_parameters: Dict[Tuple, pd.DataFrame]) -> Dict[str, Any]:
-    """Serialize parameter DataFrames"""
+def serialize_parameters(config_parameters: Dict[str, pd.DataFrame]) -> Dict[str, Any]:
+    """Serialize parameter DataFrames. Key is system_id string."""
     serialized = {}
-    
     for key, df in config_parameters.items():
-        # Convert tuple key to string
-        key_str = f"{key[0]}___{key[1]}"  # Use triple underscore as separator
-        serialized[key_str] = {
-            'data': df.to_dict('records'),  # Convert DataFrame to list of dicts
+        # key is now just system_id (a plain string)
+        serialized[str(key)] = {
+            'data': df.to_dict('records'),
             'columns': df.columns.tolist()
         }
     return serialized
 
 
-def deserialize_parameters(serialized: Dict[str, Any]) -> Dict[Tuple, pd.DataFrame]:
-    """Deserialize parameter DataFrames"""
+def deserialize_parameters(serialized: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
+    """Deserialize parameter DataFrames.
+
+    Handles both the new format (key = system_id string) and the old format
+    (key = 'config_name___system_id') for backwards compatibility with old .rbv files.
+    """
     config_parameters = {}
     for key_str, param_data in serialized.items():
-        # Convert string key back to tuple
-        parts = key_str.split('___')
-        if len(parts) == 2:
-            key = (parts[0], parts[1])
-            df = pd.DataFrame(param_data['data'], columns=param_data['columns'])
-            config_parameters[key] = df
-            
+        # Migration: old format used 'config_name___system_id' — strip the config prefix
+        if '___' in key_str:
+            key = key_str.split('___')[1]
+        else:
+            key = key_str
+        df = pd.DataFrame(param_data['data'], columns=param_data['columns'])
+        # Last writer wins if the same system_id appears under multiple old config keys
+        config_parameters[key] = df
+
     return config_parameters
 
 
@@ -573,7 +578,8 @@ def serialize_collection_info(collection_result) -> Optional[Dict[str, Any]]:
 def create_project_summary(project_data: Dict[str, Any]) -> str:
     """Create enhanced project summary with processing info"""
     n_configs = len(project_data.get('configurations', {}))
-    n_systems = sum(len(systems) for systems in project_data.get('config_systems', {}).values())
+    global_systems = project_data.get('global_systems', [])
+    n_systems = len(global_systems)
     n_params = len(project_data.get('config_parameters', {}))
     missing_files = check_missing_files(project_data)
     
@@ -592,7 +598,7 @@ def create_project_summary(project_data: Dict[str, Any]) -> str:
         summary += f"  Processed data: {n_trimmed} configurations trimmed/filtered\n"
     
     if missing_files:
-        summary += f"  ⚠️ Missing files: {len(missing_files)}\n"
+        summary += f"  WARNING: Missing files: {len(missing_files)}\n"
         for f in missing_files[:3]:  # Show first 3
             summary += f"    • {f}\n"
         if len(missing_files) > 3:

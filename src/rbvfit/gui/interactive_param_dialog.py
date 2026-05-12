@@ -5,10 +5,10 @@ Clean Interactive Parameter Dialog for rbvfit2 GUI
 
 import numpy as np
 import pandas as pd
-from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, 
-                            QLabel, QMessageBox, QComboBox, QTableWidget, 
+from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton,
+                            QLabel, QMessageBox, QComboBox, QTableWidget,
                             QTableWidgetItem, QHeaderView, QDoubleSpinBox,
-                            QFormLayout,QInputDialog)
+                            QFormLayout, QInputDialog)
 from PyQt5.QtCore import Qt, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -293,21 +293,39 @@ class VelocitySelector:
 
 class InteractiveParameterDialog(QDialog):
     """Clean interactive parameter dialog"""
-    
+
     parameters_ready = pyqtSignal(object)  # DataFrame
-    
-    def __init__(self, system_data, spectrum_data, parent=None):
+
+    def __init__(self, system_data, all_spectra, parent=None):
+        """
+        Parameters
+        ----------
+        system_data : dict
+            Ion system definition (z, ion, transitions, components, id)
+        all_spectra : dict
+            Mapping of config_name -> {'wave', 'flux', 'error'}.
+            Can also be a bare single-spectrum dict for backwards compatibility.
+        """
         super().__init__(parent)
         self.system_data = system_data
-        self.spectrum_data = spectrum_data
+
+        # Normalise: accept both the new all_spectra dict and a bare spectrum dict
+        if 'wave' in all_spectra:
+            # Legacy single-spectrum call — wrap it
+            self.all_spectra = {'Spectrum': all_spectra}
+        else:
+            self.all_spectra = all_spectra
+
+        # Start with the first available spectrum
+        self.current_spectrum_name = list(self.all_spectra.keys())[0]
         self.velocity_selector = None
         self.original_xlim = [-600, 600]
         self.original_ylim = None
-        
+
         self.setWindowTitle(f"Interactive Parameters - {system_data['ion']} z={system_data['z']:.3f}")
         self.setModal(True)
         self.resize(1000, 700)
-        
+
         self.setup_ui()
         self.start_selection()
         self.activateWindow()
@@ -322,25 +340,42 @@ class InteractiveParameterDialog(QDialog):
         info_text = f"System: {self.system_data['ion']} at z={self.system_data['z']:.6f}"
         layout.addWidget(QLabel(info_text))
         
+        # Controls row: spectrum selector + transition selector
+        controls_layout = QHBoxLayout()
+        layout.addLayout(controls_layout)
+
+        # Spectrum selector — always shown when more than one spectrum is available
+        if len(self.all_spectra) > 1:
+            controls_layout.addWidget(QLabel("Spectrum:"))
+            self.spectrum_combo = QComboBox()
+            for name in self.all_spectra.keys():
+                self.spectrum_combo.addItem(name)
+            self.spectrum_combo.setCurrentText(self.current_spectrum_name)
+            controls_layout.addWidget(self.spectrum_combo)
+            controls_layout.addSpacing(20)
+            self.spectrum_combo.currentTextChanged.connect(self.change_spectrum)
+        else:
+            self.spectrum_combo = None
+
         # Transition selector for multi-transition ions
         if len(self.system_data['transitions']) > 1:
-            trans_layout = QHBoxLayout()
-            layout.addLayout(trans_layout)
-            
-            trans_layout.addWidget(QLabel("Transition:"))
+            controls_layout.addWidget(QLabel("Transition:"))
             self.transition_combo = QComboBox()
-            
             for trans in self.system_data['transitions']:
                 label = f"{self.system_data['ion']} {trans:.1f} Å"
                 self.transition_combo.addItem(label, trans)
-                
-            trans_layout.addWidget(self.transition_combo)
-            trans_layout.addStretch()
-            
+            controls_layout.addWidget(self.transition_combo)
             self.transition_combo.currentIndexChanged.connect(self.change_transition)
         else:
             self.transition_combo = None
-            
+
+        controls_layout.addStretch()
+
+        self.set_range_btn = QPushButton("Set Plot Range")
+        self.set_range_btn.setToolTip("Set velocity and flux plot ranges")
+        controls_layout.addWidget(self.set_range_btn)
+        self.set_range_btn.clicked.connect(self.set_plot_range)
+
         # Instructions
         inst_text = ("Left click: add | Right click: remove nearest | 'r': reset | 'c': clear all\n"
              "'z': zoom in | 'o': zoom out | 'x'/'X': set xmin/xmax | 'y'/'Y': set ymin/ymax | 'm': manual range")
@@ -378,24 +413,30 @@ class InteractiveParameterDialog(QDialog):
         # Matplotlib events
         self.canvas.mpl_connect('button_press_event', self.on_click)
         self.canvas.mpl_connect('key_press_event', self.on_key)
+
         
+    def get_current_spectrum(self):
+        """Return the currently selected spectrum data dict."""
+        return self.all_spectra[self.current_spectrum_name]
+
     def start_selection(self):
         """Start velocity selection"""
         try:
             wrest = self.get_current_transition()
-            wave = self.spectrum_data['wave']
-            flux = self.spectrum_data['flux']
-            error = self.spectrum_data.get('error', np.ones_like(flux) * 0.05)
+            spec = self.get_current_spectrum()
+            wave = spec['wave']
+            flux = spec['flux']
+            error = spec.get('error', np.ones_like(flux) * 0.05)
             zabs = self.system_data['z']
-            
+
             self.velocity_selector = VelocitySelector(wave, flux, error, zabs, wrest)
             self.velocity_selector.setup_plot(self.ax)
-            
+
             if self.original_ylim is None:
                 self.original_ylim = self.ax.get_ylim()
-                
+
             self.canvas.draw()
-            
+
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to start selection:\n{str(e)}")
             self.reject()
@@ -407,37 +448,62 @@ class InteractiveParameterDialog(QDialog):
         else:
             return self.system_data['transitions'][0]
             
+    def _rebuild_selector(self):
+        """Rebuild VelocitySelector with current spectrum and transition, preserving selections."""
+        if not self.velocity_selector:
+            return
+        old_selections = self.velocity_selector.vel_guess.copy()
+        wrest = self.get_current_transition()
+        spec = self.get_current_spectrum()
+        wave = spec['wave']
+        flux = spec['flux']
+        error = spec.get('error', np.ones_like(flux) * 0.05)
+        self.velocity_selector = VelocitySelector(wave, flux, error, self.system_data['z'], wrest)
+        self.velocity_selector.setup_plot(self.ax)
+        for vel in old_selections:
+            self.velocity_selector.add_component(vel)
+        self.canvas.draw()
+
+    def change_spectrum(self, name):
+        """Handle spectrum selector change — swap data, keep velocity selections."""
+        self.current_spectrum_name = name
+        self._rebuild_selector()
+        self.update_status()
+
     def change_transition(self):
-        """Handle transition change"""
-        if self.velocity_selector:
-            wrest = self.get_current_transition()
-            wave = self.spectrum_data['wave']
-            flux = self.spectrum_data['flux']
-            error = self.spectrum_data.get('error', np.ones_like(flux) * 0.05)
-            zabs = self.system_data['z']
+        """Handle transition change."""
+        self._rebuild_selector()
+        self.update_status()
             
-            # Save current selections
-            old_selections = self.velocity_selector.vel_guess.copy()
-            
-            # Create new selector
-            self.velocity_selector = VelocitySelector(wave, flux, error, zabs, wrest)
-            self.velocity_selector.setup_plot(self.ax)
-            
-            # Restore selections
-            for vel in old_selections:
-                self.velocity_selector.add_component(vel)
-                
+
+    def set_plot_range(self):
+        """Open plot range dialog and apply to canvas."""
+        from rbvfit.gui.shared_plot_range_dialog import PlotRangeDialog
+        current_xlim = self.ax.get_xlim()
+        current_ylim = self.ax.get_ylim()
+        dialog = PlotRangeDialog(
+            current_xlim=current_xlim,
+            current_ylim=current_ylim,
+            original_xlim=self.original_xlim,
+            original_ylim=self.original_ylim,
+            parent=self
+        )
+        if dialog.exec_():
+            xlim, ylim = dialog.get_ranges()
+            if xlim:
+                self.ax.set_xlim(xlim)
+            if ylim:
+                self.ax.set_ylim(ylim)
             self.canvas.draw()
-            
 
     def on_click(self, event):
         """Handle mouse clicks"""
         if not self.velocity_selector or not event.inaxes:
             return
-            
+
         # ENSURE CANVAS HAS FOCUS for keyboard events
         self.canvas.setFocus()
-        
+
         if event.button == 1:  # Left click - add component
             self.velocity_selector.add_component(event.xdata)
             self.canvas.draw()
@@ -544,8 +610,6 @@ class InteractiveParameterDialog(QDialog):
             
         # MANUAL RANGE INPUT
         elif event.key == 'm':  # Manual range input popup
-            from PyQt5.QtWidgets import QInputDialog
-            
             # X-range input
             current_xlim = self.ax.get_xlim()
             xlim_str, ok = QInputDialog.getText(self, 'Manual X-Limits', 
@@ -581,7 +645,7 @@ class InteractiveParameterDialog(QDialog):
         if not self.velocity_selector or not self.velocity_selector.vel_guess:
             return
             
-        # Get velocity and column density estimates using quick_nv_estimate
+        # N estimate uses whichever spectrum is currently displayed
         wave_rest = self.velocity_selector.wave / (1.0 + self.velocity_selector.zabs)
         vel, nv = g.quick_nv_estimate(wave_rest, self.velocity_selector.flux, 
                                      self.velocity_selector.wrest, self.velocity_selector.f0)

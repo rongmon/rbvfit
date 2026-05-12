@@ -139,7 +139,7 @@ def chain_trace_plot(results, figure=None, show=True, **kwargs):
     # Save or show
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved trace plot to {save_path}")
+        print(f"Saved trace plot to {save_path}")
     elif show:
         plt.show()
 
@@ -197,7 +197,7 @@ def corner_plot(results,save_path: Optional[str] = None, **kwargs) -> plt.Figure
 
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved corner plot to {save_path}")
+        print(f"Saved corner plot to {save_path}")
     else:
         plt.show()
 
@@ -250,7 +250,7 @@ def correlation_plot(results, save_path: Optional[str] = None) -> plt.Figure:
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved correlation plot to {save_path}")
+        print(f"Saved correlation plot to {save_path}")
     else:
         plt.show()
     
@@ -463,7 +463,7 @@ def velocity_plot(results, instrument_name: str = None, velocity_range: Tuple[fl
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved velocity plot to {save_path}")
+        print(f"Saved velocity plot to {save_path}")
     else:
         plt.show()
     
@@ -657,7 +657,7 @@ def residuals_plot(results, instrument_name: str = None, x_range: Optional[Tuple
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved residuals plot to {save_path}")
+        print(f"Saved residuals plot to {save_path}")
     else:
         plt.show()
     
@@ -916,7 +916,7 @@ Parameters: {len(param_names)}
     
     if save_path:
         fig.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"✅ Saved diagnostic summary to {save_path}")
+        print(f"Saved diagnostic summary to {save_path}")
     else:
         plt.show()
     

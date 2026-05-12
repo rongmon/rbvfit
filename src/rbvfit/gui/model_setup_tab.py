@@ -236,8 +236,8 @@ class ModelSetupTab(QWidget):
         super().__init__()
         self.main_window = main_window
         self.configurations = {}  # From Tab 1
-        self.config_systems = {}  # Dict: config_name -> list of system dicts
-        self.config_parameters = {}  # Dict: (config_name, system_id) -> DataFrame
+        self.global_systems = []  # Flat list of all ion systems (shared across configs)
+        self.config_parameters = {}  # Dict: system_id -> DataFrame
         self.current_config = None
         self.current_system_id = None
         
@@ -321,12 +321,12 @@ class ModelSetupTab(QWidget):
         self.add_system_btn = QPushButton("Add System")
         self.edit_system_btn = QPushButton("Edit")
         self.delete_system_btn = QPushButton("Delete")
-        
+
         system_controls.addWidget(self.add_system_btn)
         system_controls.addWidget(self.edit_system_btn)
         system_controls.addWidget(self.delete_system_btn)
         systems_group_layout.addLayout(system_controls)
-        
+
         # Initially disable edit/delete
         self.edit_system_btn.setEnabled(False)
         self.delete_system_btn.setEnabled(False)
@@ -431,12 +431,6 @@ class ModelSetupTab(QWidget):
     def set_configurations(self, configurations):
         """Set configurations from Tab 1"""
         self.configurations = configurations
-        
-        # Initialize systems for new configurations
-        for config_name in configurations:
-            if config_name not in self.config_systems:
-                self.config_systems[config_name] = []
-                
         self.update_config_display()
         self.update_status()
         
@@ -445,70 +439,58 @@ class ModelSetupTab(QWidget):
         self.config_tree.clear()
         self.current_config_combo.clear()
         
+        n_systems = len(self.global_systems)
         for config_name, config_data in self.configurations.items():
             if config_data['wave'] is not None:  # Only show configs with data
                 item = QTreeWidgetItem()
                 item.setText(0, config_name)
-                
-                wave = config_data['wave']
-                n_systems = len(self.config_systems.get(config_name, []))
                 item.setText(1, f"FWHM={config_data['fwhm']}, {n_systems} systems")
                 item.setData(0, Qt.UserRole, config_name)
-                
                 self.config_tree.addTopLevelItem(item)
                 self.current_config_combo.addItem(config_name)
 
     def launch_interactive_params(self):
         """Launch interactive parameter estimation with spectrum display"""
-        if not self.current_config or not self.current_system_id:
-            QMessageBox.warning(self, "Selection Required", 
-                              "Please select a configuration and system")
+        if not self.current_system_id:
+            QMessageBox.warning(self, "Selection Required",
+                              "Please select a system")
             return
-            
-        config_data = self.configurations[self.current_config]
-        if config_data['wave'] is None:
-            QMessageBox.warning(self, "No Data", "Selected configuration has no data")
-            return
-            
-        # Get system info
-        systems = self.config_systems.get(self.current_config, [])
-        current_system = None
-        
-        for system in systems:
-            if system['id'] == self.current_system_id:
-                current_system = system
-                break
-                
+
+        # Find system in global list
+        current_system = next(
+            (s for s in self.global_systems if s['id'] == self.current_system_id), None
+        )
         if not current_system:
             QMessageBox.warning(self, "System Not Found", "Selected system not found")
             return
-            
+
+        # Build all_spectra dict from every config that has data
+        all_spectra = {
+            name: {'wave': cfg['wave'], 'flux': cfg['flux'], 'error': cfg['error']}
+            for name, cfg in self.configurations.items()
+            if cfg['wave'] is not None
+        }
+
+        if not all_spectra:
+            QMessageBox.warning(self, "No Data", "No configurations have data loaded")
+            return
+
         try:
-            # Prepare spectrum data
-            spectrum_data = {
-                'wave': config_data['wave'],
-                'flux': config_data['flux'],
-                'error': config_data['error']
-            }
-            
-            # Launch interactive estimation dialog
-            dialog = InteractiveParameterDialog(current_system, spectrum_data, parent=self)
+            dialog = InteractiveParameterDialog(current_system, all_spectra, parent=self)
             dialog.parameters_ready.connect(self.on_interactive_parameters_ready)
             dialog.exec_()
-                
+
         except Exception as e:
-            QMessageBox.critical(self, "Estimation Error", 
+            QMessageBox.critical(self, "Estimation Error",
                                f"Interactive parameter estimation failed:\n{str(e)}")
-            # Fallback to manual setup
             self.setup_manual_params()
 
     def on_interactive_parameters_ready(self, df):
         """Handle interactive parameters result"""
-        if self.current_config and self.current_system_id:
-            key = (self.current_config, self.current_system_id)
-            self.config_parameters[key] = df.copy()
+        if self.current_system_id:
+            self.config_parameters[self.current_system_id] = df.copy()
             self.load_parameter_table()
-            self.update_systems_display()  # Update component count display
+            self.update_systems_display()
             self.update_status("Interactive parameter estimation completed")
 
     def compile_models(self):
@@ -518,8 +500,7 @@ class ModelSetupTab(QWidget):
                               "No configurations available. Please set up configurations and data first.")
             return
             
-        # Check if any systems are defined
-        total_systems = sum(len(systems) for systems in self.config_systems.values())
+        total_systems = len(self.global_systems)
         if total_systems == 0:
             QMessageBox.warning(self, "No Systems", 
                               "No ion systems defined. Please add systems before compiling.")
@@ -535,27 +516,14 @@ class ModelSetupTab(QWidget):
             self.update_status("Creating master configuration...")
 
 
-            # Update component counts in config_systems to match actual parameters
-            #IMPORTANT BUG FIX
-            for config_name, systems in self.config_systems.items():
-                for system in systems:
-                    key = (config_name, system['id'])
-                    if key in self.config_parameters:
-                        # Update component count to match actual parameter rows
-                        actual_components = len(self.config_parameters[key])
-                        system['components'] = actual_components
-                    
-            # Create a single master FitConfiguration from all systems
+            # Update component counts to match actual parameter rows
+            for system in self.global_systems:
+                if system['id'] in self.config_parameters:
+                    system['components'] = len(self.config_parameters[system['id']])
+
+            # Create master FitConfiguration from global systems
             self.master_config = FitConfiguration()
-            
-            # Collect all unique systems
-            all_systems = []
-            for config_name, systems in self.config_systems.items():
-                for system in systems:
-                    all_systems.append(system)
-            
-            # Add systems to master config
-            for system in all_systems:
+            for system in self.global_systems:
                 self.master_config.add_system(
                     z=system['z'],
                     ion=system['ion'],
@@ -570,10 +538,10 @@ class ModelSetupTab(QWidget):
             all_b = []
             all_v = []
             
-            for (config_name, system_id), df in self.config_parameters.items():
+            for system_id, df in self.config_parameters.items():
                 for _, row in df.iterrows():
                     all_N.append(row['N'])
-                    all_b.append(row['b']) 
+                    all_b.append(row['b'])
                     all_v.append(row['v'])
             
             # Create master theta array
@@ -665,8 +633,8 @@ class ModelSetupTab(QWidget):
                 QMessageBox.warning(self, "Invalid Transitions", "Please specify at least one transition wavelength")
                 return
             
-            # Add to config systems
-            self.config_systems[self.current_config].append(system_data)
+            # Add to global systems
+            self.global_systems.append(system_data)
             
             self.update_systems_display()
             self.update_system_combo()
@@ -679,21 +647,13 @@ class ModelSetupTab(QWidget):
             QMessageBox.warning(self, "No Selection", "Please select a system to edit")
             return
             
-        # Get selected system
         system_id = items[0].data(0, Qt.UserRole)
-        systems = self.config_systems.get(self.current_config, [])
-        
-        # Find system by ID
-        for i, system in enumerate(systems):
+        for i, system in enumerate(self.global_systems):
             if system['id'] == system_id:
-                # Create dialog with existing values
                 dialog = SystemDialog(system_data=system, parent=self)
-                
                 if dialog.exec_() == QDialog.Accepted:
-                    # Update system
                     new_system_data = dialog.get_system_data()
-                    systems[i] = new_system_data
-                    
+                    self.global_systems[i] = new_system_data
                     self.update_systems_display()
                     self.update_system_combo()
                     self.update_status(f"Updated system: {new_system_data['ion']} at z={new_system_data['z']}")
@@ -713,22 +673,8 @@ class ModelSetupTab(QWidget):
         
         if reply == QMessageBox.Yes:
             system_id = items[0].data(0, Qt.UserRole)
-            systems = self.config_systems.get(self.current_config, [])
-            
-            # Remove system
-            for i, system in enumerate(systems):
-                if system['id'] == system_id:
-                    del systems[i]
-                    break
-            
-            # Clear related parameters
-            keys_to_remove = []
-            for key in self.config_parameters:
-                if key[0] == self.current_config and key[1] == system_id:
-                    keys_to_remove.append(key)
-            
-            for key in keys_to_remove:
-                del self.config_parameters[key]
+            self.global_systems = [s for s in self.global_systems if s['id'] != system_id]
+            self.config_parameters.pop(system_id, None)
             
             self.update_systems_display()
             self.update_system_combo()
@@ -742,22 +688,14 @@ class ModelSetupTab(QWidget):
                               "Please select a configuration and system")
             return
             
-        # Get system info
-        systems = self.config_systems.get(self.current_config, [])
-        current_system = None
-        
-        for system in systems:
-            if system['id'] == self.current_system_id:
-                current_system = system
-                break
-                
+        current_system = next(
+            (s for s in self.global_systems if s['id'] == self.current_system_id), None
+        )
         if not current_system:
             QMessageBox.warning(self, "System Not Found", "Selected system not found")
             return
-            
-        # Create default parameters DataFrame
+
         import pandas as pd
-        
         n_components = current_system['components']
         data = []
         
@@ -771,9 +709,7 @@ class ModelSetupTab(QWidget):
         
         params_df = pd.DataFrame(data)
         
-        # Store parameters
-        key = (self.current_config, self.current_system_id)
-        self.config_parameters[key] = params_df
+        self.config_parameters[self.current_system_id] = params_df
         
         # Update display
         self.load_parameter_table()
@@ -781,27 +717,23 @@ class ModelSetupTab(QWidget):
     
     def clear_params(self):
         """Clear parameters for current system"""
-        if not self.current_config or not self.current_system_id:
+        if not self.current_system_id:
             return
-            
-        key = (self.current_config, self.current_system_id)
-        if key in self.config_parameters:
-            del self.config_parameters[key]
+        self.config_parameters.pop(self.current_system_id, None)
             
         self.params_table.setRowCount(0)
         self.update_status("Parameters cleared")
     
     def add_component(self):
         """Add component to current system"""
-        if not self.current_config or not self.current_system_id:
+        if not self.current_system_id:
             return
-            
-        key = (self.current_config, self.current_system_id)
+
+        key = self.current_system_id
         if key not in self.config_parameters:
-            # Create new DataFrame
             import pandas as pd
             self.config_parameters[key] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
-            
+
         df = self.config_parameters[key]
         new_comp = len(df) + 1
         
@@ -813,7 +745,6 @@ class ModelSetupTab(QWidget):
             'b': [20.0],
             'v': [0.0]
         })
-        
         self.config_parameters[key] = pd.concat([df, new_row], ignore_index=True)
         
         # Update display
@@ -822,19 +753,18 @@ class ModelSetupTab(QWidget):
     
     def delete_component(self):
         """Delete last component from current system"""
-        if not self.current_config or not self.current_system_id:
+        if not self.current_system_id:
             return
-            
-        key = (self.current_config, self.current_system_id)
+
+        key = self.current_system_id
         if key not in self.config_parameters:
             return
-            
+
         df = self.config_parameters[key]
         if len(df) <= 1:
             QMessageBox.warning(self, "Cannot Delete", "Cannot delete the last component")
             return
-            
-        # Remove last row
+
         self.config_parameters[key] = df.iloc[:-1].reset_index(drop=True)
         
         # Update display
@@ -933,8 +863,9 @@ class ModelSetupTab(QWidget):
     def on_system_selection_changed(self):
         """Handle system selection change"""
         items = self.systems_tree.selectedItems()
-        self.edit_system_btn.setEnabled(len(items) > 0)
-        self.delete_system_btn.setEnabled(len(items) > 0)
+        has_selection = len(items) > 0
+        self.edit_system_btn.setEnabled(has_selection)
+        self.delete_system_btn.setEnabled(has_selection)
     
     def on_system_changed(self, system_text):
         """Handle system combo change"""
@@ -949,14 +880,13 @@ class ModelSetupTab(QWidget):
     
     def on_parameter_table_edited(self, item):
         """Handle parameter table cell edits"""
-        if not self.current_config or not self.current_system_id:
+        if not self.current_system_id:
             return
-            
-        # Update the stored DataFrame
+
         row = item.row()
         col = item.column()
-        
-        key = (self.current_config, self.current_system_id)
+
+        key = self.current_system_id
         if key not in self.config_parameters:
             return
             
@@ -984,45 +914,32 @@ class ModelSetupTab(QWidget):
 
     # Display update methods
     def update_systems_display(self):
-        """Update systems tree display"""
+        """Update systems tree display — shows all global systems"""
         self.systems_tree.clear()
-        
-        if not self.current_config:
-            return
-            
-        systems = self.config_systems.get(self.current_config, [])
-        for i, system in enumerate(systems):
+        for system in self.global_systems:
             item = QTreeWidgetItem()
             item.setText(0, f"{system['ion']} z={system['z']:.4f}")
-            
-            # Show parameter status
-            key = (self.current_config, system['id'])
-            n_params = len(self.config_parameters.get(key, []))
+            n_params = len(self.config_parameters.get(system['id'], []))
             n_transitions = len(system['transitions'])
             item.setText(1, f"{n_transitions} lines, {system['components']} comp, {n_params} params")
             item.setData(0, Qt.UserRole, system['id'])
             self.systems_tree.addTopLevelItem(item)
     
     def update_system_combo(self):
-        """Update system selector combo"""
+        """Update system selector combo — always shows all global systems"""
         self.system_combo.clear()
-        
-        if not self.current_config:
-            return
-            
-        systems = self.config_systems.get(self.current_config, [])
-        for system in systems:
+        for system in self.global_systems:
             text = f"{system['id']} - {system['ion']} z={system['z']:.4f}"
             self.system_combo.addItem(text)
     
     def load_parameter_table(self):
         """Load parameters into table"""
         self.params_table.setRowCount(0)
-        
-        if not self.current_config or not self.current_system_id:
+
+        if not self.current_system_id:
             return
-            
-        key = (self.current_config, self.current_system_id)
+
+        key = self.current_system_id
         if key not in self.config_parameters:
             return
             
@@ -1042,7 +959,7 @@ class ModelSetupTab(QWidget):
         else:
             # Default status
             n_configs = len([c for c in self.configurations.values() if c['wave'] is not None])
-            total_systems = sum(len(systems) for systems in self.config_systems.values())
+            total_systems = len(self.global_systems)
             self.status_text.clear()
             self.status_text.append(f"Configurations: {n_configs}, Total systems: {total_systems}")
             
@@ -1053,7 +970,7 @@ class ModelSetupTab(QWidget):
     def clear_state(self):
         """Clear all state (for project loading)"""
         self.configurations = {}
-        self.config_systems = {}
+        self.global_systems = []
         self.config_parameters = {}
         self.current_config = None
         self.current_system_id = None

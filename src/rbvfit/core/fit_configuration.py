@@ -655,4 +655,4 @@ if __name__ == "__main__":
     print("  config.add_system(z=0.5, ion='MgII', transitions=[2796.35, 2803.53], components=1)")
     print("  model1 = VoigtModel(config, FWHM='2.2')  # Instrument 1")
     print("  model2 = VoigtModel(config, FWHM='4.0')  # Instrument 2")
-    print("Happy fitting! 🎉")
+    print("Happy fitting!")

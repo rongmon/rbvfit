@@ -570,4 +570,4 @@ if __name__ == "__main__":
     print("  config.add_system(z=0.5, ion='MgII', transitions=[2796.35, 2803.53], components=1)")
     print("  param_manager = ParameterManager(config)")
     print("  names = param_manager.get_parameter_names()")
-    print("Happy fitting! 🎉")
+    print("Happy fitting!")

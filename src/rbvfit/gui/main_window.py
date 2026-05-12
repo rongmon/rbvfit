@@ -15,7 +15,6 @@ import rbvfit as v
 import sys
 from pathlib import Path
 import pandas as pd
-import json
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QVBoxLayout, 
                             QWidget, QMenuBar, QStatusBar, QFileDialog,
                             QMessageBox, QAction)
@@ -94,15 +93,42 @@ class UpdatedRbvfitGUI(QMainWindow):
             # Set configurations
             self.configurations = restored_configs
             self.config_data_tab.configurations = restored_configs
+
+            # Populate loaded_spectra so the file list widget shows the loaded files
+            for cfg_name, cfg in restored_configs.items():
+                fname = cfg.get('filename') or cfg.get('filepath', '')
+                if fname and cfg.get('wave') is not None:
+                    self.config_data_tab.loaded_spectra[fname] = {
+                        'wave': cfg['wave'],
+                        'flux': cfg['flux'],
+                        'error': cfg['error'],
+                        'basename': Path(fname).name,
+                        'wave_original': cfg.get('wave_original', cfg['wave']),
+                        'flux_original': cfg.get('flux_original', cfg['flux']),
+                        'error_original': cfg.get('error_original', cfg['error']),
+                    }
+
             self.config_data_tab.update_config_display()
+            self.config_data_tab.update_file_display()
             if hasattr(self.config_data_tab, 'update_status'):
                 self.config_data_tab.update_status()
             
             # Restore model setup
-            config_systems = project_data.get('config_systems', {})
+            # Support old format: config_systems was a per-config dict; migrate to flat list
+            raw_systems = project_data.get('global_systems', None)
+            if raw_systems is None:
+                old_config_systems = project_data.get('config_systems', {})
+                seen_ids = set()
+                raw_systems = []
+                for systems in old_config_systems.values():
+                    for s in systems:
+                        if s['id'] not in seen_ids:
+                            seen_ids.add(s['id'])
+                            raw_systems.append(s)
+
             config_parameters = io.deserialize_parameters(project_data.get('config_parameters', {}))
-            
-            self.model_setup_tab.config_systems = config_systems
+
+            self.model_setup_tab.global_systems = raw_systems
             self.model_setup_tab.config_parameters = config_parameters
             self.model_setup_tab.current_config = project_data.get('current_config')
             self.model_setup_tab.current_system_id = project_data.get('current_system_id')
@@ -235,7 +261,12 @@ class UpdatedRbvfitGUI(QMainWindow):
         load_project_action.setShortcut('Ctrl+O')
         load_project_action.triggered.connect(self.load_project)
         file_menu.addAction(load_project_action)
-        
+
+        load_results_action = QAction('Load Results [HDF5]...', self)
+        load_results_action.setShortcut('Ctrl+R')
+        load_results_action.triggered.connect(self.load_results_file)
+        file_menu.addAction(load_results_action)
+
         file_menu.addSeparator()
         
         # Export options
@@ -366,7 +397,7 @@ class UpdatedRbvfitGUI(QMainWindow):
                     'configurations': io.serialize_configurations(self.configurations),
                     
                     # Tab 2: Model Setup
-                    'config_systems': getattr(self.model_setup_tab, 'config_systems', {}),
+                    'global_systems': getattr(self.model_setup_tab, 'global_systems', []),
                     'config_parameters': io.serialize_parameters(
                         getattr(self.model_setup_tab, 'config_parameters', {})
                     ),
@@ -389,7 +420,7 @@ class UpdatedRbvfitGUI(QMainWindow):
                 # Success message with summary
                 summary = io.create_project_summary(project_data)
                 n_configs = len(project_data['configurations'])
-                n_systems = sum(len(systems) for systems in project_data['config_systems'].values())
+                n_systems = len(project_data.get('global_systems', []))
                 
                 self.status_bar.showMessage(f"Project saved: {Path(filename).name}")
                 QMessageBox.information(self, "Project Saved", 
@@ -410,6 +441,10 @@ class UpdatedRbvfitGUI(QMainWindow):
         if filename:
             self.load_project_file(filename)
     
+    def load_results_file(self):
+        """Load fit results from HDF5 file - accessible without loading a project first."""
+        self.results_tab.load_results()
+
     def export_configuration(self):
         """Export configuration metadata only - clean version"""
         if not self.configurations:

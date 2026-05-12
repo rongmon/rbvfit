@@ -1,6 +1,57 @@
 =========
 Changelog
 =========
+Version 2.3.0
+==============
+
+GUI New Features
+----------------
+- **Stop MCMC button**: Added "Stop" button to Fitting tab; gracefully requests sampler
+  termination and falls back to ``terminate()`` after 5 seconds if needed
+- **Burn-in control**: Added burn-in fraction text box and "Apply" button to Results tab;
+  re-slices the MCMC chain and refreshes all statistics, parameter table, and plots
+- **Load Results [HDF5]**: New File menu entry (Ctrl+R) loads a previously saved
+  ``UnifiedResults`` HDF5 file directly, populating Tab 4 without requiring a project
+  or refit; Results tab also has a "Load Results" button for the same action
+- **Spectrum switcher in interactive dialog**: When multiple instrument configurations
+  are loaded, a dropdown in the interactive parameter dialog allows switching between
+  spectra while preserving placed velocity components
+- **Set Plot Range in interactive dialog**: "Set Plot Range" button added to the
+  interactive parameter dialog, reusing the existing ``PlotRangeDialog``; allows
+  zooming before placing the first component without requiring canvas focus
+
+Architecture
+------------
+- **Global ion systems**: Ion systems are now stored as a single flat list
+  (``global_systems``) shared across all instrument configurations, replacing the
+  previous per-configuration ``config_systems`` dict; systems are physics objects
+  independent of which instrument is active
+- **Backwards-compatible project migration**: Loading old ``.rbv`` files with
+  ``config_systems`` automatically migrates to ``global_systems``; old
+  ``config_name___system_id`` parameter keys are stripped to plain ``system_id``
+
+Bug Fixes
+---------
+- **File list empty after project load**: Restored spectrum files are now added to
+  ``loaded_spectra`` and the file list widget is refreshed on project load
+- **Project load restores file display**: ``update_file_display()`` is now called
+  after loading a project so loaded filenames appear in the Data Loading panel
+
+Code Cleanup
+------------
+- **Dead code removed**: Deleted ``setup_fwhm_controls()``, ``on_fwhm_unit_changed()``,
+  ``_restore_configurations()``, ``_update_file_selector()``, ``_update_config_selector()``,
+  ``update_file_selector()``, ``update_config_selector()`` from ``config_data_tab.py``;
+  deleted ``update_velocity_plot_with_instrument()`` from ``results_tab.py`` (also
+  contained a reference to non-existent ``self.vel_range_combo``)
+- **Duplicate import removed**: Second ``import json`` removed from ``main_window.py``
+- **Redundant local import removed**: Local ``from PyQt5.QtWidgets import QInputDialog``
+  inside ``on_key()`` removed; top-level import already covers it
+- **Emojis removed**: All emoji characters removed from terminal ``print()`` output
+  across ``vfit_mcmc.py``, ``results_plot.py``, ``voigt_model.py``,
+  ``fit_configuration.py``, and ``parameter_manager.py``; plot-embedded status
+  symbols (``✓``/``⚠``/``✗``) in ``results_plot.py`` retained
+
 Version 2.2.1
 ==============
 

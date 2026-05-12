@@ -383,26 +383,26 @@ class vfit:
         
         # Multi-instrument info
         if self.multi_instrument and verbose:
-            print(f"🚀 Multi-instrument quick fit: {len(self.instrument_data)} instruments")
+            print(f"Multi-instrument quick fit: {len(self.instrument_data)} instruments")
         elif verbose:
-            print("🚀 Starting quick fit...")
-        
+            print("Starting quick fit...")
+
         try:
             theta_best, theta_best_error = quick_fit_vfit(self)
-            
+
             if verbose:
-                print("✅ Quick fit completed")
+                print("Quick fit completed")
                 if np.any(np.isnan(theta_best_error)):
-                    print("⚠️  Some uncertainties are NaN")
-            
+                    print("WARNING: Some uncertainties are NaN")
+
             self.theta_best = theta_best
             self.theta_best_error = theta_best_error
-            
+
             return theta_best, theta_best_error
-            
+
         except Exception as e:
             if verbose:
-                print(f"❌ Quick fit failed: {str(e)}")
+                print(f"Quick fit failed: {str(e)}")
             raise RuntimeError("Quick fitting failed") from e
     
     def _setup_emcee_sampler(self, use_pool=True):

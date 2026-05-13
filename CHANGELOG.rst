@@ -1,6 +1,27 @@
 =========
 Changelog
 =========
+Version 2.4.0
+==============
+
+## [2.4.0] - 2026-05-13
+
+### Added
+- **Tepper-García (2006) fast Voigt approximation** (`voigt_method='fast'`).
+  - New module `rbvfit/core/voigt_approx.py` implementing `H_tepper_garcia(x, a)`,
+    an approximate replacement for `scipy.special.wofz` that is ~1.2x faster
+    for typical 2-component, 2-instrument fits (serial mode).
+  - `VoigtModel` accepts a new `voigt_method` keyword argument (`'wofz'` or `'fast'`).
+    Default remains `'wofz'` — no behaviour change for existing code.
+  - `voigt_method` is propagated through `CompiledModelData` so it reaches
+    multiprocessing workers correctly.
+  - GUI checkbox "Fast Voigt approximation" added to the Model Setup tab,
+    with a tooltip describing accuracy limits.
+  - Validated on real OI 1302 data (z=5.94, FIRE+HIRES): ΔlogN ≤ 0.002 dex,
+    max |Δflux| ≤ 1.3×10⁻³ — indistinguishable at typical S/N.
+  - Safe for weak/intermediate absorbers (damping parameter a < 0.01).
+    Not recommended for strong damped systems (DLA/sub-DLA, a > 0.1).
+
 Version 2.3.0
 ==============
 

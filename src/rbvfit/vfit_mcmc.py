@@ -506,7 +506,7 @@ class vfit:
         """
         if optimize:
             if verbose:
-                print("🔧 Optimizing starting guess...")
+                print("  Optimizing starting guess...")
             self.theta = self.optimize_guess(self.theta)
             if verbose:
                 print("✓ Starting guess optimized")
@@ -523,7 +523,7 @@ class vfit:
             raise ValueError(f"Unknown sampler: {self.sampler_name}")
         
         if verbose:
-            print(f"🚀 Starting {self.sampler_name} MCMC...")
+            print(f"  Starting {self.sampler_name} MCMC...")
             print(f"   Walkers: {self.nwalkers}")
             print(f"   Steps: {self.no_of_steps}")
             print(f"   Instruments: {len(self.instrument_data)}")
@@ -557,7 +557,7 @@ class vfit:
         self.compute_best_theta()
         
         if verbose:
-            print("✅ MCMC completed")
+            print("  MCMC completed")
             self._print_diagnostics(verbose=verbose)
     
     def compute_best_theta(self, burntime=100):
@@ -879,24 +879,24 @@ def print_performance_tips():
     """Print performance optimization tips."""
     print("\nPerformance Tips:")
     print("=" * 20)
-    print("🚀 Speed Optimization:")
+    print("  Speed Optimization:")
     print("• Use compiled models (VoigtModel.compile())")
     print("• Enable multiprocessing with use_pool=True")
     print("• On Mac/Linux: automatic 'fork' context provides best MP performance")
     print("• Zeus often converges faster than emcee for difficult posteriors")
     
-    print("\n⚙️ Memory Optimization:")
+    print("\n  Memory Optimization:")
     print("• Fork context shares memory efficiently")
     print("• Use fewer walkers with Zeus (often 2/3 of emcee requirements)")
     print("• Consider thinning for very long chains")
     
-    print("\n🎯 Convergence Tips:")
+    print("\n  Convergence Tips:")
     print("• Check acceptance fractions (0.2-0.7 ideal)")
     print("• Monitor R-hat < 1.1 for Zeus")
     print("• Ensure chain length > 50x autocorrelation time")
     print("• Use optimize=True for better starting positions")
     
-    print("\n🔧 Multi-Instrument Tips:")
+    print("\n  Multi-Instrument Tips:")
     print("• Use consistent parameter bounds across instruments")
     print("• Monitor per-instrument likelihood contributions")
     print("• Consider instrument-specific noise models")
@@ -909,10 +909,10 @@ def print_usage_examples():
     print("RBVFIT 2.0 MCMC FITTING - V2 UNIFIED INTERFACE")
     print("="*60)
     
-    print("\n🆕 Unified Interface Examples:")
+    print("\n  Unified Interface Examples:")
     print("="*35)
     
-    print("\n📖 Single Instrument:")
+    print("\n  Single Instrument:")
     print("```python")
     print("import rbvfit.vfit_mcmc as mc")
     print("")
@@ -931,7 +931,7 @@ def print_usage_examples():
     print("fitter.runmcmc()")
     print("```")
     
-    print("\n📖 Multi-Instrument:")
+    print("\n  Multi-Instrument:")
     print("```python")
     print("# Define multiple instruments")
     print("instrument_data = {")
@@ -960,7 +960,7 @@ def print_usage_examples():
     print("fitter.runmcmc()")
     print("```")
     
-    print("\n📖 Ion-Aware Bounds:")
+    print("\n  Ion-Aware Bounds:")
     print("```python")
     print("# Use ion-specific parameter bounds")
     print("nguess = [14.2, 13.8]  # MgII, FeII")
@@ -973,13 +973,13 @@ def print_usage_examples():
     print(")")
     print("```")
     
-    print("\n📖 Quick Fitting:")
+    print("\n  Quick Fitting:")
     print("```python")
     print("# Fast deterministic fitting")
     print("theta_best, theta_err = fitter.fit_quick()")
     print("```")
     
-    print("\n📖 Advanced Sampler Options:")
+    print("\n Advanced Sampler Options:")
     print("```python")
     print("# Use Zeus sampler for high-dimensional problems")
     print("fitter = mc.vfit(")
@@ -1005,25 +1005,25 @@ def print_multi_instrument_help():
     print("\nMulti-Instrument Joint Fitting:")
     print("=" * 35)
     
-    print("\n🔗 Benefits:")
+    print("\n Benefits:")
     print("• Shared physical parameters across all datasets")
     print("• Improved parameter constraints")
     print("• Consistent ion physics between instruments")
     print("• Automatic handling of different instrumental resolutions")
     
-    print("\n⚙️ How it Works:")
+    print("\n How it Works:")
     print("• Each instrument evaluates the model with its own FWHM")
     print("• Likelihood contributions are summed across all instruments")
     print("• Single theta parameter vector describes all physics")
     print("• Different wavelength grids handled automatically")
     
-    print("\n📝 Best Practices:")
+    print("\n  Best Practices:")
     print("• Ensure consistent redshift/velocity zero points")
     print("• Use realistic error estimates for each instrument")
     print("• Consider instrument-specific systematic uncertainties")
     print("• Monitor convergence diagnostics carefully")
     
-    print("\n🔧 Troubleshooting:")
+    print("\n  Troubleshooting:")
     print("• Check that model evaluates without errors")
     print("• Verify wavelength/flux/error array lengths match")
     print("• Ensure reasonable parameter bounds")

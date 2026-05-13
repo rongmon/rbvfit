@@ -14,7 +14,8 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QGroupBox, QPushButton, QLabel, QComboBox, QTreeWidget,
                             QTreeWidgetItem, QHeaderView, QTableWidget, QTableWidgetItem,
                             QTextEdit, QFormLayout, QSpinBox, QDoubleSpinBox,
-                            QMessageBox, QDialog, QDialogButtonBox, QLineEdit)
+                            QMessageBox, QDialog, QDialogButtonBox, QLineEdit,
+                            QCheckBox)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont
 
@@ -245,7 +246,10 @@ class ModelSetupTab(QWidget):
         self.master_config = None
         self.master_theta = None
         self.param_manager = None
-        
+
+        # Voigt method: 'wofz' (default, exact) or 'fast' (Tepper-García)
+        self.voigt_method = 'wofz'
+
         self.setup_ui()
         self.setup_connections()
         
@@ -397,7 +401,21 @@ class ModelSetupTab(QWidget):
         controls_layout.addWidget(self.show_master_theta_btn)
         
         controls_layout.addStretch()
-        
+
+        # Voigt method selector
+        self.fast_voigt_check = QCheckBox("Fast Voigt approximation")
+        self.fast_voigt_check.setChecked(False)
+        self.fast_voigt_check.setToolTip(
+            "Use the Tepper-García (2006) approximation instead of the exact\n"
+            "scipy wofz Faddeeva function.\n\n"
+            "Try using without multiprocessing for faster results.\n\n"
+            "~3.7x faster Voigt computation; safe for weak/intermediate\n"
+            "absorbers (damping parameter a < 0.01).\n\n"
+            "NOT validated for strong DLA damping wings (a > 0.1).\n"
+            "Leave unchecked for publication-quality fits."
+        )
+        controls_layout.addWidget(self.fast_voigt_check)
+
         # Compile button
         self.compile_btn = QPushButton("Compile Models")
         controls_layout.addWidget(self.compile_btn)
@@ -422,12 +440,17 @@ class ModelSetupTab(QWidget):
         self.clear_params_btn.clicked.connect(self.clear_params)
         self.add_component_btn.clicked.connect(self.add_component)
         self.delete_component_btn.clicked.connect(self.delete_component)
+        self.fast_voigt_check.toggled.connect(self._on_voigt_method_changed)
         self.params_table.itemChanged.connect(self.on_parameter_table_edited)
 
         # Compilation
         self.compile_btn.clicked.connect(self.compile_models)
         self.show_master_theta_btn.clicked.connect(self.show_master_theta_dialog)
-        
+
+    def _on_voigt_method_changed(self, checked):
+        """Update stored voigt_method when the checkbox is toggled."""
+        self.voigt_method = 'fast' if checked else 'wofz'
+
     def set_configurations(self, configurations):
         """Set configurations from Tab 1"""
         self.configurations = configurations
@@ -598,7 +621,8 @@ class ModelSetupTab(QWidget):
                 fwhm_pix = mean_fwhm_pixels(config_data['fwhm'], config_data['wave'])
             else:
                 fwhm_pix = config_data['fwhm']
-            model = VoigtModel(self.master_config, FWHM=str(fwhm_pix))
+            model = VoigtModel(self.master_config, FWHM=str(fwhm_pix),
+                               voigt_method=self.voigt_method)
             
             # Compile model
             #compiled_model = model.compile(verbose=False)

@@ -18,6 +18,7 @@ import copy
 # Import configuration and parameter management
 from rbvfit.core.fit_configuration import FitConfiguration
 from rbvfit.core.parameter_manager import ParameterManager
+from rbvfit.core.voigt_approx import H_tepper_garcia
 from rbvfit import rb_setline as rb
 from scipy import ndimage
 
@@ -96,12 +97,13 @@ def voigt_tau(lambda0: float, gamma: float, f: float, N: float, b: float,
     return tau
 
 
-def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray, 
-                         atomic_f: np.ndarray, N_linear: np.ndarray, 
-                         b_values: np.ndarray, wave_rest: np.ndarray) -> np.ndarray:
+def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
+                         atomic_f: np.ndarray, N_linear: np.ndarray,
+                         b_values: np.ndarray, wave_rest: np.ndarray,
+                         voigt_method: str = 'wofz') -> np.ndarray:
     """
     Vectorized Voigt profile calculation for all lines simultaneously.
-    
+
     Parameters
     ----------
     atomic_lambda0 : np.ndarray, shape (n_lines,)
@@ -116,47 +118,44 @@ def _vectorized_voigt_tau(atomic_lambda0: np.ndarray, atomic_gamma: np.ndarray,
         Doppler parameters for all lines
     wave_rest : np.ndarray, shape (n_lines, n_wavelengths)
         Rest-frame wavelength arrays for each line
-        
+    voigt_method : str, optional
+        'wofz' (default, exact) or 'fast' (Tepper-García 2006 approximation)
+
     Returns
     -------
     np.ndarray, shape (n_lines, n_wavelengths)
         Optical depth arrays for all lines
     """
     # Physical constants
-    c = 2.99792458e10  # speed of light in cm/s
-    c_freq = 2.99792458e18      # c * 1e8
-    atomic_constant = 4.48898479507e3  # 448898479.507 / 1e5
-    
-    
-    # Vectorized calculations - broadcasting across all lines
+    c_freq = 2.99792458e18
+    atomic_constant = 4.48898479507e3
+
+    # Vectorized calculations — broadcasting across all lines
     # Shape: (n_lines, 1) for broadcasting with wavelengths
     lambda0_bc = atomic_lambda0[:, np.newaxis]
-    gamma_bc = atomic_gamma[:, np.newaxis]
-    f_bc = atomic_f[:, np.newaxis]
-    N_bc = N_linear[:, np.newaxis]
-    b_bc = b_values[:, np.newaxis]
-    
-    # Vectorized frequency calculations
-    b_f = b_bc / lambda0_bc * 1e13
-    #freq0 = c / lambda0_bc * 1e8
-    #freq = c / wave_rest * 1e8
+    gamma_bc   = atomic_gamma[:, np.newaxis]
+    f_bc       = atomic_f[:, np.newaxis]
+    N_bc       = N_linear[:, np.newaxis]
+    b_bc       = b_values[:, np.newaxis]
+
+    # Frequency calculations
+    b_f   = b_bc / lambda0_bc * 1e13
     freq0 = c_freq / lambda0_bc
-    freq = c_freq / wave_rest
-    
-    # Vectorized constants
-    constant = atomic_constant / (freq0 * b_bc)#constant = 448898479.507 / (freq0 * b_bc * 1e5)
-    
-    # Vectorized complex argument calculation
+    freq  = c_freq / wave_rest
+
+    constant = atomic_constant / (freq0 * b_bc)
+
+    # Damping parameter and normalised frequency offset
     a = gamma_bc / (4 * np.pi * b_f)
     x = (freq - freq0) / b_f
-    z = x + 1j * a
-    
-    # Vectorized wofz calculation - handles complex arrays natively
-    H = wofz(z).real
-    
-    # Vectorized final calculation
+
+    # Voigt-Hjerting function H(a, x) = Re[wofz(x + ia)]
+    if voigt_method == 'fast':
+        H = H_tepper_garcia(x, a)
+    else:
+        H = wofz(x + 1j * a).real
+
     tau_all = N_bc * f_bc * constant * H
-    
     return tau_all
 
 
@@ -207,7 +206,8 @@ def _evaluate_compiled_model(data_container, theta: np.ndarray, wavelength: np.n
     # Vectorized Voigt calculation for all lines simultaneously
     tau_all_lines = _vectorized_voigt_tau(
         atomic_lambda0, atomic_gamma, atomic_f,
-        N_linear, b_values, wave_rest
+        N_linear, b_values, wave_rest,
+        voigt_method=data_container.voigt_method,
     )
     
     # Sum optical depths across all lines
@@ -277,6 +277,7 @@ class CompiledModelData:
     kernel: Optional[Any]
     n_lines: int
     total_components: int
+    voigt_method: str = 'wofz'
 
 
 class CompiledVoigtModel:
@@ -331,11 +332,11 @@ class VoigtModel:
     """
     
     def __init__(self, config: FitConfiguration, FWHM: Union[str, float] = '6.5',
-                 grating: str = 'G130M', life_position: str = '1', 
-                 cen_wave: str = '1300A'):
+                 grating: str = 'G130M', life_position: str = '1',
+                 cen_wave: str = '1300A', voigt_method: str = 'wofz'):
         """
         Initialize the Voigt model.
-        
+
         Parameters
         ----------
         config : FitConfiguration
@@ -348,17 +349,30 @@ class VoigtModel:
             HST lifetime position for COS LSF
         cen_wave : str, optional
             Central wavelength for COS LSF
+        voigt_method : str, optional
+            Voigt profile computation method.  One of:
+            - 'wofz' (default): exact, uses scipy.special.wofz
+            - 'fast': Tepper-García (2006) approximation, ~3.7x faster.
+              Safe for weak/intermediate absorbers (damping parameter a < 0.01).
+              Not validated for strong DLA damping wings.
         """
+        _valid_voigt_methods = ('wofz', 'fast')
+        if voigt_method not in _valid_voigt_methods:
+            raise ValueError(
+                f"voigt_method must be one of {_valid_voigt_methods}, got '{voigt_method}'"
+            )
+        self.voigt_method = voigt_method
+
         self.config = config
         self.config.validate()
         self.param_manager = ParameterManager(config)
-        
+
         # Store LSF parameters
         self.FWHM = config.instrumental_params.get('FWHM', FWHM)
         self.grating = config.instrumental_params.get('grating', grating)
         self.life_position = config.instrumental_params.get('life_position', life_position)
         self.cen_wave = config.instrumental_params.get('cen_wave', cen_wave)
-        
+
         # Set up convolution kernel
         self._setup_kernel()
         
@@ -479,7 +493,8 @@ class VoigtModel:
             v_indices=self.v_indices.copy(),
             kernel=copy.deepcopy(self.kernel),
             n_lines=self.n_lines,
-            total_components=self.total_components
+            total_components=self.total_components,
+            voigt_method=self.voigt_method,
         )
         
         # Return compiled model

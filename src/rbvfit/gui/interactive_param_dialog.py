@@ -511,21 +511,27 @@ class InteractiveParameterDialog(QDialog):
             
         elif event.button == 3:  # Right click - remove nearest component
             if self.velocity_selector.vel_guess:  # Only if components exist
+                # Save current axes limits before redraw
+                current_xlim = self.ax.get_xlim()
+                current_ylim = self.ax.get_ylim()
+
                 # Create a new VelocitySelector with same data but empty markers
                 old_selector = self.velocity_selector
                 wrest = self.get_current_transition()
-                
+
                 # Create new selector with same data
                 self.velocity_selector = VelocitySelector(
-                    old_selector.wave, 
-                    old_selector.flux, 
-                    old_selector.error, 
-                    old_selector.zabs, 
+                    old_selector.wave,
+                    old_selector.flux,
+                    old_selector.error,
+                    old_selector.zabs,
                     wrest
                 )
-                
-                # Setup the plot again
+
+                # Setup the plot again, then restore zoom
                 self.velocity_selector.setup_plot(self.ax)
+                self.ax.set_xlim(current_xlim)
+                self.ax.set_ylim(current_ylim)
                 
                 # Remove the nearest component from original data
                 distances = [abs(v - event.xdata) for v in old_selector.vel_guess]

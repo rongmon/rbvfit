@@ -922,10 +922,15 @@ class ModelSetupTab(QWidget):
         col_names = ['Component', 'N', 'b', 'v']
         if col < len(col_names):
             try:
-                if col == 0:  # Component (string)
-                    df.iloc[row, col] = str(item.text())
-                else:  # N, b, v (float)
+                import pandas as pd
+                col_name = col_names[col]
+                col_dtype = df[col_name].dtype
+                if pd.api.types.is_integer_dtype(col_dtype):
+                    df.iloc[row, col] = int(float(item.text()))
+                elif pd.api.types.is_float_dtype(col_dtype):
                     df.iloc[row, col] = float(item.text())
+                else:
+                    df.iloc[row, col] = str(item.text())
                     
                 # Update status
                 if self.master_theta is not None:

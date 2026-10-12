@@ -66,7 +66,7 @@ pip install -e .
 
 ### Alternative Installation Methods
 
-**With the optional extras** (ipywidgets, linetools, zeus-mcmc):
+**With the optional extras** (ipywidgets, linetools):
 ```bash
 pip install -e ".[optional]"
 ```
@@ -75,9 +75,9 @@ pip install -e ".[optional]"
 rbvfit folder; the dependency ranges are the same.
 ### Dependencies
 
-- **Core**: numpy, scipy, matplotlib, emcee, corner, astropy (for convolution), h5py (results persistence)
+- **Core**: numpy, scipy, matplotlib, emcee, zeus-mcmc (MCMC samplers), corner, astropy (for convolution), h5py (results persistence)
 - **GUI** (`rbvfit_gui`): PyQt5, pandas
-- **Optional**: ipywidgets (Jupyter tools), linetools (for COS-LSF), zeus-mcmc (alternative MCMC sampler)
+- **Optional**: ipywidgets (Jupyter tools), linetools (for COS-LSF)
 
 See `setup.cfg` for the version ranges.
 
@@ -343,7 +343,7 @@ Comprehensive documentation available in [`docs/`](docs/):
 
 **Note**: 
 - **Version 1.0**: Written By: Rongmon Bordoloi. July 2019. Tested on: Python 3.7+
-- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.9+ (from 2.4.x: Python 3.12, NumPy 2)
+- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.9+ (from 3.0: Python 3.12, NumPy 2)
 
 ## ![License](https://img.shields.io/badge/license-MIT-green)
 

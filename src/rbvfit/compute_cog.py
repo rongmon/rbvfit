@@ -56,7 +56,7 @@ def set_one_absorber(N, b, lam_rest, model_compiled):
         flx = model_compiled.model_flux(theta, wave)
         
         # Calculate equivalent width using trapezoidal integration
-        W = np.trapz(1. - flx, x=wave)
+        W = np.trapezoid(1. - flx, x=wave)
         return W
         
     except Exception as e:
@@ -126,9 +126,9 @@ class compute_cog(object):
         print(f"Transition found: {self.st}")
         
         # Extract scalar values from potentially array-like entries
-        wave_val = float(self.st['wave']) if hasattr(self.st['wave'], '__len__') else self.st['wave']
-        fval = float(self.st['fval']) if hasattr(self.st['fval'], '__len__') else self.st['fval']
-        gamma_val = float(self.st['gamma']) if hasattr(self.st['gamma'], '__len__') else self.st['gamma']
+        wave_val = float(np.ravel(self.st['wave'])[0])
+        fval = float(np.ravel(self.st['fval'])[0])
+        gamma_val = float(np.ravel(self.st['gamma'])[0])
         
         # Update st with scalar values for easier handling
         self.st['wave'] = wave_val

@@ -42,10 +42,12 @@ If you use `rbvfit` in your research, please **cite the following Concept DOI**.
 ---
 ## Installation
 
+Requires **Python 3.12** and NumPy 2 (the same as rbcodes 3.x, so both can share one environment).
+
 ### Recommended Installation (conda)
 ```bash
-# Create new conda environment
-conda create -n rbvfit python=3.9
+# Create a new conda environment (or activate your rbcodes environment instead)
+conda create -n rbvfit python=3.12
 conda activate rbvfit
 # Clone the repository
 git clone https://github.com/rongmon/rbvfit.git
@@ -57,24 +59,27 @@ pip install -e .
 
 > ⚠️ If you choose to install individual packages manually, make sure to **quote version specifiers** to avoid issues in Zsh and similar shells:
 > ```bash
-> conda install "numpy>=1.18.0"
+> pip install "numpy>=2.0,<3"
 > ```
 ---
 
 
 ### Alternative Installation Methods
 
-**Legacy method**:
+**With the optional extras** (ipywidgets, linetools, zeus-mcmc):
 ```bash
-git clone https://github.com/rongmon/rbvfit.git
-cd rbvfit
-python setup.py develop
+pip install -e ".[optional]"
 ```
+
+**In the same environment as rbcodes**: install rbcodes first, then `pip install -e .` in the
+rbvfit folder; the dependency ranges are the same.
 ### Dependencies
 
-- **Core**: numpy, scipy, matplotlib, emcee, corner, astropy (for convolution)
-- **Interactive**: ipywidgets (Jupyter), tkinter/Qt (command-line)
-- **Optional**: linetools (for COS-LSF), zeus (alternative MCMC sampler), h5py (results persistence)
+- **Core**: numpy, scipy, matplotlib, emcee, corner, astropy (for convolution), h5py (results persistence)
+- **GUI** (`rbvfit_gui`): PyQt5, pandas
+- **Optional**: ipywidgets (Jupyter tools), linetools (for COS-LSF), zeus-mcmc (alternative MCMC sampler)
+
+See `setup.cfg` for the version ranges.
 
 
 ## 🚀 Quick Start
@@ -338,7 +343,7 @@ Comprehensive documentation available in [`docs/`](docs/):
 
 **Note**: 
 - **Version 1.0**: Written By: Rongmon Bordoloi. July 2019. Tested on: Python 3.7+
-- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.9+
+- **Version 2.0**: Enhanced by: Rongmon Bordoloi. 2025. Tested on: Python 3.9+ (from 2.4.x: Python 3.12, NumPy 2)
 
 ## ![License](https://img.shields.io/badge/license-MIT-green)
 

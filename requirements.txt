@@ -1,13 +1,14 @@
-# Core dependencies for rbvfit
-numpy>=1.22.3,<1.24
-scipy>=1.5.0
-matplotlib>=3.5.0
-emcee>=3.0.0
-corner>=2.1.0
-astropy>=5.3.3
-# Optional dependencies (install as needed)
-# ipywidgets>=7.6.0        # For Jupyter interactive tools
-# linetools>=0.3.0         # For HST/COS LSF support
-zeus-mcmc>=2.3.0         # Alternative high-performance MCMC sampler
-h5py>=2.10.0            # For HDF5 results persistence
-PyQt5>=5.12.0
+# Core dependencies for rbvfit (same bounds as setup.cfg; Python 3.12)
+numpy>=2.0,<3
+scipy>=1.13,<2
+matplotlib>=3.9,<4
+astropy>=6.1,<9
+emcee>=3.1,<4
+corner>=2.2,<3
+h5py>=3.11,<4            # HDF5 results persistence
+pandas>=2.2.2,<4         # GUI
+PyQt5>=5.15.10,<6        # GUI (rbvfit_gui)
+# Optional dependencies (pip install -e ".[optional]")
+# ipywidgets>=8.0,<9     # Jupyter interactive tools
+# linetools>=0.3.2,<0.4  # HST/COS LSF support
+# zeus-mcmc>=2.5,<3      # alternative MCMC sampler

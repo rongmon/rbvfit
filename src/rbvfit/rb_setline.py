@@ -4,7 +4,7 @@ from astropy.io import ascii
 from importlib.resources import files
 
 
-'''
+r'''
  Function to read in atomic line information for a given rest frame  wavelength.
                            Or 
  For the line matching the closest wavelength. 

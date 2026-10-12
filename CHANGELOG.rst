@@ -1,6 +1,21 @@
 =========
 Changelog
 =========
+Unreleased
+==========
+
+### Changed
+- **Python 3.12 and NumPy 2**, matching rbcodes 3.x so both install in one environment:
+  `python_requires = >=3.12,<3.13`; dependencies bounded below at the oldest NumPy-2
+  releases and above at the next major version (numpy, scipy, matplotlib, astropy, emcee,
+  corner). `h5py`, `pandas` and `PyQt5` are now required (they were imported but not listed);
+  `ipywidgets`, `linetools`, `zeus-mcmc` remain optional (`pip install -e ".[optional]"`).
+
+### Fixed
+- `compute_cog.set_one_absorber`: `np.trapz` (removed in NumPy 2.x) -> `np.trapezoid`.
+- `compute_cog.compute_cog`: `float()` of one-element arrays (an error in NumPy >= 2.5).
+- `rb_setline`: invalid escape sequence in a docstring (SyntaxWarning on Python 3.12).
+
 Version 2.4.0
 ==============
 

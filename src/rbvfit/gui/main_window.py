@@ -130,6 +130,7 @@ class UpdatedRbvfitGUI(QMainWindow):
 
             self.model_setup_tab.global_systems = raw_systems
             self.model_setup_tab.config_parameters = config_parameters
+            self.model_setup_tab.global_ties = project_data.get('global_ties', [])
             self.model_setup_tab.current_config = project_data.get('current_config')
             self.model_setup_tab.current_system_id = project_data.get('current_system_id')
             
@@ -403,6 +404,7 @@ class UpdatedRbvfitGUI(QMainWindow):
                     ),
                     'current_config': getattr(self.model_setup_tab, 'current_config', None),
                     'current_system_id': getattr(self.model_setup_tab, 'current_system_id', None),
+                    'global_ties': getattr(self.model_setup_tab, 'global_ties', []),
                     
                     # Master theta if available
                     'master_theta': io.serialize_master_theta(

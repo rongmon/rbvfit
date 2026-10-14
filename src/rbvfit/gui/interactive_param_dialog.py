@@ -26,6 +26,25 @@ def calculate_velocity(wave, wrest, zabs):
 
 
 
+LOGN_NO_DATA = 13.5        # no pixels within +-10 km/s of the selected velocity
+LOGN_NO_ABSORPTION = 12.5  # apparent optical depth <= 0 there (flux at/above continuum)
+
+
+def _estimate_logN(vel, nv, v_sel):
+    """
+    Starting log N for a component at v_sel from the apparent optical depth
+    profile (vel, nv). Returns (logN, ok); ok is False when a fallback was used.
+    """
+    vel_mask = (vel >= v_sel - 10.0) & (vel <= v_sel + 10.0)
+    if not np.any(vel_mask):
+        return LOGN_NO_DATA, False
+    total = np.nansum(nv[vel_mask])
+    if not np.isfinite(total) or total <= 0:
+        # Flux at or above the continuum here: no absorption to measure
+        return LOGN_NO_ABSORPTION, False
+    return np.log10(total), True
+
+
 def _get_default_b_from_transition(transition_name: str) -> float:
     """
     Get default b-parameter based on ionization stage in the line label.
@@ -295,8 +314,9 @@ class InteractiveParameterDialog(QDialog):
     """Clean interactive parameter dialog"""
 
     parameters_ready = pyqtSignal(object)  # DataFrame
+    group_parameters_ready = pyqtSignal(dict)  # system id -> DataFrame (tied ions)
 
-    def __init__(self, system_data, all_spectra, parent=None):
+    def __init__(self, system_data, all_spectra, parent=None, tied_systems=None):
         """
         Parameters
         ----------
@@ -305,9 +325,15 @@ class InteractiveParameterDialog(QDialog):
         all_spectra : dict
             Mapping of config_name -> {'wave', 'flux', 'error'}.
             Can also be a bare single-spectrum dict for backwards compatibility.
+        tied_systems : list of dict, optional
+            All systems in a velocity tie group (including system_data).
+            Components are then selected once for the whole group, the
+            transition selector lists every ion's lines, and the result is
+            emitted per ion through group_parameters_ready.
         """
         super().__init__(parent)
         self.system_data = system_data
+        self.tied_systems = tied_systems
 
         # Normalise: accept both the new all_spectra dict and a bare spectrum dict
         if 'wave' in all_spectra:
@@ -322,7 +348,11 @@ class InteractiveParameterDialog(QDialog):
         self.original_xlim = [-600, 600]
         self.original_ylim = None
 
-        self.setWindowTitle(f"Interactive Parameters - {system_data['ion']} z={system_data['z']:.3f}")
+        if tied_systems:
+            ions = ' + '.join(sys['ion'] for sys in tied_systems)
+            self.setWindowTitle(f"Interactive Parameters - {ions} (tied) z={system_data['z']:.3f}")
+        else:
+            self.setWindowTitle(f"Interactive Parameters - {system_data['ion']} z={system_data['z']:.3f}")
         self.setModal(True)
         self.resize(1000, 700)
 
@@ -338,6 +368,10 @@ class InteractiveParameterDialog(QDialog):
         
         # Header info
         info_text = f"System: {self.system_data['ion']} at z={self.system_data['z']:.6f}"
+        if self.tied_systems:
+            ions = ', '.join(sys['ion'] for sys in self.tied_systems)
+            info_text = (f"Tied ions: {ions} at z={self.system_data['z']:.6f} — components "
+                         f"selected here are shared by all; switch transitions to check each ion")
         layout.addWidget(QLabel(info_text))
         
         # Controls row: spectrum selector + transition selector
@@ -357,13 +391,16 @@ class InteractiveParameterDialog(QDialog):
         else:
             self.spectrum_combo = None
 
-        # Transition selector for multi-transition ions
-        if len(self.system_data['transitions']) > 1:
+        # Transition selector for multi-transition ions (or all lines of a tie group)
+        systems = self.tied_systems or [self.system_data]
+        self.transition_owner = [sys['id'] for sys in systems for _ in sys['transitions']]
+        if len(self.transition_owner) > 1:
             controls_layout.addWidget(QLabel("Transition:"))
             self.transition_combo = QComboBox()
-            for trans in self.system_data['transitions']:
-                label = f"{self.system_data['ion']} {trans:.1f} Å"
-                self.transition_combo.addItem(label, trans)
+            for sys in systems:
+                for trans in sys['transitions']:
+                    label = f"{sys['ion']} {trans:.1f} Å"
+                    self.transition_combo.addItem(label, trans)
             controls_layout.addWidget(self.transition_combo)
             self.transition_combo.currentIndexChanged.connect(self.change_transition)
         else:
@@ -656,27 +693,29 @@ class InteractiveParameterDialog(QDialog):
         vel, nv = g.quick_nv_estimate(wave_rest, self.velocity_selector.flux, 
                                      self.velocity_selector.wrest, self.velocity_selector.f0)
         
-        # Estimate column densities for each selected velocity
+        # Estimate column densities for each selected velocity (±10 km/s)
         n_estimates = []
-        for vel_guess in self.velocity_selector.vel_guess:
-            # Find velocity range around the guess (±10 km/s)
-            vel_mask = (vel >= vel_guess - 10.0) & (vel <= vel_guess + 10.0)
-            if np.any(vel_mask):
-                # Sum column density in this velocity range
-                
-                n_estimate = np.log10(np.nansum(nv[vel_mask]) + 1e-20) # Avoid log(0)
-                n_estimates.append(n_estimate)
-            else:
-                # Fallback if no data in range
-                n_estimates.append(13.5)
+        self.n_fallbacks = []
+        for i, vel_guess in enumerate(self.velocity_selector.vel_guess):
+            n_estimate, ok = _estimate_logN(vel, nv, vel_guess)
+            n_estimates.append(n_estimate)
+            if not ok:
+                self.n_fallbacks.append(f"{self.velocity_selector.transition_name} C{i+1}")
                 
         # Get b parameters
         b_dialog = BParameterDialog(n_estimates, self.velocity_selector.vel_guess, 
                                    self.system_data['transitions'], 
                                    self.velocity_selector.transition_name, self)
+        if self.tied_systems:
+            b_dialog.setWindowTitle("Set Doppler Parameters (b) - used for all tied ions")
         
         if b_dialog.exec_() == QDialog.Accepted:
             b_params = b_dialog.get_b_parameters()
+
+            if self.tied_systems:
+                self.group_parameters_ready.emit(self._group_parameters(b_params))
+                self.accept()
+                return
             
             # Create result
             result_df = pd.DataFrame({
@@ -688,6 +727,44 @@ class InteractiveParameterDialog(QDialog):
             
             self.parameters_ready.emit(result_df)
             self.accept()
+
+
+    def _group_parameters(self, b_params):
+        """
+        Parameter tables for every ion in a tie group: shared v (and the b
+        values from the dialog), with N estimated from each ion's own line.
+        """
+        vel_guess = self.velocity_selector.vel_guess
+        spec = self.get_current_spectrum()
+        current_idx = self.transition_combo.currentIndex() if self.transition_combo else 0
+        current_owner = self.transition_owner[current_idx]
+
+        tables = {}
+        self.n_fallbacks = []
+        for sys in self.tied_systems:
+            # Use the displayed line for its own ion, else the ion's first line
+            if sys['id'] == current_owner:
+                wrest = self.get_current_transition()
+            else:
+                wrest = sys['transitions'][0]
+            info = line.rb_setline(wrest, 'closest', 'atom')
+            wave_rest = np.asarray(spec['wave']) / (1.0 + sys['z'])
+            vel, nv = g.quick_nv_estimate(wave_rest, spec['flux'], info['wave'][0], info['fval'][0])
+
+            n_estimates = []
+            for i, v in enumerate(vel_guess):
+                n_estimate, ok = _estimate_logN(vel, nv, v)
+                n_estimates.append(n_estimate)
+                if not ok:
+                    self.n_fallbacks.append(f"{sys['ion']} C{i+1}")
+
+            tables[sys['id']] = pd.DataFrame({
+                'Component': range(1, len(vel_guess) + 1),
+                'N': n_estimates,
+                'b': list(b_params),
+                'v': list(vel_guess)
+            })
+        return tables
 
 
 def show_validation_warning(parent, message):

@@ -90,7 +90,8 @@ def quick_nv_estimate(wave: np.ndarray, norm_flx: np.ndarray, wrest: float, f0: 
     vel = (wave - wrest * (1.0 + 0.)) * spl / (wrest * (1.0 + 0.))
     lambda_r = wave / (1 + 0.)    
     
-    # check for infinite optical depth
+    # check for infinite optical depth (on a copy: don't modify the caller's spectrum)
+    norm_flx = np.array(norm_flx, dtype=float)
     q = np.where((norm_flx <= 0.))
     norm_flx[q] = 0.01
     

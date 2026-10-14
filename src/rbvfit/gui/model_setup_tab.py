@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QMessageBox, QDialog, QDialogButtonBox, QLineEdit,
                             QCheckBox)
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QBrush, QColor
 
 # Import rbvfit components
 from rbvfit.core.voigt_model import VoigtModel, mean_fwhm_pixels
@@ -228,6 +228,97 @@ class SystemDialog(QDialog):
             'id': f"{self.z_spin.value():.6f}_{ion_name}"  # Use same ion for ID
         }
 
+class TieDialog(QDialog):
+    """Dialog for tying v and/or b across ions at the same redshift"""
+
+    def __init__(self, systems_by_z, parent=None):
+        """
+        systems_by_z : dict
+            Redshift -> list of untied ion names available at that redshift
+        """
+        super().__init__(parent)
+        self.setWindowTitle("Tie Ions")
+        self.setModal(True)
+        self.systems_by_z = systems_by_z
+
+        layout = QFormLayout()
+        self.setLayout(layout)
+
+        self.z_combo = QComboBox()
+        for z in systems_by_z:
+            self.z_combo.addItem(f"{z:.6f}", z)
+        layout.addRow("Redshift:", self.z_combo)
+
+        self.ref_combo = QComboBox()
+        self.ref_combo.setToolTip("The reference ion sets the component count and the tied values")
+        layout.addRow("Reference ion:", self.ref_combo)
+
+        self.ion_checks_widget = QWidget()
+        self.ion_checks_layout = QVBoxLayout()
+        self.ion_checks_layout.setContentsMargins(0, 0, 0, 0)
+        self.ion_checks_widget.setLayout(self.ion_checks_layout)
+        layout.addRow("Tie to reference:", self.ion_checks_widget)
+        self.ion_checks = []
+
+        self.v_check = QCheckBox("Tie velocities (v)")
+        self.v_check.setChecked(True)
+        self.b_check = QCheckBox("Tie Doppler parameters (b)")
+        layout.addRow(self.v_check)
+        layout.addRow(self.b_check)
+        layout.addRow(QLabel("Column densities (N) are never tied."))
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.validate_and_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+        self.z_combo.currentIndexChanged.connect(self.on_z_changed)
+        self.ref_combo.currentTextChanged.connect(self.on_ref_changed)
+        self.on_z_changed()
+
+    def on_z_changed(self):
+        self.ref_combo.blockSignals(True)
+        self.ref_combo.clear()
+        self.ref_combo.addItems(self.systems_by_z.get(self.z_combo.currentData(), []))
+        self.ref_combo.blockSignals(False)
+        self.on_ref_changed()
+
+    def on_ref_changed(self):
+        for check in self.ion_checks:
+            self.ion_checks_layout.removeWidget(check)
+            check.deleteLater()
+        self.ion_checks = []
+        ref = self.ref_combo.currentText()
+        for ion in self.systems_by_z.get(self.z_combo.currentData(), []):
+            if ion != ref:
+                check = QCheckBox(ion)
+                check.setChecked(True)
+                self.ion_checks_layout.addWidget(check)
+                self.ion_checks.append(check)
+
+    def validate_and_accept(self):
+        if not any(c.isChecked() for c in self.ion_checks):
+            QMessageBox.warning(self, "No Ions", "Select at least one ion to tie to the reference")
+            return
+        if not (self.v_check.isChecked() or self.b_check.isChecked()):
+            QMessageBox.warning(self, "Nothing to Tie", "Select v and/or b")
+            return
+        if self.b_check.isChecked() and not self.v_check.isChecked():
+            reply = QMessageBox.question(
+                self, "Tie b without v",
+                "Tying b without v assumes component i of each ion is the same cloud, "
+                "even though their velocities can drift apart.\n\nContinue?",
+                QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return
+        self.accept()
+
+    def get_tie(self):
+        ions = [self.ref_combo.currentText()] + [c.text() for c in self.ion_checks if c.isChecked()]
+        return {'z': self.z_combo.currentData(), 'ions': ions,
+                'v': self.v_check.isChecked(), 'b': self.b_check.isChecked()}
+
+
 class ModelSetupTab(QWidget):
     """Clean tab for setting up absorption line models with full functionality"""
     
@@ -239,6 +330,7 @@ class ModelSetupTab(QWidget):
         self.configurations = {}  # From Tab 1
         self.global_systems = []  # Flat list of all ion systems (shared across configs)
         self.config_parameters = {}  # Dict: system_id -> DataFrame
+        self.global_ties = []  # List of {'z', 'ions', 'v', 'b'}; first ion is the reference
         self.current_config = None
         self.current_system_id = None
         
@@ -330,6 +422,16 @@ class ModelSetupTab(QWidget):
         system_controls.addWidget(self.edit_system_btn)
         system_controls.addWidget(self.delete_system_btn)
         systems_group_layout.addLayout(system_controls)
+
+        tie_controls = QHBoxLayout()
+        self.tie_btn = QPushButton("Tie Ions...")
+        self.tie_btn.setToolTip("Share velocities and/or b parameters across ions at the same redshift")
+        self.untie_btn = QPushButton("Untie")
+        self.untie_btn.setToolTip("Remove the tie group containing the selected system")
+        self.untie_btn.setEnabled(False)
+        tie_controls.addWidget(self.tie_btn)
+        tie_controls.addWidget(self.untie_btn)
+        systems_group_layout.addLayout(tie_controls)
 
         # Initially disable edit/delete
         self.edit_system_btn.setEnabled(False)
@@ -430,6 +532,8 @@ class ModelSetupTab(QWidget):
         self.add_system_btn.clicked.connect(self.add_system)
         self.edit_system_btn.clicked.connect(self.edit_system)
         self.delete_system_btn.clicked.connect(self.delete_system)
+        self.tie_btn.clicked.connect(self.tie_ions)
+        self.untie_btn.clicked.connect(self.untie_ions)
         self.systems_tree.itemSelectionChanged.connect(self.on_system_selection_changed)
         
         # Parameter management
@@ -499,9 +603,18 @@ class ModelSetupTab(QWidget):
             return
 
         try:
-            dialog = InteractiveParameterDialog(current_system, all_spectra, parent=self)
-            dialog.parameters_ready.connect(self.on_interactive_parameters_ready)
+            tie = self._tie_for(current_system)
+            if tie:
+                dialog = InteractiveParameterDialog(current_system, all_spectra, parent=self,
+                                                    tied_systems=self._tie_members(tie))
+                dialog.group_parameters_ready.connect(self.on_group_parameters_ready)
+            else:
+                dialog = InteractiveParameterDialog(current_system, all_spectra, parent=self)
+                dialog.parameters_ready.connect(self.on_interactive_parameters_ready)
             dialog.exec_()
+            if getattr(dialog, 'n_fallbacks', None):
+                self.update_status("No absorption measured for " + ", ".join(dialog.n_fallbacks)
+                                   + ": starting log N set to a default; check these before fitting")
 
         except Exception as e:
             QMessageBox.critical(self, "Estimation Error",
@@ -512,9 +625,131 @@ class ModelSetupTab(QWidget):
         """Handle interactive parameters result"""
         if self.current_system_id:
             self.config_parameters[self.current_system_id] = df.copy()
+            self._sync_ties()
             self.load_parameter_table()
             self.update_systems_display()
             self.update_status("Interactive parameter estimation completed")
+
+    def on_group_parameters_ready(self, tables):
+        """Handle interactive result for a tie group (one table per ion)"""
+        for system_id, df in tables.items():
+            self.config_parameters[system_id] = df.copy()
+        self._sync_ties()
+        self.load_parameter_table()
+        self.update_systems_display()
+        self.update_status(f"Interactive parameters set for {len(tables)} tied ions")
+
+    # ---------------- Tie management ----------------
+    def _find_system(self, z, ion):
+        """Global system dict for (z, ion), or None"""
+        return next((s for s in self.global_systems
+                     if abs(s['z'] - z) < 1e-6 and s['ion'] == ion), None)
+
+    def _tie_for(self, system):
+        """Tie group containing the system dict, or None"""
+        for tie in self.global_ties:
+            if abs(tie['z'] - system['z']) < 1e-6 and system['ion'] in tie['ions']:
+                return tie
+        return None
+
+    def _tie_members(self, tie):
+        """System dicts of a tie group, reference first"""
+        return [self._find_system(tie['z'], ion) for ion in tie['ions']]
+
+    def _tied_columns(self, system):
+        """Parameter columns of this system that mirror its reference ion"""
+        tie = self._tie_for(system)
+        if not tie or tie['ions'][0] == system['ion']:
+            return []
+        return [col for col in ('v', 'b') if tie[col]]
+
+    def _sync_ties(self):
+        """
+        Make each tied ion match its reference: same number of components,
+        and tied columns (v and/or b) copied. N is kept for existing rows.
+        If the reference has no parameters yet, the first member that does
+        is used instead.
+        """
+        for tie in self.global_ties:
+            members = self._tie_members(tie)
+            source = next((s for s in members if s['id'] in self.config_parameters), None)
+            if source is None:
+                continue
+            src = self.config_parameters[source['id']]
+            cols = [col for col in ('v', 'b') if tie[col]]
+            for member in members:
+                if member is source:
+                    continue
+                df = self.config_parameters.get(member['id'])
+                if df is None or len(df) != len(src):
+                    rows = []
+                    for i in range(len(src)):
+                        if df is not None and i < len(df):
+                            rows.append(df.iloc[i].to_dict())
+                        else:
+                            rows.append({'Component': src.iloc[i]['Component'], 'N': 13.0,
+                                         'b': src.iloc[i]['b'], 'v': src.iloc[i]['v']})
+                    df = pd.DataFrame(rows, columns=['Component', 'N', 'b', 'v'])
+                else:
+                    df = df.copy()
+                for col in cols:
+                    df[col] = src[col].values
+                self.config_parameters[member['id']] = df
+                member['components'] = len(df)
+            source['components'] = len(src)
+
+    def tie_ions(self):
+        """Create a tie group from the dialog"""
+        systems_by_z = {}
+        for system in self.global_systems:
+            if self._tie_for(system):
+                continue
+            z = next((zk for zk in systems_by_z if abs(zk - system['z']) < 1e-6), system['z'])
+            systems_by_z.setdefault(z, []).append(system['ion'])
+        systems_by_z = {z: ions for z, ions in systems_by_z.items() if len(ions) >= 2}
+        if not systems_by_z:
+            QMessageBox.information(self, "Nothing to Tie",
+                                    "Tying needs at least two untied ions at the same redshift.")
+            return
+
+        dialog = TieDialog(systems_by_z, parent=self)
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        tie = dialog.get_tie()
+        self.global_ties.append(tie)
+        self._sync_ties()
+        self.update_systems_display()
+        self.load_parameter_table()
+        tied = '+'.join(p for p in ('v', 'b') if tie[p])
+        self.update_status(f"Tied {tied}: {', '.join(tie['ions'])} at z={tie['z']:.4f} "
+                           f"(reference {tie['ions'][0]})")
+
+    def untie_ions(self):
+        """Remove the tie group containing the selected system"""
+        system = self._selected_system()
+        tie = self._tie_for(system) if system else None
+        if not tie:
+            return
+        self.global_ties.remove(tie)
+        self.update_systems_display()
+        self.load_parameter_table()
+        self.update_status(f"Removed tie: {', '.join(tie['ions'])}")
+
+    def _selected_system(self):
+        items = self.systems_tree.selectedItems()
+        if not items:
+            return None
+        system_id = items[0].data(0, Qt.UserRole)
+        return next((s for s in self.global_systems if s['id'] == system_id), None)
+
+    def _drop_from_ties(self, system):
+        """Remove a system from its tie group (whole group if <2 ions remain)"""
+        tie = self._tie_for(system)
+        if not tie:
+            return
+        tie['ions'] = [ion for ion in tie['ions'] if ion != system['ion']]
+        if len(tie['ions']) < 2:
+            self.global_ties.remove(tie)
 
     def compile_models(self):
         """Compile models for unified vfit interface"""
@@ -539,6 +774,16 @@ class ModelSetupTab(QWidget):
             self.update_status("Creating master configuration...")
 
 
+            missing = [s['ion'] for s in self.global_systems
+                       if s['id'] not in self.config_parameters]
+            if missing:
+                QMessageBox.warning(self, "Missing Parameters",
+                                    f"No parameters estimated for: {', '.join(missing)}")
+                return
+
+            # Tied ions follow their reference (component count and tied values)
+            self._sync_ties()
+
             # Update component counts to match actual parameter rows
             for system in self.global_systems:
                 if system['id'] in self.config_parameters:
@@ -553,19 +798,26 @@ class ModelSetupTab(QWidget):
                     transitions=system['transitions'],
                     components=system['components']
                 )
+            for tie in self.global_ties:
+                self.master_config.tie_ions(z=self._find_system(tie['z'], tie['ions'][0])['z'],
+                                            ions=tie['ions'], v=tie['v'], b=tie['b'])
             
             self.update_status("Collecting parameters...")
             
-            # Collect parameters from all systems
+            # Collect parameters in the model's theta order: systems (grouped
+            # by redshift), then ions within each system
             all_N = []
             all_b = []
             all_v = []
             
-            for system_id, df in self.config_parameters.items():
-                for _, row in df.iterrows():
-                    all_N.append(row['N'])
-                    all_b.append(row['b'])
-                    all_v.append(row['v'])
+            for abs_system in self.master_config.systems:
+                for ion_group in abs_system.ion_groups:
+                    system = self._find_system(abs_system.redshift, ion_group.ion_name)
+                    df = self.config_parameters[system['id']]
+                    for _, row in df.iterrows():
+                        all_N.append(row['N'])
+                        all_b.append(row['b'])
+                        all_v.append(row['v'])
             
             # Create master theta array
             self.master_theta = np.array(all_N + all_b + all_v)
@@ -595,11 +847,15 @@ class ModelSetupTab(QWidget):
             
             self.update_status("Compilation completed successfully!")
             
+            n_free = int(np.sum(ParameterManager(self.master_config).get_free_mask()))
+            tie_info = ""
+            if n_free < len(self.master_theta):
+                tie_info = f"\nTied parameters: {len(self.master_theta) - n_free} ({n_free} free)"
             QMessageBox.information(self, "Success", 
                                   f"Models compiled successfully!\n"
                                   f"Configurations: {len(instrument_data)}\n"
                                   f"Total parameters: {len(self.master_theta)}\n"
-                                  f"Systems: {total_systems}")
+                                  f"Systems: {total_systems}" + tie_info)
             
         except Exception as e:
             import traceback
@@ -677,6 +933,10 @@ class ModelSetupTab(QWidget):
                 dialog = SystemDialog(system_data=system, parent=self)
                 if dialog.exec_() == QDialog.Accepted:
                     new_system_data = dialog.get_system_data()
+                    if (new_system_data['ion'] != system['ion'] or
+                            abs(new_system_data['z'] - system['z']) >= 1e-6) and self._tie_for(system):
+                        self._drop_from_ties(system)
+                        self.update_status(f"{system['ion']} removed from its tie group (ion/redshift changed)")
                     self.global_systems[i] = new_system_data
                     self.update_systems_display()
                     self.update_system_combo()
@@ -697,6 +957,9 @@ class ModelSetupTab(QWidget):
         
         if reply == QMessageBox.Yes:
             system_id = items[0].data(0, Qt.UserRole)
+            for s in self.global_systems:
+                if s['id'] == system_id:
+                    self._drop_from_ties(s)
             self.global_systems = [s for s in self.global_systems if s['id'] != system_id]
             self.config_parameters.pop(system_id, None)
             
@@ -734,6 +997,7 @@ class ModelSetupTab(QWidget):
         params_df = pd.DataFrame(data)
         
         self.config_parameters[self.current_system_id] = params_df
+        self._sync_ties()
         
         # Update display
         self.load_parameter_table()
@@ -748,12 +1012,20 @@ class ModelSetupTab(QWidget):
         self.params_table.setRowCount(0)
         self.update_status("Parameters cleared")
     
+    def _component_target_id(self):
+        """System whose components are edited: the reference ion if tied"""
+        system = next((s for s in self.global_systems if s['id'] == self.current_system_id), None)
+        tie = self._tie_for(system) if system else None
+        if tie:
+            return self._find_system(tie['z'], tie['ions'][0])['id']
+        return self.current_system_id
+
     def add_component(self):
         """Add component to current system"""
         if not self.current_system_id:
             return
 
-        key = self.current_system_id
+        key = self._component_target_id()
         if key not in self.config_parameters:
             import pandas as pd
             self.config_parameters[key] = pd.DataFrame(columns=['Component', 'N', 'b', 'v'])
@@ -770,6 +1042,7 @@ class ModelSetupTab(QWidget):
             'v': [0.0]
         })
         self.config_parameters[key] = pd.concat([df, new_row], ignore_index=True)
+        self._sync_ties()
         
         # Update display
         self.load_parameter_table()
@@ -780,7 +1053,7 @@ class ModelSetupTab(QWidget):
         if not self.current_system_id:
             return
 
-        key = self.current_system_id
+        key = self._component_target_id()
         if key not in self.config_parameters:
             return
 
@@ -790,6 +1063,7 @@ class ModelSetupTab(QWidget):
             return
 
         self.config_parameters[key] = df.iloc[:-1].reset_index(drop=True)
+        self._sync_ties()
         
         # Update display
         self.load_parameter_table()
@@ -890,6 +1164,8 @@ class ModelSetupTab(QWidget):
         has_selection = len(items) > 0
         self.edit_system_btn.setEnabled(has_selection)
         self.delete_system_btn.setEnabled(has_selection)
+        system = self._selected_system()
+        self.untie_btn.setEnabled(bool(system and self._tie_for(system)))
     
     def on_system_changed(self, system_text):
         """Handle system combo change"""
@@ -932,6 +1208,10 @@ class ModelSetupTab(QWidget):
                 else:
                     df.iloc[row, col] = str(item.text())
                     
+                # Tied ions mirror their reference
+                if col_name in ('v', 'b') and self.global_ties:
+                    self._sync_ties()
+
                 # Update status
                 if self.master_theta is not None:
                     self.update_status("Parameter updated (compile models to propagate changes)")
@@ -950,7 +1230,15 @@ class ModelSetupTab(QWidget):
             item.setText(0, f"{system['ion']} z={system['z']:.4f}")
             n_params = len(self.config_parameters.get(system['id'], []))
             n_transitions = len(system['transitions'])
-            item.setText(1, f"{n_transitions} lines, {system['components']} comp, {n_params} params")
+            details = f"{n_transitions} lines, {system['components']} comp, {n_params} params"
+            tie = self._tie_for(system)
+            if tie:
+                tied = '+'.join(p for p in ('v', 'b') if tie[p])
+                if tie['ions'][0] == system['ion']:
+                    details += f", tie reference ({tied})"
+                else:
+                    details += f", {tied} tied to {tie['ions'][0]}"
+            item.setText(1, details)
             item.setData(0, Qt.UserRole, system['id'])
             self.systems_tree.addTopLevelItem(item)
     
@@ -974,12 +1262,22 @@ class ModelSetupTab(QWidget):
             
         df = self.config_parameters[key]
         self.params_table.setRowCount(len(df))
+
+        system = next((s for s in self.global_systems if s['id'] == key), None)
+        tie = self._tie_for(system) if system else None
+        tied_cols = self._tied_columns(system) if system else []
         
+        self.params_table.blockSignals(True)
         for i, row in df.iterrows():
             for j, (col_name, value) in enumerate(row.items()):
                 if j < 4:  # Only show first 4 columns
                     item = QTableWidgetItem(str(value))
+                    if col_name in tied_cols:
+                        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                        item.setForeground(QBrush(QColor('gray')))
+                        item.setToolTip(f"Tied to {tie['ions'][0]} — edit it there")
                     self.params_table.setItem(i, j, item)
+        self.params_table.blockSignals(False)
     
     def update_status(self, message=""):
         """Update status text"""
@@ -1001,6 +1299,7 @@ class ModelSetupTab(QWidget):
         self.configurations = {}
         self.global_systems = []
         self.config_parameters = {}
+        self.global_ties = []
         self.current_config = None
         self.current_system_id = None
         self.master_config = None
@@ -1017,5 +1316,6 @@ class ModelSetupTab(QWidget):
         
         # Disable buttons
         self.show_master_theta_btn.setEnabled(False)
+        self.untie_btn.setEnabled(False)
         self.edit_system_btn.setEnabled(False)
         self.delete_system_btn.setEnabled(False)

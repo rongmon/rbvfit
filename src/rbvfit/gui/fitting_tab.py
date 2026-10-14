@@ -17,7 +17,7 @@ from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QSplitter,
                             QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
                             QFormLayout, QDialog)
 from PyQt5.QtCore import Qt, pyqtSignal, QThread, pyqtSlot
-from PyQt5.QtGui import QFont
+from PyQt5.QtGui import QFont, QBrush, QColor
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -87,6 +87,7 @@ class ParameterBoundsTable(QTableWidget):
     
     def __init__(self):
         super().__init__()
+        self.tie_source = None  # theta index each entry copies (FitConfiguration.tie_ions)
         self.setup_table()
         
     def setup_table(self):
@@ -117,6 +118,17 @@ class ParameterBoundsTable(QTableWidget):
             
             # Upper bound (editable)
             self.setItem(i, 3, QTableWidgetItem(f"{ub[i]:.6f}"))
+
+            # Tied entries mirror their source and are not fitted
+            if self.tie_source is not None and self.tie_source[i] != i:
+                src = self.tie_source[i]
+                src_name = param_names[src] if src < len(param_names) else f"Param_{src}"
+                name_item.setText(f"{name_item.text()} = {src_name}")
+                for col in range(4):
+                    item = self.item(i, col)
+                    item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+                    item.setForeground(QBrush(QColor('gray')))
+                    item.setToolTip(f"Tied to {src_name}")
         
         self.resizeColumnsToContents()
         
@@ -137,13 +149,20 @@ class ParameterBoundsTable(QTableWidget):
                 theta[i] = 0.0
                 lb[i] = -np.inf
                 ub[i] = np.inf
+
+        if self.tie_source is not None and len(self.tie_source) == n_params:
+            theta = theta[self.tie_source]
                 
         return theta, lb, ub
         
     def update_initial_values(self, new_theta):
         """Update only the initial values column (for quick fit results)"""
         for i in range(min(len(new_theta), self.rowCount())):
-            self.setItem(i, 1, QTableWidgetItem(f"{new_theta[i]:.6f}"))
+            item = self.item(i, 1)
+            if item is not None and not (item.flags() & Qt.ItemIsEditable):
+                item.setText(f"{new_theta[i]:.6f}")  # keep tied styling
+            else:
+                self.setItem(i, 1, QTableWidgetItem(f"{new_theta[i]:.6f}"))
 
 
 class FittingTab(QWidget):
@@ -358,6 +377,17 @@ class FittingTab(QWidget):
         self.lb = bounds['lb'].copy()
         self.ub = bounds['ub'].copy()
         
+        # Parameter ties come from the models' shared FitConfiguration
+        tie_source = None
+        for data in instrument_data.values():
+            if hasattr(data['model'], 'param_manager'):
+                tie_source = data['model'].param_manager.get_tie_source()
+                break
+        if tie_source is not None and len(tie_source) == len(theta):
+            self.param_bounds_table.tie_source = tie_source
+        else:
+            self.param_bounds_table.tie_source = None
+
         # Generate parameter names
         n_params = len(theta)
         n_comp = n_params // 3
@@ -381,6 +411,10 @@ class FittingTab(QWidget):
         self.status_text.append(f"Model data loaded:")
         self.status_text.append(f"  Instruments: {len(instrument_data)}")
         self.status_text.append(f"  Parameters: {n_params} ({n_comp} components)")
+        if self.param_bounds_table.tie_source is not None:
+            n_tied = int(np.sum(self.param_bounds_table.tie_source != np.arange(n_params)))
+            if n_tied:
+                self.status_text.append(f"  Tied: {n_tied} (fitting {n_params - n_tied} free)")
         for name, data in instrument_data.items():
             wave = data['wave']
             self.status_text.append(f"  {name}: {len(wave)} points, {wave.min():.1f}-{wave.max():.1f} Å")

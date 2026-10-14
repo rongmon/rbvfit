@@ -560,8 +560,8 @@ class UpdatedRbvfitGUI(QMainWindow):
         
     def show_workflow_guide(self):
         """Show workflow guide dialog"""
-        guide_text = """
-rbvfit 2.0 Workflow Guide (Unified Interface)
+        guide_text = f"""
+rbvfit {getattr(v, '__version__', '')} Workflow Guide (Unified Interface)
 
 1. CONFIGURATION & DATA TAB
    • Create instrument configurations with FWHM settings
@@ -572,7 +572,10 @@ rbvfit 2.0 Workflow Guide (Unified Interface)
 2. MODEL SETUP TAB
    • Select configuration
    • Add ion systems (redshift, ion, transitions, components)
-   • Estimate parameters using interactive tools
+   • Optional: Tie Ions... to share v and/or b between ions at the same
+     redshift (N is never tied). Tied ions follow the reference ion;
+     their tied cells are read-only. Untie removes the group.
+   • Estimate parameters using interactive tools (one picker per tie group)
    • Compile models for all configurations
 
 3. FITTING TAB
@@ -587,6 +590,7 @@ rbvfit 2.0 Workflow Guide (Unified Interface)
 
 KEY FEATURES:
 • Multi-instrument support with shared parameters
+• Tie v and/or b across ions at the same redshift
 • Interactive parameter estimation
 • Unified vfit_mcmc interface
 • Configuration-aware workflow
@@ -619,6 +623,7 @@ Author: rbvfit Development Team
 
 Features:
 • Multi-instrument configuration management
+• Tie v and/or b across ions at the same redshift
 • Interactive parameter estimation
 • Unified vfit_mcmc interface
 • MCMC fitting with emcee and zeus samplers

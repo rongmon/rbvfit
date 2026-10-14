@@ -292,6 +292,51 @@ class ParameterManager:
         
         return names
     
+    def get_tie_source(self) -> np.ndarray:
+        """
+        Get the tie map for the theta array.
+
+        Returns
+        -------
+        np.ndarray
+            Integer array, same length as theta. Entry i is the index whose
+            value parameter i takes: i itself for a free parameter, or the
+            matching parameter of the first ion in its tie group.
+        """
+        n_params = self.structure['total_parameters']
+        total_components = n_params // 3
+        tie_source = np.arange(n_params)
+
+        comp_offset = 0
+        for system, sys_info in zip(self.config.systems, self.structure['systems']):
+            offsets = {}
+            for ion_info in sys_info['ion_groups']:
+                offsets[ion_info['ion']] = comp_offset
+                comp_offset += ion_info['components']
+
+            for tie in system.ties:
+                src = offsets[tie['ions'][0]]
+                n_comp = next(g.components for g in system.ion_groups
+                              if g.ion_name == tie['ions'][0])
+                for ion in tie['ions'][1:]:
+                    off = offsets[ion]
+                    for comp in range(n_comp):
+                        if tie['b']:
+                            tie_source[total_components + off + comp] = total_components + src + comp
+                        if tie['v']:
+                            tie_source[2*total_components + off + comp] = 2*total_components + src + comp
+
+        return tie_source
+
+    def get_free_mask(self) -> np.ndarray:
+        """Boolean mask of theta entries that are fitted (not tied to another)."""
+        tie_source = self.get_tie_source()
+        return tie_source == np.arange(len(tie_source))
+
+    def apply_ties(self, theta: np.ndarray) -> np.ndarray:
+        """Return a copy of theta with tied entries set from their source."""
+        return np.asarray(theta)[self.get_tie_source()]
+
     def get_parameter_latex_names(self) -> List[str]:
         """
         Get LaTeX-formatted names for each parameter.

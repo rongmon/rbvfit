@@ -52,16 +52,29 @@ def quick_fit_vfit(vfit_obj):
             # Return large value if model evaluation fails
             return 1e10
     
+    # Tied fits (FitConfiguration.tie_ions) optimize the free parameters only
+    tied = getattr(vfit_obj, 'tied', False)
+    if tied:
+        free = vfit_obj.free_mask
+        objective = lambda p: chi2_objective(vfit_obj._to_full(p))
+        theta0 = np.asarray(vfit_obj.theta)[free]
+    else:
+        objective = chi2_objective
+        theta0 = vfit_obj.theta
+
     # Set up bounds
     bounds = None
     if hasattr(vfit_obj, 'lb') and hasattr(vfit_obj, 'ub'):
-        bounds = list(zip(vfit_obj.lb, vfit_obj.ub))
+        if tied:
+            bounds = list(zip(vfit_obj.lb[free], vfit_obj.ub[free]))
+        else:
+            bounds = list(zip(vfit_obj.lb, vfit_obj.ub))
     
     try:
         # Run scipy optimization
         result = minimize(
-            chi2_objective, 
-            vfit_obj.theta,
+            objective, 
+            theta0,
             bounds=bounds,
             method='L-BFGS-B',
             options={'maxfun': 5000}
@@ -71,7 +84,12 @@ def quick_fit_vfit(vfit_obj):
         
         # Estimate parameter uncertainties using finite differences
         # This is a rough approximation - not as good as curve_fit covariance
-        theta_best_error = _estimate_parameter_errors(chi2_objective, theta_best, vfit_obj.theta)
+        theta_best_error = _estimate_parameter_errors(objective, theta_best, theta0)
+
+        if tied:
+            # Tied entries take the value and error of their source
+            theta_best = vfit_obj._to_full(theta_best)
+            theta_best_error = vfit_obj._to_full(theta_best_error)
         
         if not result.success:
             warnings.warn(f"Optimization may not have converged: {result.message}")

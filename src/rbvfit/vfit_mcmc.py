@@ -99,6 +99,28 @@ ION_BOUNDS_TABLE = {
 }
 
 
+class _TiedSampler:
+    """
+    Wrap an emcee/zeus sampler that ran on free parameters only, so that
+    get_chain() and get_autocorr_time() return full-length theta arrays
+    (tied entries copied from their source). Everything else passes through.
+    """
+
+    _EXPANDED = ('get_chain', 'get_autocorr_time')
+
+    def __init__(self, sampler, expand):
+        self._sampler = sampler
+        self._expand = expand
+
+    def __getattr__(self, name):
+        if name.startswith('__') or name in ('_sampler', '_expand'):
+            raise AttributeError(name)
+        attr = getattr(self._sampler, name)
+        if name in self._EXPANDED:
+            return lambda *args, **kwargs: self._expand(attr(*args, **kwargs))
+        return attr
+
+
 class vfit:
     """
     Clean MCMC fitter for rbvfit 2.0 VoigtModel objects.
@@ -168,6 +190,18 @@ class vfit:
         self.theta = np.asarray(theta)
         self.lb = np.asarray(lb)
         self.ub = np.asarray(ub)
+
+        # Parameter ties (FitConfiguration.tie_ions): the sampler only sees
+        # free parameters; tied entries are copied from their source.
+        self.tie_source = self._extract_tie_source(instrument_data, len(self.theta))
+        self.free_mask = self.tie_source == np.arange(len(self.theta))
+        self.tied = not np.all(self.free_mask)
+        if self.tied:
+            tied_theta = self.theta[self.tie_source]
+            if not np.array_equal(tied_theta, self.theta):
+                warnings.warn("Initial guesses of tied parameters differ from their "
+                              "source; using the source values.")
+            self.theta = tied_theta
         self.no_of_Chain = no_of_Chain
         self.no_of_steps = no_of_steps
         self.perturbation = perturbation
@@ -186,7 +220,7 @@ class vfit:
         self.sampler = None
         self.best_theta = None
         self.samples = None
-        self.ndim = len(self.theta)
+        self.ndim = int(np.sum(self.free_mask))
         self.nwalkers = no_of_Chain
         
         # Print setup confirmation
@@ -195,6 +229,34 @@ class vfit:
             print(f"✓ V2 Interface: {len(self.instrument_data)} instruments configured ({instrument_names})")
         else:
             print(f"✓ V2 Interface: Single instrument configured")
+        if self.tied:
+            print(f"✓ Tied parameters: {len(self.theta) - self.ndim} of "
+                  f"{len(self.theta)} (fitting {self.ndim} free)")
+
+    def _extract_tie_source(self, instrument_data, n_params):
+        """Get the tie map from the VoigtModel configs (identity if none)."""
+        maps = [data['model'].param_manager.get_tie_source()
+                for data in instrument_data.values()
+                if hasattr(data['model'], 'param_manager')]
+        identity = np.arange(n_params)
+        if not maps:
+            return identity
+        if any(not np.array_equal(m, maps[0]) for m in maps[1:]):
+            raise ValueError("All instruments must use the same parameter ties")
+        tie_source = maps[0]
+        if len(tie_source) != n_params:
+            if np.array_equal(tie_source, np.arange(len(tie_source))):
+                return identity
+            raise ValueError(f"theta has {n_params} entries but the tied model "
+                             f"expects {len(tie_source)}")
+        return tie_source
+
+    def _to_full(self, free):
+        """Expand free parameters (last axis) to full theta, filling tied entries."""
+        free = np.asarray(free)
+        full = np.empty(free.shape[:-1] + (len(self.free_mask),))
+        full[..., self.free_mask] = free
+        return full[..., self.tie_source]
     
     def _validate_unified_instrument_data(self, instrument_data):
         """Validate unified interface data."""
@@ -345,8 +407,22 @@ class vfit:
     
 
     
+    def _lnprob_free(self, free):
+        """Log posterior on the free parameters only (tied fits)."""
+        if np.any(free < self.lb[self.free_mask]) or np.any(free > self.ub[self.free_mask]):
+            return -np.inf
+        return self.lnlike(self._to_full(free))
+
+    def _sampler_lnprob(self, x):
+        """Log posterior in the space the sampler/optimizer works in."""
+        if self.tied:
+            return self._lnprob_free(x)
+        return self.lnprob(x)
+
     def lnprob(self, theta):
-        """Log posterior probability."""
+        """Log posterior probability (full theta; ties are applied)."""
+        if self.tied:
+            return self._lnprob_free(np.asarray(theta)[self.free_mask])
         lp = self.lnprior(theta)
         if not np.isfinite(lp):
             return -np.inf
@@ -354,6 +430,12 @@ class vfit:
     
     def optimize_guess(self, theta):
         """Optimize starting guess using scipy."""
+        if self.tied:
+            bounds = list(zip(self.lb[self.free_mask], self.ub[self.free_mask]))
+            nll = lambda free: -self._lnprob_free(free)
+            result = op.minimize(nll, np.asarray(theta)[self.free_mask],
+                                 method='L-BFGS-B', bounds=bounds)
+            return self._to_full(result.x)
         bounds = list(zip(self.lb, self.ub))
         nll = lambda theta: -self.lnprob(theta)
         result = op.minimize(nll, theta, method='L-BFGS-B', bounds=bounds)
@@ -411,15 +493,15 @@ class vfit:
             try:
                 # Use optimized pool with proper context
                 pool = OptimizedPool()
-                sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob, pool=pool)
+                sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob, pool=pool)
                 return sampler, pool
             except Exception as e:
                 warnings.warn(f"Failed to create multiprocessing pool: {e}")
                 # Fall back to no pool
-                sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
+                sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob)
                 return sampler, None
         else:
-            sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
+            sampler = emcee.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob)
             return sampler, None
     
     def _setup_zeus_sampler(self, use_pool=True):
@@ -428,19 +510,20 @@ class vfit:
             try:
                 # Use optimized pool with proper context
                 pool = OptimizedPool()
-                sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob, pool=pool)
+                sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob, pool=pool)
                 return sampler, pool
             except Exception as e:
                 warnings.warn(f"Failed to create multiprocessing pool: {e}")
                 # Fall back to no pool
-                sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
+                sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob)
                 return sampler, None
         else:
-            sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self.lnprob)
+            sampler = zeus.EnsembleSampler(self.nwalkers, self.ndim, self._sampler_lnprob)
             return sampler, None
     
     def _initialize_walkers(self, popt):
         """Initialize walker positions with proper bounds checking."""
+        lb, ub = self.lb[self.free_mask], self.ub[self.free_mask]
         guesses = []
         max_attempts = 1000
         
@@ -451,10 +534,10 @@ class vfit:
                 guess = popt + self.perturbation * np.random.randn(self.ndim)
                 
                 # Ensure within bounds
-                guess = np.clip(guess, self.lb + 1e-10, self.ub - 1e-10)
+                guess = np.clip(guess, lb + 1e-10, ub - 1e-10)
                 
                 # Check if valid
-                if np.isfinite(self.lnprob(guess)):
+                if np.isfinite(self._sampler_lnprob(guess)):
                     guesses.append(guess)
                     break
                     
@@ -512,7 +595,7 @@ class vfit:
                 print("✓ Starting guess optimized")
         
         # Create initial walker positions
-        guesses = self._initialize_walkers(self.theta)
+        guesses = self._initialize_walkers(self.theta[self.free_mask])
         
         # Set up sampler
         if self.sampler_name == 'emcee':
@@ -549,8 +632,8 @@ class vfit:
             pool.close()
             pool.join()
         
-        # Store results
-        self.sampler = sampler
+        # Store results (tied fits: expose full-length chains)
+        self.sampler = _TiedSampler(sampler, self._to_full) if self.tied else sampler
         self.mcmc_flag = True
         
         # Extract best fit and samples

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import List, Dict, Tuple, Optional, Any, Union
 from dataclasses import dataclass, field
 import json
+import warnings
 import numpy as np
 from pathlib import Path
 
@@ -213,9 +214,13 @@ class AbsorptionSystem:
         Redshift of the absorption system
     ion_groups : List[IonGroup]
         List of ion groups in this system
+    ties : List[dict]
+        Tie groups, each {'ions': [...], 'v': bool, 'b': bool}. The first
+        ion in a group supplies the tied parameters for the others.
     """
     redshift: float
     ion_groups: List[IonGroup] = field(default_factory=list)
+    ties: List[dict] = field(default_factory=list)
     
     def add_ion(self, ion_name: str, transitions: List[float], 
                 components: int, merge: bool = False, validate_ion: bool = True) -> None:
@@ -268,12 +273,22 @@ class AbsorptionSystem:
         new_components : int
             New number of velocity components
         """
+        if ion_name not in self.get_ion_names():
+            raise ValueError(f"Ion {ion_name} not found in system at z={self.redshift}")
+
+        # Tied ions must keep matching component counts, so update the whole group
+        tie = self.get_tie(ion_name)
+        targets = tie['ions'] if tie else [ion_name]
         for group in self.ion_groups:
-            if group.ion_name == ion_name:
+            if group.ion_name in targets:
                 group.set_components(new_components)
-                return
-        
-        raise ValueError(f"Ion {ion_name} not found in system at z={self.redshift}")
+
+    def get_tie(self, ion_name: str) -> Optional[dict]:
+        """Return the tie group containing ion_name, or None."""
+        for tie in self.ties:
+            if ion_name in tie['ions']:
+                return tie
+        return None
     
     def get_parameter_count(self) -> int:
         """Get total parameter count for this system."""
@@ -375,6 +390,64 @@ class FitConfiguration:
             raise ValueError(f"No system found at redshift z={z}")
         
         system.update_ion_components(ion, new_components)
+        self._validated = False
+
+    def tie_ions(self, z: float, ions: List[str], v: bool = True, b: bool = False) -> None:
+        """
+        Tie velocity and/or b parameters across ions at the same redshift.
+
+        Component i of every ion in the group shares v (and/or b) with
+        component i of the first ion in ``ions``. Column densities are never
+        tied. All ions must already be added and have equal component counts.
+
+        Parameters
+        ----------
+        z : float
+            Redshift of the absorption system
+        ions : List[str]
+            Ions to tie (at least two). The first ion supplies the values.
+        v : bool, optional
+            Tie component velocities (default True)
+        b : bool, optional
+            Tie component b parameters (default False)
+
+        Examples
+        --------
+        >>> config.tie_ions(z=2.5429, ions=['OI', 'SiII'], v=True)
+        """
+        if not (v or b):
+            raise ValueError("tie_ions needs v=True and/or b=True")
+        ions = list(ions)
+        if len(ions) < 2:
+            raise ValueError("tie_ions needs at least two ions")
+        if len(set(ions)) != len(ions):
+            raise ValueError(f"Duplicate ions in tie group: {ions}")
+
+        system = None
+        for sys in self.systems:
+            if abs(sys.redshift - z) < 1e-6:
+                system = sys
+                break
+        if system is None:
+            raise ValueError(f"No system found at redshift z={z}")
+
+        for ion in ions:
+            if ion not in system.get_ion_names():
+                raise ValueError(f"Ion {ion} not found in system at z={z}")
+            if system.get_tie(ion) is not None:
+                raise ValueError(f"Ion {ion} is already in a tie group at z={z}")
+
+        n_comp = {g.ion_name: g.components for g in system.ion_groups if g.ion_name in ions}
+        if len(set(n_comp.values())) != 1:
+            raise ValueError(f"Tied ions must have equal component counts, got {n_comp}")
+
+        if b and not v:
+            warnings.warn(
+                f"Tying b without v for {ions}: component i of each ion is assumed "
+                "to be the same cloud even though their velocities are free."
+            )
+
+        system.ties.append({'ions': ions, 'v': bool(v), 'b': bool(b)})
         self._validated = False
             
     def _get_or_create_system(self, z: float) -> AbsorptionSystem:
@@ -490,6 +563,16 @@ class FitConfiguration:
                 raise ValueError(
                     f"System at z={system.redshift} has no ions defined"
                 )
+            n_comp = {g.ion_name: g.components for g in system.ion_groups}
+            for tie in system.ties:
+                missing = [ion for ion in tie['ions'] if ion not in n_comp]
+                if missing:
+                    raise ValueError(f"Tied ions {missing} not found at z={system.redshift}")
+                if len({n_comp[ion] for ion in tie['ions']}) != 1:
+                    raise ValueError(
+                        f"Tied ions {tie['ions']} at z={system.redshift} have "
+                        f"unequal component counts"
+                    )
         
         self._validated = True
     
@@ -522,6 +605,9 @@ class FitConfiguration:
                     'components': ion_group.components
                 }
                 sys_data['ions'].append(ion_data)
+
+            if system.ties:
+                sys_data['ties'] = [dict(t, ions=list(t['ions'])) for t in system.ties]
             
             data['systems'].append(sys_data)
         
@@ -558,6 +644,11 @@ class FitConfiguration:
                     ion_data['transitions'],
                     ion_data['components']
                 )
+            # 'ties' is absent in configurations saved before tie support
+            for tie in sys_data.get('ties', []):
+                with warnings.catch_warnings():
+                    warnings.simplefilter('ignore')
+                    config.tie_ions(z, tie['ions'], v=tie['v'], b=tie['b'])
         
         return config
     
@@ -642,6 +733,9 @@ class FitConfiguration:
                     f"  {ion_group.ion_name}: [{trans_str}] Å, "
                     f"{ion_group.components} components"
                 )
+            for tie in system.ties:
+                tied = '+'.join(p for p in ('v', 'b') if tie[p])
+                lines.append(f"  Tied ({tied}): {', '.join(tie['ions'])}")
         
         lines.append(f"\nTotal parameters: {sum(s.get_parameter_count() for s in self.systems)}")
         

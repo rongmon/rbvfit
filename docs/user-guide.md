@@ -188,8 +188,59 @@ config.add_system(z=0.5, ion='FeII', transitions=[2344.2, 2374.5], components=2)
 
 # Create model - same FWHM applies to all systems
 model = VoigtModel(config, FWHM='4.5')
-# Note: Same z means shared kinematics (v1, v2) between MgII and FeII
+# Note: each ion has its own N, b and v, even at the same z.
+# To share velocities (and/or b) between ions, use tie_ions (below).
 ```
+
+### Tying Ions (shared v and/or b)
+
+`tie_ions` makes several ions at the same redshift share component
+velocities and/or b values. N is never tied.
+
+```python
+config = FitConfiguration()
+config.add_system(z=2.5429, ion='OI',   transitions=[1302.1685], components=4)
+config.add_system(z=2.5429, ion='SiII', transitions=[1304.3702], components=4)
+config.tie_ions(z=2.5429, ions=['OI', 'SiII'], v=True)           # v only (default)
+# config.tie_ions(z=2.5429, ions=['OI', 'SiII'], v=True, b=True) # v and b
+```
+
+**Rules**
+- The first ion in `ions` is the reference: component *i* of every other ion
+  takes v (and/or b) from component *i* of the reference.
+- All ions must already be added, at the same z, with the same number of components.
+- An ion can be in only one tie group; a redshift can have several groups
+  (e.g. low ions and high ions tied separately).
+- `update_system_components` on any tied ion changes the whole group.
+- `b=True, v=False` is allowed but warns: component *i* is assumed to be the
+  same cloud in each ion even though the velocities are free.
+- Ties are saved with `config.save()` / `serialize()`. Older configuration
+  files load untied.
+
+**Fitting**
+
+Pass `theta`, `lb`, `ub` at full length, exactly as without ties
+(`[N..., b..., v...]`, one entry per ion and component). `vfit` then:
+- fits only the free parameters (`fitter.ndim`, `fitter.free_mask`, `fitter.tie_source`);
+- ignores the initial values and bounds of tied entries (warns if a tied
+  initial value differs from its reference);
+- returns `best_theta`, `samples` and `sampler.get_chain()` at full length,
+  with tied columns equal to their reference.
+
+`fit_quick`, emcee and zeus, multiprocessing and multi-instrument fits all
+support ties. In multi-instrument fits every model must use the same tied
+configuration.
+
+**Things to know about results**
+- `UnifiedResults` counts all parameters, tied ones included, so reduced χ² is
+  slightly understated, and corner plots/tables show tied v (or b) as duplicate
+  columns.
+- Saved `.h5` results keep the parameter values but not the tie groups. Keep
+  the configuration file (`config.save()`) if you need them.
+
+**When to tie b:** an exact b tie assumes turbulent broadening dominates
+(thermal b for metal ions at ~10⁴ K is only a few km/s). If the resolution
+does not resolve b, leave it untied.
 
 ### Multi-Redshift Systems
 

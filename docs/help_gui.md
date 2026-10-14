@@ -61,6 +61,27 @@ The interface follows a 4-tab workflow: **Data → Model → Fitting → Results
 
 *Tip: Use single components initially, then add complexity as needed.*
 
+### Tying Ions
+To make ions at the same redshift share velocities and/or b (e.g. OI and SiII):
+1. Add each ion as its own system at the same z.
+2. Click **Tie Ions...**, choose the redshift, the reference ion, the ions to tie,
+   and **Tie v** and/or **Tie b**. N is never tied.
+3. **Interactive Parameters** on any tied ion opens one picker for the group; the
+   transition list shows every ion's lines. Components you click are shared;
+   N is estimated per ion from its own line.
+4. Tied ions follow the reference: same number of components, and the tied
+   columns are grey and read-only. Edit them on the reference ion. Add/Delete
+   Component changes the whole group.
+5. **Untie** removes the group of the selected system. Deleting a tied system, or
+   changing its ion or redshift, removes it from the group.
+
+In the Fitting tab, tied rows (e.g. `v_5 = v_1`) are read-only and follow their
+reference. Ties are saved in project files.
+
+If a component falls where an ion shows no absorption (flux at or above the
+continuum), its starting log N is set to 12.5 and the status box lists it.
+Check these values before fitting.
+
 ## Fitting & Results (Tabs 3-4)
 
 ### MCMC Fitting (Tab 3)

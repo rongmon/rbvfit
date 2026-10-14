@@ -1,6 +1,35 @@
 =========
 Changelog
 =========
+Version 3.1.0
+=============
+
+## [3.1.0] - 2026-10-14
+
+### Added
+- **Tying parameters across ions**: `FitConfiguration.tie_ions(z, ions, v=True, b=False)`
+  shares component velocities and/or b values between ions at the same redshift
+  (N is never tied). `vfit` fits only the free parameters; `theta`, bounds,
+  `best_theta`, samples and chains stay full length, so `UnifiedResults` works
+  unchanged. Supported by `fit_quick`, emcee, zeus, multiprocessing and
+  multi-instrument fits. Ties are saved with the configuration. See
+  `docs/user-guide.md` -> "Tying Ions".
+- `ParameterManager.get_tie_source()`, `get_free_mask()`, `apply_ties()`.
+- GUI: **Tie Ions... / Untie** in Model Setup; one interactive picker per tie
+  group; tied cells read-only in the parameter and bounds tables; ties saved in
+  project files.
+- Tests: `src/rbvfit/tests/test_ties.py`.
+
+### Fixed
+- GUI: compiling built the parameter vector in the order parameters were estimated,
+  not the model's order (systems grouped by redshift). With systems estimated out
+  of order or at several redshifts, N/b/v could be assigned to the wrong ion.
+- GUI: the interactive log N guess was NaN for a component where the flux is at or
+  above the continuum; it now defaults to 12.5 and is listed in the status box.
+- `quick_nv_estimate` no longer modifies the flux array passed to it.
+- Docs: the user guide said ions at the same z share velocities; they do not
+  unless tied with `tie_ions`.
+
 Version 3.0.0
 =============
 
